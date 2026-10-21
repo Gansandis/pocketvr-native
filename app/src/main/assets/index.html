@@ -1,0 +1,1443 @@
+<!doctype html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no,viewport-fit=cover">
+<title>PocketVR</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#10121a">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<style>
+html,body{margin:0;height:100%;background:#000;overflow:hidden;font-family:system-ui,sans-serif;color:#fff;touch-action:manipulation}
+canvas{display:block;position:fixed;left:0;top:0;width:100%;height:100%;touch-action:none}
+video{position:fixed;left:-10px;top:0;width:2px;height:2px;pointer-events:none}
+#start{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:12px;background:#0b1220;z-index:5;text-align:center;padding:20px}
+#start button{font-size:20px;padding:14px 36px;border-radius:30px;border:0;background:#4f8cff;color:#fff}
+#start p{margin:0;opacity:.85;line-height:1.5}
+#hud{position:fixed;left:8px;top:6px;font:11px monospace;opacity:.7;z-index:3;white-space:pre;pointer-events:none}
+#web{position:fixed;left:6%;right:6%;top:5%;bottom:5%;z-index:4;display:flex;flex-direction:column;background:#1e1e21;border-radius:18px;overflow:hidden;touch-action:auto;box-shadow:0 0 0 2px #3a3a3f}
+#web[hidden]{display:none}
+#web.fl1,#web.fl2{top:14%;bottom:14%;width:42%;box-shadow:0 0 0 2px #4f8cff,0 8px 30px rgba(0,0,0,.6)}
+#web.fl1{left:auto;right:3%}
+#web.fl2{left:3%;right:auto}
+#wbar{display:flex;gap:6px;padding:6px;align-items:center;background:#2a2a2e}
+#wbar button{border:0;border-radius:12px;background:#3d3d43;color:#fff;font-size:18px;min-width:44px;height:40px}
+#wbar button:active{background:#5a5a64}
+#wurl{flex:1;min-width:0;height:40px;border:0;border-radius:12px;background:#111;color:#fff;padding:0 12px;font-size:15px}
+#wframe{flex:1;border:0;background:#fff;touch-action:auto}
+</style>
+</head>
+<body>
+<div id="start">
+  <h2 style="margin:0">PocketVR</h2>
+  <p>หมุนจอเป็นแนวนอน แล้วกดเริ่ม<br>อนุญาตกล้อง + เซนเซอร์เมื่อถูกถาม</p>
+  <button id="go">เริ่ม</button>
+  <p id="msg" style="font-size:13px"></p>
+</div>
+<div id="hud"></div>
+<div id="web" hidden>
+  <div id="wbar">
+    <button id="wh" title="หน้าแรกของเว็บนี้">⌂</button>
+    <input id="wurl" type="text" inputmode="url" autocapitalize="off" autocomplete="off" spellcheck="false">
+    <button id="wgo">ไป</button>
+    <button id="wx" title="เปิดในแท็บใหม่">↗</button>
+    <button id="wf" title="ลอย / เต็มจอ">◱</button>
+    <button id="wc" title="ปิด">✕</button>
+  </div>
+  <iframe id="wframe" referrerpolicy="no-referrer" allow="fullscreen; autoplay; clipboard-write" sandbox="allow-scripts allow-same-origin allow-forms allow-popups allow-presentation"></iframe>
+</div>
+<video id="cam" playsinline muted autoplay></video>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));</script>
+<script type="module">
+import {HandLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+const VERSION = 'v3.9';
+const $ = id => document.getElementById(id);
+const hud = $('hud'), video = $('cam');
+const BG = 0x0b1220;
+const IPDS = [0.058, 0.063, 0.068];
+const QUAL = [0.75, 1, 1.5], QNAMES = ['ประหยัด', 'ปกติ', 'คมชัด'];
+const S = {mr:false, stereo:false, ipd:0.063, mode:'home', tab:'all', score:0, cam:false, qi:1, pscale:1.15, page:0};
+
+/* --- dark-room support --- */
+const NMODES = ['ปิด', 'อัตโนมัติ', 'สว่างสุด'], TMODES = ['ปิด', 'เปิด', 'อัตโนมัติ'];
+const N = {mode:1, tm:0, lum:128, gain:1, gainT:1, dark:false, boosting:false, warn:false,
+           torchOK:false, torchOn:false, ev:0, expCap:null, track:null, lastProbe:0, drawnVT:-1,
+           pending:null, pendingFn:null, webFloat:0, swallow:false, webOpen:false, webUrl:'', msg:'', msgUntil:0};
+const HAS_FILTER = 'filter' in CanvasRenderingContext2D.prototype;
+const probeCv = document.createElement('canvas'); probeCv.width = 32; probeCv.height = 18;
+const probeCtx = probeCv.getContext('2d', {willReadFrequently:true});
+const boostCv = document.createElement('canvas'); boostCv.width = 960; boostCv.height = 540;
+const bctx = boostCv.getContext('2d');
+let boostTex = null;
+
+/* --- phone apps (launched through Android deep links) and web shortcuts --- */
+const APPS = [
+  {n:'YouTube',     i:'▶️', pkg:'com.google.android.youtube',      link:'https://www.youtube.com/'},
+  {n:'Spotify',     i:'🎵', pkg:'com.spotify.music',               link:'spotify://'},
+  {n:'LINE',        i:'💬', pkg:'jp.naver.line.android',           link:'line://'},
+  {n:'Facebook',    i:'📘', pkg:'com.facebook.katana',             link:'fb://'},
+  {n:'Messenger',   i:'✉️', pkg:'com.facebook.orca',               link:'fb-messenger://'},
+  {n:'Instagram',   i:'📷', pkg:'com.instagram.android',           link:'https://www.instagram.com/'},
+  {n:'TikTok',      i:'🎬', pkg:'com.zhiliaoapp.musically',        link:'https://www.tiktok.com/'},
+  {n:'Netflix',     i:'🍿', pkg:'com.netflix.mediaclient',         link:'https://www.netflix.com/'},
+  {n:'Google Maps', i:'🗺', pkg:'com.google.android.apps.maps',    link:'https://maps.google.com/'},
+  {n:'Discord',     i:'🎧', pkg:'com.discord',                     link:'https://discord.com/'}
+];
+const WEBS = [
+  {n:'Wikipedia',     i:'📚', url:'https://th.wikipedia.org/'},
+  {n:'แผนที่ OSM',    i:'🗺', url:'https://www.openstreetmap.org/export/embed.html?bbox=100.45%2C13.65%2C100.65%2C13.85&layer=mapnik'},
+  {n:'DuckDuckGo',    i:'🔎', url:'https://html.duckduckgo.com/html/'}
+];
+const BLOCKED_SCHEMES = /^(javascript|data|file|blob|about|vbscript):/i;
+function loadList(k){ try{ const v = JSON.parse(localStorage.getItem(k) || '[]'); return Array.isArray(v) ? v : []; }catch(e){ return []; } }
+function saveList(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
+let customApps = loadList('pvr_apps'), customWebs = loadList('pvr_webs');
+
+/* --- tunables --- */
+const PINCH_SETS = [[0.18, 0.30, 'แน่น'], [0.22, 0.34, 'กลาง'], [0.28, 0.42, 'หลวม']];   // [start, release, label]: thumb-index distance / palm size
+const SMOOTH = [[2.5, 4, 'ไว'], [1.2, 3, 'กลาง'], [0.6, 2.5, 'นุ่ม']];                    // One-Euro filter [minCutoff, beta, label]
+const RATE_MS = [33, 50, 80], RATE_N = ['เร็ว', 'กลาง', 'ประหยัด'];                          // minimum gap between hand detections
+const GAZE_N = ['ปิด', 'เปิด', 'เฉพาะแบ่งจอ'], PTR_N = ['ปลายนิ้วชี้', 'กึ่งกลางนิ้วจีบ'], DEV_N = ['GPU', 'CPU'];
+const LOST_MS = 650;      // keep the last hand pose this long after a missed detection
+const HOLD_R = 0.45;      // while closing the fingers below this, the cursor stops moving (so it doesn't drift)
+const HIT_SLOP = 8;       // extra px around every button (logical UI px)
+const HAND_D = 1.1;       // distance (m) where the hand skeleton is drawn
+const PANEL_R = 2.2, DOCK_R = 2.0;
+const BASE_W = 2.0, BASE_H = 1.1;   // panel size (m) at scale 1
+const PS_MIN = 0.6, PS_MAX = 2.0;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+/* --- saved preferences --- */
+const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0};
+function loadPrefs(){
+  try{
+    const o = JSON.parse(localStorage.getItem('pvr_prefs') || '{}');
+    for (const k of Object.keys(P)) if (Number.isInteger(o[k]) && o[k] >= 0) P[k] = o[k];
+    P.gaze = Math.min(P.gaze, 2); P.ptr = Math.min(P.ptr, 1); P.smooth = Math.min(P.smooth, 2);
+    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1);
+    if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
+    if (Number.isInteger(o.nm) && o.nm >= 0) N.mode = Math.min(o.nm, 2);
+    if (IPDS.includes(o.ipd)) S.ipd = o.ipd;
+  }catch(e){}
+}
+function savePrefs(){
+  try{ localStorage.setItem('pvr_prefs', JSON.stringify(Object.assign({}, P, {qi:S.qi, nm:N.mode, ipd:S.ipd}))); }catch(e){}
+}
+loadPrefs();
+
+/* ---------- renderer / scene ---------- */
+const renderer = new THREE.WebGLRenderer({antialias:false, powerPreference:'high-performance'});
+document.body.appendChild(renderer.domElement);
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(BG);
+scene.fog = new THREE.Fog(BG, 6, 22);
+const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 50);
+scene.add(camera);
+const stereo = new THREE.StereoCamera();
+
+scene.add(new THREE.HemisphereLight(0xffffff, 0x334466, 0.9));
+const sun = new THREE.DirectionalLight(0xffffff, 0.6); sun.position.set(1, 2, 1); scene.add(sun);
+
+const env = new THREE.Group(); scene.add(env);
+const grid = new THREE.GridHelper(30, 30, 0x4f8cff, 0x1c2b4a); grid.position.y = -1.6; env.add(grid);
+
+const heading = new THREE.Group(); scene.add(heading);
+const groups = {shoot:new THREE.Group(), gallery:new THREE.Group()};
+Object.values(groups).forEach(g => heading.add(g));
+
+function applyQuality(){
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, QUAL[S.qi]));
+  resize();
+}
+
+/* ---------- canvas UI toolkit ---------- */
+function roundRect(x, a, b, w, h, r){
+  x.beginPath(); x.moveTo(a+r,b); x.arcTo(a+w,b,a+w,b+h,r); x.arcTo(a+w,b+h,a,b+h,r);
+  x.arcTo(a,b+h,a,b,r); x.arcTo(a,b,a+w,b,r); x.closePath();
+}
+// W,H = logical size used by the drawing code; k = texture sharpness multiplier
+function makeUI(W, H, k, draw){
+  const canvas = document.createElement('canvas');
+  canvas.width = Math.round(W*k); canvas.height = Math.round(H*k);
+  const ctx = canvas.getContext('2d');
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter;
+  tex.magFilter = THREE.LinearFilter;
+  tex.anisotropy = 1;
+  const ui = {W, H, ctx, tex, regions:[], hover:null, press:null, dirty:true, mesh:null};
+  ui.mat = new THREE.MeshBasicMaterial({map:tex, transparent:true, side:THREE.DoubleSide, fog:false, depthWrite:false});
+  ui.reg = (id, x, y, w, h, fn) => ui.regions.push({id, x, y, w, h, fn});
+  ui.redraw = () => {
+    ui.regions.length = 0;
+    ctx.setTransform(k, 0, 0, k, 0, 0);
+    draw(ctx, ui);
+    tex.needsUpdate = true; ui.dirty = false;
+  };
+  ui.at = uv => {
+    const cx = uv.x*W, cy = (1-uv.y)*H;
+    for (let i = ui.regions.length-1; i >= 0; i--){
+      const r = ui.regions[i];
+      if (cx >= r.x-HIT_SLOP && cx <= r.x+r.w+HIT_SLOP && cy >= r.y-HIT_SLOP && cy <= r.y+r.h+HIT_SLOP) return r;
+    }
+    return null;
+  };
+  return ui;
+}
+function invalidateUI(){ panel.dirty = true; dock.dirty = true; }
+
+/* ---------- actions ---------- */
+function toggleMR(){ if (!S.cam) return; setMR(!S.mr); invalidateUI(); }
+function toggleSplit(){ S.stereo = !S.stereo; resize(); invalidateUI(); }
+function cycleIPD(){ S.ipd = IPDS[(IPDS.indexOf(S.ipd)+1) % IPDS.length]; savePrefs(); invalidateUI(); }
+function cycleQuality(){ S.qi = (S.qi + 1) % QUAL.length; applyQuality(); savePrefs(); invalidateUI(); }
+function zoomPanel(f){ S.pscale = clamp(S.pscale*f, PS_MIN, PS_MAX); }
+function showToast(msg, ms){
+  N.msg = msg; N.msgUntil = performance.now() + (ms || 3500);
+  if (typeof toast !== 'undefined'){ toast.dirty = true; toast.mesh.visible = true; }
+}
+function buildIntent(a){
+  const link = (a.link || '').trim();
+  if (!link || BLOCKED_SCHEMES.test(link)) return null;
+  const m = link.match(/^([a-z][a-z0-9+.\-]*):\/\/(.*)$/i);
+  if (!m || !a.pkg) return link;
+  const fb = 'https://play.google.com/store/apps/details?id=' + a.pkg;
+  return 'intent://' + m[2] + '#Intent;scheme=' + m[1].toLowerCase() + ';package=' + a.pkg + ';S.browser_fallback_url=' + encodeURIComponent(fb) + ';end';
+}
+// Chrome only follows intent: links right after a real touch, so a hand gesture alone may be refused
+function go(url){
+  if (!NATIVE.ok && navigator.userActivation && !navigator.userActivation.isActive){
+    N.pending = url; showToast('แตะจอ 1 ครั้งเพื่อเปิดแอป', 6000); return;
+  }
+  window.location.href = url;
+}
+function launchApp(a){
+  const u = buildIntent(a);
+  if (!u){ showToast('ลิงก์แอปไม่ถูกต้อง'); return; }
+  showToast('กำลังเปิด ' + a.n + '…', 2500);
+  go(u);
+}
+function addApp(){
+  const n = (prompt('ชื่อแอป (เช่น YouTube)') || '').trim(); if (!n) return;
+  const pkg = (prompt('ชื่อแพ็กเกจ (เช่น com.google.android.youtube)\nเว้นว่างได้ถ้าลิงก์เปิดแอปได้อยู่แล้ว') || '').trim();
+  const link = (prompt('ลิงก์ที่แอปรองรับ\nเช่น https://www.youtube.com/ หรือ line://') || '').trim();
+  if (!link || BLOCKED_SCHEMES.test(link) || !/^[a-z][a-z0-9+.\-]*:\/\//i.test(link)){ showToast('ลิงก์ไม่ถูกต้อง'); return; }
+  customApps.push({n, pkg, link, i:'📱', custom:true}); saveList('pvr_apps', customApps); invalidateUI();
+}
+function clearApps(){ if (confirm('ลบแอปที่เพิ่มเองทั้งหมด?')){ customApps = []; saveList('pvr_apps', customApps); S.page = 0; invalidateUI(); } }
+function normUrl(u){
+  u = (u || '').trim(); if (!u) return null;
+  if (/^https?:\/\//i.test(u)) return u;
+  if (BLOCKED_SCHEMES.test(u)) return null;
+  if (/^[^\s\/]+\.[^\s]+$/.test(u)) return 'https://' + u;
+  return 'https://html.duckduckgo.com/html/?q=' + encodeURIComponent(u);
+}
+function openWeb(url){
+  const u = normUrl(url); if (!u){ showToast('URL ไม่ถูกต้อง'); return; }
+  if (S.stereo){ S.stereo = false; resize(); invalidateUI(); }
+  N.webUrl = u; $('wurl').value = u; $('wframe').src = u;
+  $('web').hidden = false; N.webOpen = true;
+}
+function closeWeb(){
+  $('web').hidden = true; $('wframe').src = 'about:blank'; N.webOpen = false; invalidateUI();
+}
+function addWeb(){
+  const n = (prompt('ชื่อเว็บ') || '').trim(); if (!n) return;
+  const url = normUrl(prompt('URL (เช่น https://th.wikipedia.org)') || ''); if (!url){ showToast('URL ไม่ถูกต้อง'); return; }
+  customWebs.push({n, url, i:'🌐', custom:true}); saveList('pvr_webs', customWebs); invalidateUI();
+}
+function askWeb(){ const u = prompt('พิมพ์ URL หรือคำค้นหา'); if (u) openWeb(u); }
+function clearWebs(){ if (confirm('ลบเว็บที่เพิ่มเองทั้งหมด?')){ customWebs = []; saveList('pvr_webs', customWebs); S.page = 0; invalidateUI(); } }
+function setTorch(on){
+  if (!N.track || !N.torchOK) return;
+  N.track.applyConstraints({advanced:[{torch:on}]})
+    .then(() => { N.torchOn = on; invalidateUI(); })
+    .catch(() => { N.torchOK = false; N.torchOn = false; invalidateUI(); });
+}
+function applyTorch(){
+  if (!N.torchOK) return;
+  if (N.tm === 1 && !N.torchOn) setTorch(true);
+  else if (N.tm === 0 && N.torchOn) setTorch(false);
+}
+function cycleTorch(){ if (!N.torchOK) return; N.tm = (N.tm + 1) % 3; applyTorch(); invalidateUI(); }
+function quickTorch(){ if (!N.torchOK) return; N.tm = (N.tm === 1) ? 0 : 1; applyTorch(); invalidateUI(); }
+function cycleNight(){ N.mode = (N.mode + 1) % 3; N.lastProbe = 0; savePrefs(); invalidateUI(); }
+function cycleP(k, n){ P[k] = (P[k] + 1) % n; savePrefs(); invalidateUI(); }
+function cycleGaze(){ cycleP('gaze', 3); }
+function cyclePtr(){ cycleP('ptr', 2); }
+function cycleSmooth(){ cycleP('smooth', 3); }
+function cycleRate(){ cycleP('rate', 3); }
+function cyclePinch(){ cycleP('pinch', 3); }
+function cycleDev(){ cycleP('dev', 2); showToast('เปลี่ยนตัวประมวลผลแทร็กมือ…', 2500); reinitHands(); }
+function cycleTwo(){ cycleP('two', 2); showToast(P.two ? 'โหมดสองมือเปิด: ใช้ได้ทั้งสองมือ • จีบสองมือแล้วถ่าง/หุบเพื่อซูม' : 'ปิดโหมดสองมือ', 3500); reinitHands(); }
+async function reinitHands(){
+  try{ if (landmarker){ landmarker.close(); landmarker = null; } }catch(e){ landmarker = null; }
+  HANDS.forEach(h => { h.ok = false; h.lm = null; h.pinch = false; h.fist = false; h.pp = null; }); ZM = null; ZC = null;
+  await initHands();
+  invalidateUI();
+}
+function resetSettings(){
+  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0});
+  S.qi = 1; N.mode = 1; S.ipd = 0.063; N.lastProbe = 0;
+  applyQuality(); savePrefs(); invalidateUI(); showToast('รีเซ็ตการตั้งค่าแล้ว', 2500);
+  reinitHands();
+}
+function applyExposure(){
+  if (!N.track || !N.expCap) return;
+  const c = N.expCap;
+  let v = N.ev ? c.max * 0.85 : 0;
+  if (c.step) v = Math.round(v / c.step) * c.step;
+  v = clamp(v, c.min, c.max);
+  N.track.applyConstraints({advanced:[{exposureCompensation:v}]}).catch(() => {});
+}
+function applyBackground(){
+  if (!S.mr) return;
+  scene.background = (N.boosting && boostTex) ? boostTex : videoTex;
+}
+function resetPanel(){
+  recenterHeading();
+  panelPivot.rotation.y = 0; panelPivot.position.y = 0.12; S.pscale = 1.15;
+  dockPivot.rotation.y = 0; dock.mesh.position.y = -0.72;
+}
+
+/* ---------- native Android bridge (exists only inside the APK) ---------- */
+const NATIVE = {ok:(typeof AndroidBridge !== 'undefined' && !!AndroidBridge.postMessage), n:0, wait:{}, apps:[], icons:{}, loaded:false};
+function nativeCall(op, extra){
+  return new Promise(res => {
+    const id = ++NATIVE.n; NATIVE.wait[id] = res;
+    try{ AndroidBridge.postMessage(JSON.stringify(Object.assign({id, op}, extra || {}))); }catch(e){ delete NATIVE.wait[id]; res({ok:false}); return; }
+    setTimeout(() => { if (NATIVE.wait[id]){ delete NATIVE.wait[id]; res({ok:false}); } }, 10000);
+  });
+}
+async function loadIcons(){
+  for (const a of NATIVE.apps){
+    if (NATIVE.icons[a.p]) continue;
+    const m = await nativeCall('icon', {pkg:a.p});
+    if (m.ok && m.data){ const img = new Image(); img.onload = () => { NATIVE.icons[a.p] = img; panel.dirty = true; }; img.src = 'data:image/png;base64,' + m.data; }
+  }
+}
+function nativeInit(){
+  if (!NATIVE.ok) return;
+  AndroidBridge.onmessage = e => {
+    let m; try{ m = JSON.parse(e.data); }catch(err){ return; }
+    const w = NATIVE.wait[m.id]; if (w){ delete NATIVE.wait[m.id]; w(m); }
+  };
+  nativeCall('apps').then(m => { if (m.ok){ NATIVE.apps = m.data || []; NATIVE.loaded = true; invalidateUI(); loadIcons(); } });
+}
+window.pvrBack = () => {                 // Android back button: close the browser / leave an app first
+  if (N.webOpen){ closeWeb(); return true; }
+  if (S.mode !== 'home'){ setMode('home'); return true; }
+  return false;
+};
+
+/* ---------- app panel (Quest Home style) ---------- */
+const PW = 1024, PH = 563;
+const NAV = [['all','▦','ทั้งหมด','แอปและเครื่องมือ'], ['apps','🎮','แอปและเกม','แอปและเกม'], ['phone','📱','แอปในเครื่อง','แอปในเครื่อง'], ['web','🌐','เว็บ','เว็บไซต์'], ['settings','⚙','ตั้งค่า','ตั้งค่า']];
+const GRAY = ['#56565e','#38383e'];
+const CARDS = {
+  shoot:   {icon:'🎯', t:'ยิงเป้า',      sub:() => 'เกม',  g:['#ff7a6b','#b8372a'], fn:() => setMode('shoot')},
+  gallery: {icon:'🖼', t:'ห้องจัดแสดง',  sub:() => 'แอป',  g:['#5a95ff','#2a4fa8'], fn:() => setMode('gallery')},
+  mr:      {icon:'📷', t:'ภาพจริง (MR)', sub:() => S.mr ? 'เปิดอยู่' : 'ปิดอยู่', on:() => S.mr, g:GRAY, fn:toggleMR},
+  split:   {icon:'🥽', t:'แบ่งจอ VR',    sub:() => S.stereo ? 'เปิดอยู่' : 'ปิดอยู่', on:() => S.stereo, g:GRAY, fn:toggleSplit},
+  ipd:     {icon:'↔', t:'ระยะตา',       sub:() => Math.round(S.ipd*1000) + ' mm', g:GRAY, fn:cycleIPD},
+  quality: {icon:'✨', t:'คุณภาพภาพ',    sub:() => QNAMES[S.qi], g:GRAY, fn:cycleQuality},
+  night:   {icon:'🌙', t:'โหมดมืด',      sub:() => NMODES[N.mode] + (N.boosting ? ' ×' + N.gain.toFixed(1) : ''), on:() => N.boosting, g:GRAY, fn:cycleNight},
+  torch:   {icon:'🔦', t:'ไฟฉาย',        sub:() => N.torchOK ? TMODES[N.tm] : 'ไม่รองรับ', on:() => N.torchOn, g:GRAY, fn:cycleTorch},
+  center:  {icon:'⌖', t:'จัดกลางใหม่',  sub:() => 'รีเซ็ตตำแหน่ง', g:GRAY, fn:resetPanel},
+  v360:    {icon:'🎬', t:'วิดีโอ 360°',  sub:() => 'ไฟล์ / เดโม', g:['#b36bff','#5a2aa8'], fn:() => setMode('v360')},
+  wcam:    {icon:'📹', t:'หน้าต่างกล้อง', sub:() => winOpen('cam') ? 'เปิดอยู่' : 'ปิดอยู่', on:() => winOpen('cam'), g:['#ff8fb1','#b8325f'], fn:() => toggleWin('cam')},
+  wclock:  {icon:'⏱', t:'นาฬิกา',       sub:() => winOpen('clock') ? 'เปิดอยู่' : 'จับเวลา', on:() => winOpen('clock'), g:['#ffcf5a','#b07a12'], fn:() => toggleWin('clock')},
+  wcalc:   {icon:'🧮', t:'เครื่องคิดเลข', sub:() => winOpen('calc') ? 'เปิดอยู่' : 'หน้าต่างลอย', on:() => winOpen('calc'), g:['#5fd0c4','#1c7a70'], fn:() => toggleWin('calc')}
+};
+const TABS = {all:['shoot','gallery','v360','wcam','wclock','wcalc','mr','split','night','torch'], apps:['shoot','gallery','v360','wcam','wclock','wcalc'], tools:['mr','split','ipd','quality','night','torch']};
+
+const SETS = [
+  {id:'mr',      t:'ภาพจริง (MR)',        v:() => S.mr ? 'เปิด' : 'ปิด',          on:() => S.mr,       fn:toggleMR},
+  {id:'split',   t:'แบ่งจอ VR',           v:() => S.stereo ? 'เปิด' : 'ปิด',      on:() => S.stereo,   fn:toggleSplit},
+  {id:'ipd',     t:'ระยะตา',              v:() => Math.round(S.ipd*1000) + ' mm', on:() => false,      fn:cycleIPD},
+  {id:'quality', t:'คุณภาพภาพ',           v:() => QNAMES[S.qi],                   on:() => false,      fn:cycleQuality},
+  {id:'gaze',    t:'เคอร์เซอร์กลางจอ',    v:() => GAZE_N[P.gaze],                 on:() => P.gaze > 0, fn:cycleGaze},
+  {id:'night',   t:'โหมดมืด',             v:() => NMODES[N.mode],                 on:() => N.mode > 0, fn:cycleNight},
+  {id:'torch',   t:'ไฟฉาย',               v:() => N.torchOK ? TMODES[N.tm] : 'ไม่รองรับ', on:() => N.torchOn, fn:cycleTorch},
+  {id:'ptr',     t:'จุดชี้ของมือ',        v:() => PTR_N[P.ptr],                   on:() => false,      fn:cyclePtr},
+  {id:'smooth',  t:'ความนุ่มเคอร์เซอร์',  v:() => SMOOTH[P.smooth][2],            on:() => false,      fn:cycleSmooth},
+  {id:'rate',    t:'ความถี่แทร็กมือ',     v:() => RATE_N[P.rate],                 on:() => false,      fn:cycleRate},
+  {id:'pinch',   t:'ความไวการจีบ',        v:() => PINCH_SETS[P.pinch][2],         on:() => false,      fn:cyclePinch},
+  {id:'dev',     t:'ตัวประมวลผลแทร็ก',    v:() => DEV_N[P.dev] + (delegate === 'GPU' || delegate === 'CPU' ? ' (' + delegate + ')' : ''), on:() => false, fn:cycleDev},
+  {id:'two',     t:'ซูมสองมือ',           v:() => P.two ? 'เปิด' : 'ปิด',          on:() => P.two > 0, fn:cycleTwo},
+  {id:'reset',   t:'รีเซ็ตการตั้งค่า',    v:() => 'กดเพื่อรีเซ็ต',                on:() => false,      fn:resetSettings}
+];
+function drawSettings(x, ui, hv, pr){
+  x.textBaseline = 'alphabetic';
+  SETS.forEach((s, i) => {
+    const col = i < 7 ? 0 : 1, row = i % 7;
+    const rx = 262 + col*374, ry = 112 + row*62, rw = 360, rh = 56;
+    ui.reg('set:' + s.id, rx, ry, rw, rh, s.fn);
+    const isH = hv === 'set:' + s.id, isP = pr === 'set:' + s.id;
+    x.fillStyle = isP ? '#5c5c64' : (isH ? '#4a4a50' : '#3a3a3f');
+    roundRect(x, rx, ry, rw, rh, 18); x.fill();
+    x.fillStyle = '#fff'; x.font = '20px sans-serif'; x.textAlign = 'left';
+    x.fillText(s.t, rx + 16, ry + 35, 172);
+    const on = s.on(), pw = 152, px = rx + rw - pw - 10;
+    x.fillStyle = on ? '#2e9e6b' : '#55555e'; roundRect(x, px, ry + 9, pw, 38, 19); x.fill();
+    x.fillStyle = '#fff'; x.font = '18px sans-serif'; x.textAlign = 'center';
+    x.fillText(s.v(), px + pw/2, ry + 34, pw - 14);
+    if (isH){ x.strokeStyle = '#fff'; x.lineWidth = 3; roundRect(x, rx+1.5, ry+1.5, rw-3, rh-3, 17); x.stroke(); }
+  });
+}
+const G_PHONE = ['#4a6cf7','#2a3f9e'], G_WEB = ['#2bb3a3','#146d63'];
+function getCards(tab){
+  if (tab === 'phone' && NATIVE.ok){
+    const l = NATIVE.apps.map(a => ({id:'n:' + a.p, icon:'📱', img:NATIVE.icons[a.p], t:a.n, sub:() => 'เปิดแอป', g:G_PHONE,
+      fn:() => { showToast('กำลังเปิด ' + a.n + '…', 2000); nativeCall('launch', {pkg:a.p}); }}));
+    if (!NATIVE.loaded) l.push({id:'nload', icon:'⏳', t:'กำลังโหลดรายชื่อแอป…', sub:() => '', g:GRAY, fn:() => {}});
+    return l;
+  }
+  if (tab === 'phone'){
+    const l = APPS.concat(customApps).map((a, i) => ({id:'app' + i, icon:a.i || '📱', t:a.n, sub:() => a.custom ? 'แอปของฉัน' : 'เปิดแอป', g:G_PHONE, fn:() => launchApp(a)}));
+    l.push({id:'addapp', icon:'＋', t:'เพิ่มแอป', sub:() => 'ชื่อ + ลิงก์', g:GRAY, fn:addApp});
+    if (customApps.length) l.push({id:'clrapp', icon:'🗑', t:'ล้างที่เพิ่ม', sub:() => customApps.length + ' รายการ', g:GRAY, fn:clearApps});
+    return l;
+  }
+  if (tab === 'web'){
+    const l = WEBS.concat(customWebs).map((w, i) => ({id:'web' + i, icon:w.i || '🌐', t:w.n, sub:() => w.custom ? 'เว็บของฉัน' : 'เว็บ', g:G_WEB, fn:() => openWeb(w.url)}));
+    l.push({id:'openurl', icon:'⌨', t:'ใส่ URL', sub:() => 'พิมพ์ที่อยู่เว็บ', g:GRAY, fn:askWeb});
+    l.push({id:'addweb', icon:'＋', t:'เพิ่มเว็บ', sub:() => 'บันทึกเป็นปุ่ม', g:GRAY, fn:addWeb});
+    if (customWebs.length) l.push({id:'clrweb', icon:'🗑', t:'ล้างที่เพิ่ม', sub:() => customWebs.length + ' รายการ', g:GRAY, fn:clearWebs});
+    return l;
+  }
+  return TABS[tab].map(id => Object.assign({id}, CARDS[id]));
+}
+function drawPanel(x, ui){
+  const hv = ui.hover, pr = ui.press;
+  x.clearRect(0, 0, PW, PH);
+  x.textBaseline = 'alphabetic';
+
+  // grab handle (pinch it, or make a fist anywhere on the panel, to drag)
+  ui.reg('grab', 360, 0, 304, 44, null);
+  x.fillStyle = (hv === 'grab') ? 'rgba(255,255,255,.95)' : 'rgba(255,255,255,.5)';
+  roundRect(x, 442, 5, 140, 12, 6); x.fill();
+
+  // body
+  x.fillStyle = 'rgba(30,30,33,.95)'; roundRect(x, 0, 24, PW, PH-24, 40); x.fill();
+
+  // sidebar
+  x.textAlign = 'left'; x.fillStyle = '#fff'; x.font = 'bold 34px sans-serif';
+  x.fillText('แอป', 48, 102);
+  const nav = (id, icon, label, y, active, fn, h) => {
+    ui.reg(id, 24, y, 212, h, fn);
+    if (active || hv === id){
+      x.fillStyle = pr === id ? 'rgba(255,255,255,.26)' : (active ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.09)');
+      roundRect(x, 24, y, 212, h, h/2); x.fill();
+    }
+    x.fillStyle = '#fff'; x.font = '22px sans-serif'; x.fillText(icon, 46, y + h/2 + 8);
+    x.font = '21px sans-serif'; x.fillText(label, 84, y + h/2 + 8);
+  };
+  NAV.forEach((n, i) => nav('nav:' + n[0], n[1], n[2], 128 + i*56, S.tab === n[0], () => { S.tab = n[0]; S.page = 0; invalidateUI(); }, 48));
+  x.fillStyle = 'rgba(255,255,255,.12)'; x.fillRect(32, 440, 196, 2);
+  nav('side:ctr', '⌖', 'จัดกลางใหม่', 462, false, resetPanel, 44);
+
+  // header
+  const title = NAV.find(n => n[0] === S.tab)[3];
+  x.fillStyle = '#d4d4da'; x.font = '26px sans-serif'; x.fillText(title, 262, 86);
+  const label = !S.cam ? 'ไม่มีกล้อง' : (S.mr ? 'ออกจาก MR' : 'เข้าสู่ MR');
+  ui.reg('mrbtn', 770, 48, 226, 54, toggleMR);
+  x.fillStyle = pr === 'mrbtn' ? '#6a6a74' : (hv === 'mrbtn' ? '#55555e' : (S.mr ? '#2e9e6b' : '#3d3d43'));
+  roundRect(x, 770, 48, 226, 54, 27); x.fill();
+  x.fillStyle = '#fff'; x.font = '23px sans-serif'; x.textAlign = 'center'; x.fillText(label, 883, 84);
+
+  // cards
+  const isSet = S.tab === 'settings';
+  const allCards = isSet ? [] : getCards(S.tab), pages = Math.max(1, Math.ceil(allCards.length / 6));
+  S.page = clamp(S.page, 0, pages - 1);
+  allCards.slice(S.page*6, S.page*6 + 6).forEach((c, i) => {
+    const col = i % 3, row = Math.floor(i/3);
+    const cx = 262 + col*254, cy = 118 + row*218, cw = 226, ch = 196;
+    ui.reg('card:' + c.id, cx, cy, cw, ch, c.fn);
+    const isH = hv === 'card:' + c.id, isP = pr === 'card:' + c.id;
+    x.fillStyle = isP ? '#5c5c64' : (isH ? '#4a4a50' : '#3a3a3f');
+    roundRect(x, cx, cy, cw, ch, 24); x.fill();
+    const g = x.createLinearGradient(0, cy+8, 0, cy+126);
+    const on = c.on && c.on();
+    g.addColorStop(0, on ? '#3ecf8e' : c.g[0]); g.addColorStop(1, on ? '#1f8f5f' : c.g[1]);
+    x.fillStyle = g; roundRect(x, cx+8, cy+8, cw-16, 116, 18); x.fill();
+    x.fillStyle = '#fff'; x.font = '58px sans-serif'; x.textAlign = 'center';
+    if (c.img) x.drawImage(c.img, cx + cw/2 - 44, cy + 20, 88, 88); else x.fillText(c.icon, cx + cw/2, cy + 86);
+    x.textAlign = 'left'; x.font = 'bold 24px sans-serif'; x.fillText(c.t, cx+16, cy+156, cw-28);
+    x.font = '18px sans-serif'; x.fillStyle = on ? '#6ee7b0' : '#b8b8c0'; x.fillText(c.sub(), cx+16, cy+181, cw-28);
+    if (isH){ x.strokeStyle = '#fff'; x.lineWidth = 3; roundRect(x, cx+1.5, cy+1.5, cw-3, ch-3, 23); x.stroke(); }
+  });
+
+  if (isSet) drawSettings(x, ui, hv, pr);
+
+  // page buttons (only when a tab has more than six cards)
+  if (pages > 1){
+    const pbtn = (id, ch, px, on, fn) => {
+      ui.reg(id, px, 50, 50, 46, on ? fn : null);
+      x.fillStyle = !on ? 'rgba(255,255,255,.06)' : (pr === id ? '#6a6a74' : (hv === id ? '#55555e' : '#3d3d43'));
+      roundRect(x, px, 50, 50, 46, 23); x.fill();
+      x.fillStyle = on ? '#fff' : 'rgba(255,255,255,.3)'; x.font = '26px sans-serif'; x.textAlign = 'center'; x.fillText(ch, px + 25, 84);
+    };
+    pbtn('pgprev', '‹', 590, S.page > 0, () => { S.page--; invalidateUI(); });
+    x.fillStyle = '#d4d4da'; x.font = '20px sans-serif'; x.textAlign = 'center'; x.fillText((S.page+1) + '/' + pages, 665, 82);
+    pbtn('pgnext', '›', 690, S.page < pages - 1, () => { S.page++; invalidateUI(); });
+  }
+
+  // resize grip (bottom-right) — pinch and drag to scale the panel
+  ui.reg('resize', PW-64, PH-64, 60, 60, null);
+  x.strokeStyle = (hv === 'resize') ? '#fff' : 'rgba(255,255,255,.55)'; x.lineWidth = 5; x.lineCap = 'round';
+  for (let i = 0; i < 3; i++){
+    x.beginPath(); x.moveTo(PW-16-i*10, PH-14); x.lineTo(PW-16, PH-14-i*10); x.stroke();
+  }
+}
+const panel = makeUI(PW, PH, 1.5, drawPanel);
+
+function curvedGeo(wM, hM, R){
+  const L = wM / R;
+  const g = new THREE.CylinderGeometry(R, R, hM, 32, 1, true, Math.PI - L/2, L);
+  const uv = g.attributes.uv;
+  for (let i = 0; i < uv.count; i++) uv.setX(i, 1 - uv.getX(i));   // un-mirror when seen from inside
+  return g;
+}
+let builtScale = S.pscale;
+const panelPivot = new THREE.Group(); panelPivot.position.y = 0.12; heading.add(panelPivot);
+panel.mesh = new THREE.Mesh(curvedGeo(BASE_W*S.pscale, BASE_H*S.pscale, PANEL_R), panel.mat);
+panel.mesh.userData.ui = panel;
+panelPivot.add(panel.mesh);
+function syncPanelGeo(){
+  if (Math.abs(S.pscale - builtScale) < 0.004) return;
+  const g = curvedGeo(BASE_W*S.pscale, BASE_H*S.pscale, PANEL_R);
+  panel.mesh.geometry.dispose(); panel.mesh.geometry = g; builtScale = S.pscale;
+}
+
+/* ---------- dock (bottom bar, draggable) ---------- */
+const DW = 1150, DH = 112;
+const DOCK = [
+  {id:'home',    icon:'🏠', c:'#4f8cff', fn:() => { S.tab = 'all'; S.page = 0; setMode('home'); }, on:() => S.mode === 'home'},
+  {id:'shoot',   icon:'🎯', c:'#e5533d', fn:() => setMode('shoot'),   on:() => S.mode === 'shoot'},
+  {id:'gallery', icon:'🖼', c:'#8e5bd6', fn:() => setMode('gallery'), on:() => S.mode === 'gallery'},
+  {id:'mr',      icon:'📷', c:'#e0457b', fn:toggleMR,    on:() => S.mr},
+  {id:'split',   icon:'🥽', c:'#2b8f7a', fn:toggleSplit, on:() => S.stereo},
+  {id:'torch',   icon:'🔦', c:'#d9a521', fn:quickTorch,  on:() => N.torchOn},
+  {id:'set',     icon:'⚙', c:'#6b7280', fn:() => { S.tab = 'settings'; S.page = 0; setMode('home'); }, on:() => false}
+];
+function drawDock(x, ui){
+  const hv = ui.hover, pr = ui.press;
+  x.clearRect(0, 0, DW, DH);
+  x.textBaseline = 'alphabetic';
+  ui.reg('dockbg', 0, 0, DW, DH, null);     // registered first = lowest priority; grabbing it drags the dock
+  x.fillStyle = (hv === 'dockbg') ? 'rgba(48,48,53,.97)' : 'rgba(30,30,33,.95)'; roundRect(x, 0, 0, DW, DH, 56); x.fill();
+  // clock
+  x.fillStyle = 'rgba(255,255,255,.14)'; x.beginPath(); x.arc(62, 56, 30, 0, Math.PI*2); x.fill();
+  x.textAlign = 'center'; x.font = '30px sans-serif'; x.fillStyle = '#fff'; x.fillText('👤', 62, 67);
+  const t = new Date().toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit', hour12:false});
+  x.textAlign = 'left'; x.font = 'bold 28px sans-serif'; x.fillText(t, 108, 54);
+  x.font = '16px sans-serif'; x.fillStyle = N.warn ? '#ffb340' : '#a0a0aa'; x.fillText(N.warn ? 'มืดมาก 🔦' : 'PocketVR', 108, 80, 120);
+  // icons
+  const icon = (id, ch, color, px, fn, on) => {
+    const s = 64, y = 22, isH = hv === 'dock:' + id, isP = pr === 'dock:' + id;
+    ui.reg('dock:' + id, px, y, s, s, fn);
+    const grow = isP ? -2 : (isH ? 4 : 0);
+    x.fillStyle = color; roundRect(x, px-grow, y-grow, s+grow*2, s+grow*2, 18); x.fill();
+    if (isH){ x.strokeStyle = '#fff'; x.lineWidth = 3; roundRect(x, px-grow, y-grow, s+grow*2, s+grow*2, 18); x.stroke(); }
+    x.textAlign = 'center'; x.fillStyle = '#fff'; x.font = '36px sans-serif'; x.fillText(ch, px + s/2, y + 47);
+    if (on){ x.fillStyle = '#fff'; x.beginPath(); x.arc(px + s/2, 102, 4, 0, Math.PI*2); x.fill(); }
+  };
+  DOCK.forEach((d, i) => icon(d.id, d.icon, d.c, 236 + i*84, d.fn, d.on()));
+  x.fillStyle = 'rgba(255,255,255,.14)'; x.fillRect(828, 26, 2, 60);
+  icon('ctr', '⌖', '#55555e', 852, resetPanel, false);
+  x.fillStyle = 'rgba(255,255,255,.14)'; x.fillRect(940, 26, 2, 60);
+  icon('zout', '−', '#55555e', 964, () => zoomPanel(1/1.15), false);
+  icon('zin',  '+', '#55555e', 1048, () => zoomPanel(1.15), false);
+}
+const dock = makeUI(DW, DH, 1.5, drawDock);
+dock.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.4*DW/896, 0.175), dock.mat);
+dock.mesh.userData.ui = dock;
+dock.mesh.position.set(0, -0.72, -DOCK_R); dock.mesh.rotation.x = -0.45;
+const dockPivot = new THREE.Group(); heading.add(dockPivot);
+dockPivot.add(dock.mesh);
+setInterval(() => { dock.dirty = true; }, 20000);
+
+const toast = makeUI(512, 96, 1.5, (x) => {
+  x.clearRect(0, 0, 512, 96);
+  x.fillStyle = 'rgba(20,20,22,.94)'; roundRect(x, 0, 0, 512, 96, 48); x.fill();
+  x.fillStyle = '#fff'; x.font = '30px sans-serif'; x.textAlign = 'center'; x.textBaseline = 'alphabetic';
+  x.fillText(N.msg, 256, 62, 460);
+});
+toast.mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 0.169), toast.mat);
+toast.mesh.visible = false; toast.mesh.rotation.x = -0.45;
+dockPivot.add(toast.mesh);
+
+/* ---------- floating windows (camera / clock / calculator / 360 controls) ---------- */
+const WIN_R = 1.9, WIN_SLOTS = [0.85, -0.85, 1.25, -1.25, 1.65, -1.65], wins = [];
+let CALC = {disp:'0', acc:null, op:null, fresh:true};
+const STOPW = {run:false, t0:0, acc:0};
+const WINDEFS = {
+  cam:   {title:'📹 กล้อง',          w:480, h:322, content:drawCamWin},
+  clock: {title:'⏱ นาฬิกา',         w:480, h:330, content:drawClockWin, tick:500},
+  calc:  {title:'🧮 เครื่องคิดเลข',  w:380, h:540, content:drawCalcWin},
+  vctl:  {title:'🎬 วิดีโอ 360°',    w:640, h:176, content:drawVctlWin, tick:500, only:'v360', noClose:true}
+};
+const allUIs = () => [panel, dock].concat(wins.map(w => w.ui));
+const winVisible = w => w.d.only ? S.mode === w.d.only : S.mode !== 'v360';
+const winOpen = type => !!wins.find(w => w.type === type);
+function updateWinVis(){ wins.forEach(w => { w.ui.mesh.visible = winVisible(w); w.ui.dirty = true; }); }
+function winBtn(x, ui, id, label, bx, by, bw, bh, fn, o){
+  o = o || {};
+  const isH = ui.hover === id, isP = ui.press === id, r = Math.min(18, bh/2);
+  ui.reg(id, bx, by, bw, bh, fn);
+  x.fillStyle = isP ? '#6a6a74' : (o.on ? '#2e9e6b' : (isH ? '#55555e' : '#3d3d43'));
+  roundRect(x, bx, by, bw, bh, r); x.fill();
+  if (isH){ x.strokeStyle = '#fff'; x.lineWidth = 3; roundRect(x, bx+1.5, by+1.5, bw-3, bh-3, r-1); x.stroke(); }
+  x.fillStyle = '#fff'; x.font = (o.font || '28px') + ' sans-serif'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillText(label, bx + bw/2, by + bh/2 + 2, bw - 8); x.textBaseline = 'alphabetic';
+}
+function drawWin(win, x, ui){
+  const d = win.d, W = d.w, Hh = d.h, hv = ui.hover;
+  x.clearRect(0, 0, W, Hh); x.textBaseline = 'alphabetic';
+  ui.reg('grab', 0, 0, W, 52, null);
+  if (win.type !== 'cam'){ x.fillStyle = 'rgba(30,30,33,.96)'; roundRect(x, 0, 0, W, Hh, 28); x.fill(); }
+  x.fillStyle = hv === 'grab' ? '#3c3c42' : '#2a2a2e'; roundRect(x, 0, 0, W, 52, 26); x.fill();
+  if (win.type === 'cam') x.fillRect(0, 26, W, 26);
+  x.fillStyle = '#fff'; x.font = 'bold 24px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle';
+  x.fillText(d.title, 22, 28, W - 100); x.textBaseline = 'alphabetic';
+  if (!d.noClose) winBtn(x, ui, 'close', '✕', W - 54, 6, 46, 40, () => closeWin(win), {font:'22px'});
+  d.content(x, ui, win);
+  ui.reg('resize', W - 48, Hh - 48, 48, 48, null);
+  x.strokeStyle = hv === 'resize' ? '#fff' : 'rgba(255,255,255,.55)'; x.lineWidth = 4; x.lineCap = 'round';
+  for (let i = 0; i < 3; i++){ x.beginPath(); x.moveTo(W-14-i*9, Hh-10); x.lineTo(W-10, Hh-14-i*9); x.stroke(); }
+}
+function drawCamWin(x, ui, win){
+  if (!S.cam){ x.fillStyle = 'rgba(20,20,22,.9)'; x.fillRect(0, 52, win.d.w, win.d.h - 52); x.fillStyle = '#aaa'; x.font = '24px sans-serif'; x.textAlign = 'center'; x.fillText('ไม่มีกล้อง', win.d.w/2, 200); }
+}
+function stopwatchMs(){ return STOPW.acc + (STOPW.run ? performance.now() - STOPW.t0 : 0); }
+function drawClockWin(x, ui, win){
+  const W = win.d.w, now = new Date();
+  x.textAlign = 'center'; x.fillStyle = '#fff'; x.font = 'bold 66px sans-serif';
+  x.fillText(now.toLocaleTimeString('th-TH', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:false}), W/2, 134);
+  x.fillStyle = '#b8b8c0'; x.font = '22px sans-serif';
+  x.fillText(now.toLocaleDateString('th-TH', {weekday:'long', day:'numeric', month:'long'}), W/2, 170, W - 30);
+  const ms = stopwatchMs(), m = Math.floor(ms/60000), s = Math.floor(ms/1000) % 60, t = Math.floor(ms/100) % 10;
+  x.fillStyle = STOPW.run ? '#6ee7b0' : '#fff'; x.font = 'bold 50px sans-serif';
+  x.fillText(String(m).padStart(2, '0') + ':' + String(s).padStart(2, '0') + '.' + t, W/2, 238);
+  winBtn(x, ui, 'sw', STOPW.run ? 'หยุด' : 'เริ่มจับเวลา', 24, 256, 204, 56, () => {
+    if (STOPW.run){ STOPW.acc += performance.now() - STOPW.t0; STOPW.run = false; } else { STOPW.t0 = performance.now(); STOPW.run = true; }
+    win.ui.dirty = true;
+  }, {font:'24px', on:STOPW.run});
+  winBtn(x, ui, 'swr', 'รีเซ็ต', 252, 256, 204, 56, () => { STOPW.run = false; STOPW.acc = 0; win.ui.dirty = true; }, {font:'24px'});
+}
+const fmtNum = n => { if (!isFinite(n)) return 'ผิดพลาด'; let s = String(Number(n.toPrecision(10))); if (s.length > 12) s = n.toExponential(5); return s; };
+function calcPress(k, win){
+  const c = CALC;
+  if (c.disp === 'ผิดพลาด' && k !== 'C') return;
+  if (/^[0-9]$/.test(k)){ c.disp = (c.fresh || c.disp === '0') ? k : (c.disp.length < 12 ? c.disp + k : c.disp); c.fresh = false; }
+  else if (k === '.'){ if (c.fresh){ c.disp = '0.'; c.fresh = false; } else if (!c.disp.includes('.')) c.disp += '.'; }
+  else if (k === 'C'){ Object.assign(c, {disp:'0', acc:null, op:null, fresh:true}); }
+  else if (k === '⌫'){ if (!c.fresh){ c.disp = c.disp.slice(0, -1); if (c.disp === '' || c.disp === '-') c.disp = '0'; } }
+  else if (k === '±'){ if (c.disp !== '0') c.disp = c.disp.startsWith('-') ? c.disp.slice(1) : '-' + c.disp; }
+  else if (k === '%'){ c.disp = fmtNum(parseFloat(c.disp)/100); c.fresh = true; }
+  else {
+    const v = parseFloat(c.disp);
+    if (c.op && !c.fresh){
+      const a = c.acc;
+      c.acc = c.op === '+' ? a + v : c.op === '−' ? a - v : c.op === '×' ? a * v : (v === 0 ? NaN : a / v);
+      c.disp = fmtNum(c.acc);
+    } else if (!c.op) c.acc = v;
+    c.op = k === '=' ? null : k; c.fresh = true;
+    if (c.disp === 'ผิดพลาด'){ c.acc = null; c.op = null; }
+  }
+  win.ui.dirty = true;
+}
+function drawCalcWin(x, ui, win){
+  const W = win.d.w;
+  x.fillStyle = '#111114'; roundRect(x, 16, 66, W - 32, 78, 16); x.fill();
+  x.fillStyle = '#fff'; x.textAlign = 'right'; x.font = 'bold 46px sans-serif';
+  x.fillText(CALC.disp, W - 32, 124, W - 64);
+  const keys = [['C','±','%','÷'], ['7','8','9','×'], ['4','5','6','−'], ['1','2','3','+'], ['0','.','⌫','=']];
+  keys.forEach((row, r) => row.forEach((k, c) => {
+    const isOp = '÷×−+='.includes(k);
+    winBtn(x, ui, 'k' + k, k, 16 + c*89, 160 + r*72, 81, 64, () => calcPress(k, win), {font:'30px', on:isOp && CALC.op === k});
+  }));
+}
+function createWin(type){
+  const d = WINDEFS[type];
+  const win = {type, d, s:1, pivot:new THREE.Group(), tick:d.tick || 0, lt:0, slot:0};
+  win.ui = makeUI(d.w, d.h, 1.5, (x, u) => drawWin(win, x, u));
+  win.ui.win = win;
+  win.ui.mesh = new THREE.Mesh(new THREE.PlaneGeometry(d.w/520, d.h/520), win.ui.mat);
+  win.ui.mesh.userData.ui = win.ui;
+  win.ui.mesh.position.set(0, d.only ? -0.42 : 0.12, -WIN_R);
+  win.pivot.add(win.ui.mesh);
+  if (type === 'cam'){
+    win.vmat = new THREE.MeshBasicMaterial({map:videoTex || null, color:videoTex ? 0xffffff : 0x111111, fog:false});
+    const vm = new THREE.Mesh(new THREE.PlaneGeometry(d.w/520, (d.h - 52)/520), win.vmat);
+    vm.position.set(0, -26/520, -0.003); win.ui.mesh.add(vm); win.vmesh = vm;
+  }
+  if (!d.only){
+    const used = wins.map(w => w.slot);
+    win.slot = WIN_SLOTS.find(s => !used.includes(s)); if (win.slot === undefined) win.slot = 0;
+    win.pivot.rotation.y = win.slot;
+  }
+  heading.add(win.pivot); wins.push(win);
+  win.ui.mesh.visible = winVisible(win);
+  invalidateUI();
+  return win;
+}
+function closeWin(win){
+  heading.remove(win.pivot);
+  win.ui.mesh.geometry.dispose(); win.ui.tex.dispose(); win.ui.mat.dispose();
+  if (win.vmesh){ win.vmesh.geometry.dispose(); win.vmat.dispose(); }
+  const i = wins.indexOf(win); if (i >= 0) wins.splice(i, 1);
+  if (grab && grab.target === win) grab = null;
+  CTX.forEach(c => { if (c.grab && c.grab.target === win) c.grab = null; });
+  invalidateUI();
+}
+function toggleWin(type){ const w = wins.find(v => v.type === type); if (w) closeWin(w); else { createWin(type); showToast('จีบหัวข้อหน้าต่างเพื่อลาก • มุมขวาล่างเพื่อย่อ/ขยาย', 3500); } }
+
+/* ---------- app: 360° video / photo player ---------- */
+const v360 = {kind:'demo', name:'ภาพเดโม', el:null, fin:null, tex:null, demoTex:null, mat:null, mesh:null, yaw:0, pitch:0, fov:70, base:-Math.PI/2, url:null};
+const v360g = new THREE.Group(); v360g.rotation.order = 'YXZ'; v360g.visible = false; heading.add(v360g);
+function makeDemoTex(){
+  const c = document.createElement('canvas'); c.width = 2048; c.height = 1024;
+  const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, 0, 1024);
+  g.addColorStop(0, '#0a1330'); g.addColorStop(0.49, '#2c5aa8'); g.addColorStop(0.5, '#1d2a36'); g.addColorStop(1, '#070b10');
+  x.fillStyle = g; x.fillRect(0, 0, 2048, 1024);
+  for (let i = 0; i < 260; i++){ x.fillStyle = 'rgba(255,255,255,' + (0.3 + Math.random()*0.6) + ')'; x.fillRect(Math.random()*2048, Math.random()*480, 2, 2); }
+  x.strokeStyle = 'rgba(255,255,255,.28)'; x.lineWidth = 2;
+  for (let i = 0; i <= 24; i++){ x.beginPath(); x.moveTo(i*2048/24, 0); x.lineTo(i*2048/24, 1024); x.stroke(); }
+  for (let j = 1; j < 8; j++){ x.beginPath(); x.moveTo(0, j*128); x.lineTo(2048, j*128); x.stroke(); }
+  x.fillStyle = '#fff'; x.textAlign = 'center'; x.font = 'bold 64px sans-serif';
+  for (let i = 0; i < 12; i++){ x.fillText(String(i*30) + '°', i*2048/12 + 1024/12*0 + 0, 470); }
+  x.font = 'bold 110px sans-serif'; x.fillStyle = '#ffd24a'; x.fillText('PocketVR 360°', 1024, 330);
+  x.font = '48px sans-serif'; x.fillStyle = '#cfd6e6'; x.fillText('กด 📁 เพื่อเลือกวิดีโอ/ภาพ 360° จากเครื่อง', 1024, 580);
+  const t = new THREE.CanvasTexture(c); t.minFilter = THREE.LinearFilter; t.generateMipmaps = false;
+  return t;
+}
+function set360Tex(t){
+  if (v360.tex && v360.tex !== v360.demoTex) v360.tex.dispose();
+  v360.tex = t; v360.mat.map = t; v360.mat.needsUpdate = true;
+  wins.forEach(w => { w.ui.dirty = true; });
+}
+function ensure360(){
+  if (v360.mesh) return;
+  v360.demoTex = makeDemoTex(); v360.tex = v360.demoTex;
+  v360.mat = new THREE.MeshBasicMaterial({map:v360.demoTex, fog:false});
+  const g = new THREE.SphereGeometry(40, 40, 28); g.scale(-1, 1, 1);
+  v360.mesh = new THREE.Mesh(g, v360.mat); v360g.add(v360.mesh);
+  v360.el = document.createElement('video'); v360.el.playsInline = true; v360.el.loop = true; v360.el.setAttribute('playsinline', '');
+  v360.fin = document.createElement('input'); v360.fin.type = 'file'; v360.fin.accept = 'video/*,image/*';
+  v360.fin.onchange = () => {
+    const f = v360.fin.files && v360.fin.files[0]; v360.fin.value = ''; if (!f) return;
+    if (v360.url) URL.revokeObjectURL(v360.url);
+    v360.url = URL.createObjectURL(f); v360.name = f.name.slice(0, 30);
+    if (f.type.startsWith('image/')){
+      const img = new Image();
+      img.onload = () => {
+        const mx = Math.min(4096, renderer.capabilities.maxTextureSize), sc = Math.min(1, mx/img.width, mx/img.height);
+        const c = document.createElement('canvas'); c.width = Math.round(img.width*sc); c.height = Math.round(img.height*sc);
+        c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+        const t = new THREE.CanvasTexture(c); t.minFilter = THREE.LinearFilter; t.generateMipmaps = false;
+        v360.el.pause(); v360.kind = 'image'; set360Tex(t); showToast('โหลดภาพแล้ว', 2000);
+      };
+      img.onerror = () => showToast('เปิดภาพนี้ไม่ได้');
+      img.src = v360.url;
+    } else {
+      v360.el.src = v360.url; v360.el.muted = false;
+      v360.el.play().catch(() => { v360.el.muted = true; v360.el.play().catch(() => {}); });
+      const t = new THREE.VideoTexture(v360.el); t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = false;
+      v360.kind = 'video'; set360Tex(t); showToast('กำลังเล่น ' + v360.name, 2500);
+    }
+  };
+  v360.el.addEventListener('error', () => showToast('เล่นวิดีโอนี้ไม่ได้ (ฟอร์แมต/ขนาดใหญ่เกิน)', 4000));
+}
+function pickFile360(){
+  ensure360();
+  if (navigator.userActivation && !navigator.userActivation.isActive){
+    N.pendingFn = () => v360.fin.click(); showToast('แตะจอ 1 ครั้งเพื่อเลือกไฟล์', 6000); return;
+  }
+  v360.fin.click();
+}
+function togglePlay360(){
+  if (v360.kind !== 'video') return;
+  if (v360.el.paused) v360.el.play().catch(() => {}); else v360.el.pause();
+  wins.forEach(w => { w.ui.dirty = true; });
+}
+function seek360(d){ if (v360.kind !== 'video' || !v360.el.duration) return; v360.el.currentTime = clamp(v360.el.currentTime + d, 0, v360.el.duration); }
+function zoom360(f){ v360.fov = clamp(v360.fov * f, 25, 100); }
+function reset360(){ v360.yaw = 0; v360.pitch = 0; v360.fov = 70; recenterHeading(); }
+function enter360(){
+  ensure360(); v360.yaw = 0; v360.pitch = 0; v360g.visible = true; env.visible = false;
+  if (!winOpen('vctl')) createWin('vctl');
+  if (v360.kind === 'video') v360.el.play().catch(() => {});
+  showToast('จีบแล้วลากเพื่อหมุนภาพ • จีบสองมือเพื่อซูม', 4000);
+}
+function leave360(){
+  v360g.visible = false; env.visible = !S.mr;
+  if (v360.el) v360.el.pause();
+  const w = wins.find(v => v.type === 'vctl'); if (w) closeWin(w);
+  v360.fov = 70; camera.fov = 70; camera.updateProjectionMatrix();
+}
+function drawVctlWin(x, ui, win){
+  const W = win.d.w, playing = v360.kind === 'video' && !v360.el.paused;
+  const B = [['rw','⏪',() => seek360(-10)], ['pp', playing ? '⏸' : '▶', togglePlay360], ['ff','⏩',() => seek360(10)], ['file','📁',pickFile360],
+             ['zi','＋',() => zoom360(0.85)], ['zo','－',() => zoom360(1/0.85)], ['rc','⟲',reset360], ['ex','🚪',() => setMode('home')]];
+  B.forEach((b, i) => winBtn(x, ui, 'v:' + b[0], b[1], 24 + i*74, 62, 66, 66, b[2], {on:b[0] === 'pp' && playing, font:'30px'}));
+  const el = v360.el, dur = (v360.kind === 'video' && el && isFinite(el.duration)) ? el.duration : 0, cur = dur ? el.currentTime : 0;
+  const tf = s => Math.floor(s/60) + ':' + String(Math.floor(s) % 60).padStart(2, '0');
+  x.fillStyle = '#b8b8c0'; x.font = '20px sans-serif'; x.textAlign = 'left';
+  x.fillText(v360.name + (dur ? '  ' + tf(cur) + ' / ' + tf(dur) : ''), 24, 152, W - 48);
+  x.fillStyle = 'rgba(255,255,255,.18)'; roundRect(x, 24, 160, W - 48, 8, 4); x.fill();
+  if (dur){ x.fillStyle = '#4f8cff'; roundRect(x, 24, 160, Math.max(8, (W - 48)*cur/dur), 8, 4); x.fill(); }
+}
+
+/* ---------- app: shooting game ---------- */
+const targets = [];
+const tgeo = new THREE.SphereGeometry(0.28, 12, 10);
+let spawnAcc = 0;
+const scoreCanvas = document.createElement('canvas'); scoreCanvas.width = 256; scoreCanvas.height = 64;
+const scoreTex = new THREE.CanvasTexture(scoreCanvas);
+const scorePlane = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.2),
+  new THREE.MeshBasicMaterial({map:scoreTex, transparent:true, fog:false}));
+scorePlane.position.set(0, 0.95, -2.2); groups.shoot.add(scorePlane);
+function drawScore(){
+  const x = scoreCanvas.getContext('2d');
+  x.clearRect(0, 0, 256, 64); x.fillStyle = 'rgba(0,0,0,.5)'; roundRect(x, 2, 2, 252, 60, 16); x.fill();
+  x.fillStyle = '#fff'; x.font = 'bold 32px sans-serif'; x.textAlign = 'center';
+  x.fillText('คะแนน ' + S.score, 128, 43); scoreTex.needsUpdate = true;
+}
+function popTarget(m){
+  groups.shoot.remove(m); m.material.dispose();
+  const i = targets.indexOf(m); if (i >= 0) targets.splice(i, 1);
+}
+function spawnTarget(){
+  if (targets.length >= 6) return;
+  const a = THREE.MathUtils.degToRad((Math.random()-0.5)*80), y = (Math.random()-0.4)*1.5, R = 2.5 + Math.random()*1.5;
+  const m = new THREE.Mesh(tgeo, new THREE.MeshBasicMaterial({color:new THREE.Color().setHSL(Math.random(), 0.8, 0.6), fog:false}));
+  m.position.set(R*Math.sin(a), y, -R*Math.cos(a));
+  m.userData.born = performance.now();
+  m.userData.onClick = () => { popTarget(m); S.score++; drawScore(); };
+  groups.shoot.add(m); targets.push(m);
+}
+
+/* ---------- app: gallery ---------- */
+const galleryItems = [];
+[[new THREE.TorusKnotGeometry(0.25, 0.08, 64, 8), -36, 0.1],
+ [new THREE.IcosahedronGeometry(0.3, 0), -12, -0.1],
+ [new THREE.ConeGeometry(0.25, 0.55, 16), 12, 0.1],
+ [new THREE.BoxGeometry(0.4, 0.4, 0.4), 36, -0.1]].forEach(([geo, deg, y]) => {
+  const m = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({color:new THREE.Color().setHSL(Math.random(), 0.7, 0.55)}));
+  const a = THREE.MathUtils.degToRad(deg);
+  m.position.set(2.4*Math.sin(a), y, -2.4*Math.cos(a));
+  m.userData.spd = 0.8;
+  m.userData.onClick = () => { m.userData.spd = m.userData.spd > 1 ? 0.8 : 3; m.material.color.setHSL(Math.random(), 0.7, 0.55); };
+  groups.gallery.add(m); galleryItems.push(m);
+});
+
+/* ---------- modes ---------- */
+function setMode(m){
+  const prev = S.mode; S.mode = m;
+  groups.shoot.visible = (m === 'shoot');
+  groups.gallery.visible = (m === 'gallery');
+  panel.mesh.visible = (m === 'home');
+  recenterHeading();
+  if (m === 'v360') enter360(); else if (prev === 'v360') leave360();
+  updateWinVis();
+  if (m === 'shoot'){ S.score = 0; targets.slice().forEach(popTarget); drawScore(); }
+  invalidateUI();
+}
+function setMR(on){
+  S.mr = on; env.visible = !on && S.mode !== 'v360';
+  scene.background = on ? ((N.boosting && boostTex) ? boostTex : videoTex) : new THREE.Color(BG);
+  scene.fog = on ? null : new THREE.Fog(BG, 6, 22);
+}
+
+/* ---------- sensors: gyro look ---------- */
+const devQ = new THREE.Quaternion();
+const _z = new THREE.Vector3(0,0,1), _e = new THREE.Euler(), _q0 = new THREE.Quaternion(), _q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
+let gotOrient = false;
+function onOrient(e){
+  if (e.alpha == null) return;
+  const o = (screen.orientation ? screen.orientation.angle : (window.orientation || 0)) * Math.PI/180;
+  _e.set(e.beta*Math.PI/180, e.alpha*Math.PI/180, -e.gamma*Math.PI/180, 'YXZ');
+  devQ.setFromEuler(_e); devQ.multiply(_q1); devQ.multiply(_q0.setFromAxisAngle(_z, -o));
+  if (!gotOrient){ gotOrient = true; recenterHeading(); }
+}
+function recenterHeading(){
+  camera.quaternion.copy(devQ); camera.updateMatrixWorld(true);
+  const d = new THREE.Vector3(); camera.getWorldDirection(d);
+  heading.rotation.y = Math.atan2(-d.x, -d.z);
+}
+
+/* ---------- camera + hand tracking ---------- */
+let videoTex = null, landmarker = null, lastVT = -1, frameN = 0, delegate = '-';
+function newHand(){ return {ok:false, x:0, y:0, tx:0, ty:0, px:0, py:0, ptx:0, pty:0, pinch:false, fist:false, lastSeen:0, lm:null, a:null, pp:null, n:0, F:null}; }
+let H = null, F = null, HANDS = [], ZM = null, ZC = null;   // H / F always point at the hand currently being processed
+const D = {ms:0};              // average time of one hand detection (ms)
+let lastDet = 0, detGap = 0;
+const detCv = document.createElement('canvas'); detCv.width = 384; detCv.height = 216;
+const dctx = detCv.getContext('2d');
+// One-Euro filter: smooth when the hand is slow, responsive when it moves fast
+class OneEuro{
+  constructor(){ this.x = null; this.dx = 0; this.t = 0; }
+  reset(){ this.x = null; }
+  static alpha(fc, te){ const tau = 1 / (2*Math.PI*fc); return 1 / (1 + tau/te); }
+  filter(v, t, minC, beta){
+    if (this.x === null){ this.x = v; this.dx = 0; this.t = t; return v; }
+    const te = Math.max((t - this.t)/1000, 0.001); this.t = t;
+    this.dx += OneEuro.alpha(1.0, te) * ((v - this.x)/te - this.dx);
+    this.x += OneEuro.alpha(minC + beta*Math.abs(this.dx), te) * (v - this.x);
+    return this.x;
+  }
+}
+HANDS = [newHand(), newHand()];
+HANDS.forEach(h => { h.F = {x:new OneEuro(), y:new OneEuro(), px:new OneEuro(), py:new OneEuro()}; });
+H = HANDS[0]; F = H.F;
+// every frame: glide the cursor toward the latest filtered target so it moves smoothly between detections
+function easeCursor(dt){
+  const k = 1 - Math.exp(-dt / 0.035);
+  HANDS.forEach(h => {
+    if (!h.ok) return;
+    h.x += (h.tx - h.x)*k; h.y += (h.ty - h.y)*k;
+    h.px += (h.ptx - h.px)*k; h.py += (h.pty - h.py)*k;
+  });
+}
+async function initCamera(){
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:1280}, height:{ideal:720}}, audio:false});
+    video.srcObject = stream; await video.play();
+    N.track = stream.getVideoTracks()[0];
+    try{
+      const caps = N.track.getCapabilities ? N.track.getCapabilities() : {};
+      N.torchOK = !!caps.torch;
+      if (caps.exposureCompensation && caps.exposureCompensation.max > 0) N.expCap = caps.exposureCompensation;
+    }catch(e){}
+    if (!boostTex){
+      boostTex = new THREE.CanvasTexture(boostCv);
+      boostTex.minFilter = THREE.LinearFilter; boostTex.magFilter = THREE.LinearFilter; boostTex.generateMipmaps = false;
+    }
+    if (!videoTex){
+      videoTex = new THREE.VideoTexture(video);
+      videoTex.minFilter = THREE.LinearFilter; videoTex.magFilter = THREE.LinearFilter; videoTex.generateMipmaps = false;
+    }
+    S.cam = true;
+    N.torchOn = false; applyTorch();
+  }catch(e){ const m = $('msg'); if (m) m.textContent = 'เปิดกล้องไม่ได้: ' + e.message; }
+}
+let initErr = '';
+async function initHands(){
+  delegate = '-'; initErr = '';
+  try{
+    const fs = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
+    const model = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+    for (const d of (P.dev === 1 ? ['CPU'] : ['GPU','CPU'])){
+      try{
+        landmarker = await HandLandmarker.createFromOptions(fs, {baseOptions:{modelAssetPath:model, delegate:d}, runningMode:'VIDEO', numHands:P.two ? 2 : 1,
+          minHandDetectionConfidence:0.3, minHandPresenceConfidence:0.3, minTrackingConfidence:0.3});
+        delegate = d; break;
+      }catch(e){ initErr = d + ': ' + (e && e.message || e); }
+    }
+    if (delegate === '-') delegate = 'fail';
+  }catch(e){ delegate = 'fail'; initErr = 'wasm: ' + (e && e.message || e); }
+}
+// measure scene brightness, decide digital gain / exposure / torch
+function updateLight(now){
+  if (!S.cam || video.readyState < 2) return;
+  if (now - N.lastProbe > 900){
+    N.lastProbe = now;
+    probeCtx.drawImage(video, 0, 0, 32, 18);
+    const d = probeCtx.getImageData(0, 0, 32, 18).data;
+    let sum = 0;
+    for (let i = 0; i < d.length; i += 4) sum += d[i]*0.299 + d[i+1]*0.587 + d[i+2]*0.114;
+    N.lum = sum / (d.length/4);
+    if (!N.dark && N.lum < 70) N.dark = true; else if (N.dark && N.lum > 105) N.dark = false;
+    if (N.tm === 2 && N.torchOK && !N.torchOn && N.lum < 28) setTorch(true);   // auto torch: switches on in very dark rooms
+    const wantEV = N.mode === 2 ? 1 : 0;
+    if (wantEV !== N.ev){ N.ev = wantEV; applyExposure(); }
+    let tg = 1;
+    if (N.mode === 2) tg = clamp(150 / Math.max(N.lum, 8), 1.5, 8);
+    else if (N.mode === 1 && N.dark) tg = clamp(110 / Math.max(N.lum, 8), 1.5, 6);
+    N.gainT = tg;
+    const warn = N.lum < 20 && !N.torchOn && N.torchOK;
+    if (warn !== N.warn){ N.warn = warn; dock.dirty = true; }
+  }
+  N.gain += (N.gainT - N.gain) * 0.25;
+  const b = N.gain > 1.15;
+  if (b !== N.boosting){ N.boosting = b; invalidateUI(); applyBackground(); }
+}
+// brightened copy of the camera frame (used for hand detection and, in MR, as the background)
+function boostFrame(){
+  const vw = video.videoWidth || 640, vh = video.videoHeight || 360;
+  const w = Math.min(vw, 960), h = Math.round(w * vh / vw);
+  if (boostCv.width !== w || boostCv.height !== h){ boostCv.width = w; boostCv.height = h; }
+  if (HAS_FILTER){
+    bctx.filter = 'brightness(' + N.gain.toFixed(2) + ') contrast(1.12)';
+    bctx.drawImage(video, 0, 0, w, h);
+  } else {
+    bctx.globalCompositeOperation = 'source-over';
+    bctx.drawImage(video, 0, 0, w, h);
+    bctx.globalCompositeOperation = 'lighter';
+    for (let i = 0, n = Math.max(0, Math.round(N.gain) - 1); i < n; i++) bctx.drawImage(video, 0, 0, w, h);
+    bctx.globalCompositeOperation = 'source-over';
+  }
+  if (boostTex) boostTex.needsUpdate = true;
+  N.drawnVT = video.currentTime;
+}
+const dist2 = (a, b) => Math.hypot(a.x-b.x, a.y-b.y);
+const TIPS = [8,12,16,20], PIPS = [6,10,14,18];
+function updateHands(now){
+  if (!landmarker || !S.cam || video.readyState < 2 || video.currentTime === lastVT) return;
+  detGap = Math.max(RATE_MS[P.rate], D.ms * 2.2);   // keep detection under ~45% of the frame budget
+  if (now - lastDet < detGap) return;
+  lastVT = video.currentTime; lastDet = now;
+  let src = video;
+  if (N.boosting){ if (N.drawnVT !== video.currentTime) boostFrame(); src = boostCv; }
+  const t0 = performance.now();
+  const sw = src.videoWidth || src.width || 640, sh = src.videoHeight || src.height || 360;
+  detCv.height = Math.round(384 * sh / sw);
+  dctx.drawImage(src, 0, 0, 384, detCv.height);
+  let r; try{ r = landmarker.detectForVideo(detCv, now); }catch(e){ return; }
+  D.ms += ((performance.now() - t0) - D.ms) * 0.2;
+  const lms = r.landmarks || [];
+  const slots = assignHands(lms, now);
+  HANDS.forEach((h, i) => {
+    h.n = lms.length;
+    if (slots[i]) processHand(h, slots[i], now);
+    else if (now - h.lastSeen > LOST_MS){ h.ok = false; h.lm = null; h.pinch = false; h.fist = false; h.pp = null; }
+  });
+  H = HANDS[0]; F = H.F;
+  // both hands pinching and moving apart / together: zoom
+  const A = HANDS[0], B = HANDS[1];
+  if (P.two && A.ok && B.ok && A.pinch && B.pinch && A.lm && B.lm){
+    const dd = Math.max(0.05, Math.hypot(((A.lm[4].x + A.lm[8].x) - (B.lm[4].x + B.lm[8].x))/2*1.78, ((A.lm[4].y + A.lm[8].y) - (B.lm[4].y + B.lm[8].y))/2));
+    if (!ZC) ZC = {d0:dd};
+    else if (!ZM){ if (Math.abs(dd / ZC.d0 - 1) > 0.18) ZM = {d0:dd, k:1, b:null, t:null}; }
+    else ZM.k += (dd / ZM.d0 - ZM.k) * 0.4;
+  } else { ZC = null; ZM = null; }
+}
+// decide which tracked hand (slot 0 / 1) each detected hand belongs to
+function assignHands(lms, now){
+  const out = [null, null];
+  if (!lms.length) return out;
+  if (!P.two){ out[0] = lms[0]; return out; }
+  const alive = HANDS.map(h => !!(h.pp && h.ok && now - h.lastSeen < LOST_MS));
+  const dist = (l, h) => Math.hypot(l[9].x - h.pp.x, l[9].y - h.pp.y);
+  if (lms.length === 1){
+    const l = lms[0]; let sl = 0;
+    if (alive[0] && alive[1]) sl = dist(l, HANDS[1]) < dist(l, HANDS[0]) ? 1 : 0;
+    else if (alive[0]) sl = dist(l, HANDS[0]) < 0.35 ? 0 : 1;
+    else if (alive[1]) sl = dist(l, HANDS[1]) < 0.35 ? 1 : 0;
+    out[sl] = l; return out;
+  }
+  let a = lms[0], b = lms[1], t;
+  if (alive[0] && alive[1]){ if (dist(a, HANDS[0]) + dist(b, HANDS[1]) > dist(a, HANDS[1]) + dist(b, HANDS[0])){ t = a; a = b; b = t; } }
+  else if (alive[0]){ if (dist(b, HANDS[0]) < dist(a, HANDS[0])){ t = a; a = b; b = t; } }
+  else if (alive[1]){ if (dist(a, HANDS[1]) < dist(b, HANDS[1])){ t = a; a = b; b = t; } }
+  else if (a[9].x > b[9].x){ t = a; a = b; b = t; }
+  out[0] = a; out[1] = b; return out;
+}
+// the original single-hand pipeline, run once per hand (H / F are swapped to that hand)
+function processHand(h, lm, now){
+  H = h; F = h.F;
+  H.pp = {x:lm[9].x, y:lm[9].y};
+  const sm = SMOOTH[P.smooth], pn = PINCH_SETS[P.pinch];
+  const fresh = !H.ok;
+  H.ok = true; H.lastSeen = now; H.lm = lm;
+  if (fresh){ F.x.reset(); F.y.reset(); F.px.reset(); F.py.reset(); }
+
+  // fist = all four fingertips folded closer to the wrist than their middle joints
+  let curled = 0;
+  for (let i = 0; i < 4; i++) if (dist2(lm[TIPS[i]], lm[0]) < dist2(lm[PIPS[i]], lm[0]) * 0.95) curled++;
+  if (!H.fist && curled >= 4) H.fist = true; else if (H.fist && curled <= 2) H.fist = false;
+
+  // palm centre (the pointer while making a fist)
+  H.ptx = F.px.filter(lm[9].x*2-1, now, sm[0], sm[1]);
+  H.pty = F.py.filter(-(lm[9].y*2-1), now, sm[0], sm[1]);
+
+  // pointer: index fingertip (default) or the midpoint between thumb and index tips
+  const rx = P.ptr === 0 ? lm[8].x*2-1 : (lm[4].x + lm[8].x) - 1;
+  const ry = P.ptr === 0 ? -(lm[8].y*2-1) : -((lm[4].y + lm[8].y) - 1);
+  const nx = F.x.filter(rx, now, sm[0], sm[1]), ny = F.y.filter(ry, now, sm[0], sm[1]);
+  const ratio = dist2(lm[4], lm[8]) / (dist2(lm[0], lm[9]) || 1e-3);
+  if (fresh){ H.tx = H.x = nx; H.ty = H.y = ny; H.px = H.ptx; H.py = H.pty; }
+
+  const was = H.pinch;
+  let pinch = was;
+  if (H.fist) pinch = false;
+  else if (!pinch && ratio < pn[0]) pinch = true;
+  else if (pinch && ratio > pn[1]) pinch = false;
+
+  if (pinch && !was) H.a = {nx, ny, cx:H.tx, cy:H.ty};          // remember where the cursor was when the pinch began
+  if (pinch && H.a){                                            // while pinching: only follow the hand's movement
+    H.tx = H.a.cx + (nx - H.a.nx); H.ty = H.a.cy + (ny - H.a.ny);
+  } else if (ratio > HOLD_R){                                   // fingers apart: follow normally
+    H.tx = nx; H.ty = ny;
+  }                                                             // fingers closing: hold still so small targets don't slip away
+  H.pinch = pinch;
+}
+
+/* ---------- 3D hand skeleton + pinch ray (one set per hand) ---------- */
+const CONN = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],[10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+const jointMat = new THREE.PointsMaterial({color:0xe6e8ef, size:0.018, sizeAttenuation:true, fog:false});
+const boneMat = new THREE.LineBasicMaterial({color:0xcfd3de, fog:false});
+const tipGeo = new THREE.SphereGeometry(0.016, 8, 6);
+const rayGeo = new THREE.CylinderGeometry(0.0025, 0.0025, 1, 4, 1);
+const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _d = new THREE.Vector3(), UP = new THREE.Vector3(0,1,0);
+function placeBone(mesh, a, b){
+  mesh.position.copy(a).add(b).multiplyScalar(0.5);
+  _d.subVectors(b, a); const len = _d.length() || 1e-4;
+  mesh.scale.set(1, len, 1);
+  mesh.quaternion.setFromUnitVectors(UP, _d.multiplyScalar(1/len));
+}
+function makeViz(){
+  const g = new THREE.Group(); g.visible = false; camera.add(g);
+  const pts = new THREE.Points(new THREE.BufferGeometry(), jointMat);
+  pts.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(63), 3)); pts.frustumCulled = false; g.add(pts);
+  const lines = new THREE.LineSegments(new THREE.BufferGeometry(), boneMat);
+  lines.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(CONN.length*6), 3)); lines.frustumCulled = false; g.add(lines);
+  const tipMat = new THREE.MeshBasicMaterial({color:0xffffff, fog:false});
+  const tA = new THREE.Mesh(tipGeo, tipMat), tB = new THREE.Mesh(tipGeo, tipMat); g.add(tA); g.add(tB);
+  const rm = new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.55, depthTest:false, fog:false});
+  const rb = new THREE.Mesh(rayGeo, rm); rb.renderOrder = 998; rb.visible = false; scene.add(rb);
+  return {g, pts, lines, tipMat, tA, tB, rm, rb, hs:Array.from({length:21}, () => new THREE.Vector3()), init:false};
+}
+const VIZ = [makeViz(), makeViz()];
+function updateHandViz(i){
+  const v = VIZ[i], h = HANDS[i], cur = CURS[i];
+  if (!h.ok || !h.lm){ v.g.visible = false; v.rb.visible = false; v.init = false; return; }
+  v.g.visible = true;
+  const hs = v.hs, tH = Math.tan(THREE.MathUtils.degToRad(camera.fov/2)), asp = camera.aspect;
+  for (let k = 0; k < 21; k++){
+    const l = h.lm[k];
+    const depth = Math.min(2, Math.max(0.5, HAND_D + l.z*2.5));
+    const tx = (l.x*2-1) * tH * asp * depth, ty = -(l.y*2-1) * tH * depth, tz = -depth;
+    if (!v.init) hs[k].set(tx, ty, tz);
+    else { hs[k].x += (tx - hs[k].x)*0.5; hs[k].y += (ty - hs[k].y)*0.5; hs[k].z += (tz - hs[k].z)*0.5; }
+  }
+  v.init = true;
+  const jp = v.pts.geometry.attributes.position.array, bp = v.lines.geometry.attributes.position.array;
+  for (let k = 0; k < 21; k++){ jp[k*3] = hs[k].x; jp[k*3+1] = hs[k].y; jp[k*3+2] = hs[k].z; }
+  CONN.forEach((c, k) => { const p = hs[c[0]], q = hs[c[1]]; bp.set([p.x,p.y,p.z,q.x,q.y,q.z], k*6); });
+  v.pts.geometry.attributes.position.needsUpdate = true; v.lines.geometry.attributes.position.needsUpdate = true;
+  v.tA.position.copy(hs[4]); v.tB.position.copy(hs[8]);
+  const col = h.pinch ? 0x39e08a : (h.fist ? 0x4f8cff : 0xffffff);
+  v.tipMat.color.set(col); v.rm.color.set(col);
+  if (h.fist) _a.copy(hs[9]); else _a.copy(hs[4]).add(hs[8]).multiplyScalar(0.5);
+  v.g.localToWorld(_a);
+  _b.copy(cur.position);
+  placeBone(v.rb, _a, _b);
+  v.rb.visible = cur.visible;
+}
+
+/* ---------- interaction: hand / gaze dwell / tap ---------- */
+const ray = new THREE.Raycaster();
+let cursor = new THREE.Mesh(new THREE.SphereGeometry(0.035, 12, 10),
+  new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, depthTest:false, depthWrite:false, fog:false}));
+cursor.renderOrder = 999; scene.add(cursor);
+const cursor2 = new THREE.Mesh(new THREE.SphereGeometry(0.035, 12, 10),
+  new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, depthTest:false, depthWrite:false, fog:false}));
+cursor2.renderOrder = 999; cursor2.visible = false; scene.add(cursor2);
+const CURS = [cursor, cursor2];
+let hoverKey = null, hoverT = 0, wasPinch = false, wasFist = false, cool = 0, tap = null, grab = null, sw = null, hovUI = null;
+const CTX = [0, 1].map(() => ({grab:null, sw:null, wasPinch:false, wasFist:false, hoverKey:null, hoverT:0, cool:0}));   // per-hand interaction state
+const hoverReqs = [], hovObjs = [];
+renderer.domElement.addEventListener('pointerdown', e => {
+  if (N.swallow){ N.swallow = false; return; }
+  tap = {x:e.clientX/innerWidth*2-1, y:-(e.clientY/innerHeight)*2+1};
+});
+
+const _dir = new THREE.Vector3(), Yaxis = new THREE.Vector3(0,1,0);
+function rayYawY(R){
+  _dir.copy(ray.ray.direction).applyAxisAngle(Yaxis, -heading.rotation.y);
+  const hl = Math.hypot(_dir.x, _dir.z) || 1e-3;
+  return {yaw:Math.atan2(_dir.x, -_dir.z), y:_dir.y / hl * R};
+}
+function startGrab(kind, target, type){
+  const isWin = typeof target === 'object';
+  const R = isWin ? WIN_R : (target === 'dock' ? DOCK_R : PANEL_R), r = rayYawY(R);
+  grab = {kind, target, type, rayYaw:r.yaw, rayY:r.y, R};
+  if (isWin){ grab.yaw0 = target.pivot.rotation.y; grab.y0 = target.ui.mesh.position.y; grab.s0 = target.s; }
+  else if (target === 'panel'){ grab.yaw0 = panelPivot.rotation.y; grab.y0 = panelPivot.position.y; grab.s0 = S.pscale; }
+  else { grab.yaw0 = dockPivot.rotation.y; grab.y0 = dock.mesh.position.y; }
+}
+function activeList(){
+  const l = [];
+  if (panel.mesh.visible) l.push(panel.mesh);
+  l.push(dock.mesh);
+  wins.forEach(w => { if (w.ui.mesh.visible) l.push(w.ui.mesh); });
+  if (S.mode === 'shoot') l.push(...targets);
+  else if (S.mode === 'gallery') l.push(...galleryItems);
+  return l;
+}
+function interactOne(now, dt, hi){
+  const gazeOn = P.gaze === 1 || (P.gaze === 2 && S.stereo);
+  let p = null, click = false, dwell = false, pinchDown = false, fistDown = false;
+  if (hi === 0 && tap){ p = S.stereo ? {x:0, y:0} : tap; click = true; tap = null; }
+  else if (H.ok){ p = H.fist ? {x:H.px, y:H.py} : H; pinchDown = H.pinch && !wasPinch; fistDown = H.fist && !wasFist; click = pinchDown; }
+  else if (gazeOn && hi === 0 && !HANDS[1].ok){ p = {x:0, y:0}; dwell = true; }
+  const pinching = H.ok && H.pinch, fisting = H.ok && H.fist;
+  wasPinch = pinching; wasFist = fisting;
+
+  if (!p){                      // nothing is pointing (no hand, centre cursor off): hide the cursor and clear hover
+    grab = null; sw = null; cursor.visible = false; hoverKey = null; hoverT = 0;
+    return;
+  }
+  cursor.visible = true;
+  ray.setFromCamera(p, camera);
+
+  // --- dragging the panel / dock, or resizing the panel ---
+  if (grab){
+    const alive = grab.kind === 'fist' ? fisting : pinching;
+    const gw = typeof grab.target === 'object';
+    const gu = gw ? grab.target.ui : (grab.target === 'dock' ? dock : panel);
+    if (!alive){
+      grab = null;
+    } else {
+      const r = rayYawY(grab.R);
+      if (gw){
+        const wn = grab.target;
+        if (grab.type === 'resize'){
+          const w0 = wn.d.w/520*grab.s0, h0 = wn.d.h/520*grab.s0, dx = (r.yaw - grab.rayYaw)*grab.R, dy = r.y - grab.rayY;
+          wn.s = clamp(grab.s0 * (1 + 0.5*(dx/(w0/2) - dy/(h0/2))), 0.5, 2.5); wn.ui.mesh.scale.setScalar(wn.s);
+        } else {
+          wn.pivot.rotation.y = grab.yaw0 - (r.yaw - grab.rayYaw);
+          wn.ui.mesh.position.y = clamp(grab.y0 + (r.y - grab.rayY), -1, 1);
+        }
+      } else if (grab.type === 'resize'){
+        const w0 = BASE_W*grab.s0, h0 = BASE_H*grab.s0;
+        const dx = (r.yaw - grab.rayYaw)*grab.R, dy = r.y - grab.rayY;
+        S.pscale = clamp(grab.s0 * (1 + 0.5*(dx/(w0/2) - dy/(h0/2))), PS_MIN, PS_MAX);
+      } else if (grab.target === 'panel'){
+        panelPivot.rotation.y = grab.yaw0 - (r.yaw - grab.rayYaw);
+        panelPivot.position.y = clamp(grab.y0 + (r.y - grab.rayY), -0.5, 1.0);
+      } else {
+        dockPivot.rotation.y = grab.yaw0 - (r.yaw - grab.rayYaw);
+        dock.mesh.position.y = clamp(grab.y0 + (r.y - grab.rayY), -1.1, 0.5);
+      }
+      const hid = grab.type === 'resize' ? 'resize' : (grab.target === 'dock' ? 'dockbg' : 'grab');
+      hoverReqs.push({ui:gu, h:hid, pr:hid});
+      ray.ray.at(grab.R, cursor.position);
+      cursor.material.color.set(0x39e08a); cursor.scale.setScalar(1);
+      return;
+    }
+  }
+
+  if (sw){
+    if (!pinching){
+      const q = sw; sw = null;
+      if (q.kind === 'press' && !q.cancel && q.reg && q.reg.fn && now > cool){ cool = now + 350; q.reg.fn(); }   // select on release
+    } else if (sw.kind === 'press'){
+      const dx = p.x - sw.x0, dy = p.y - sw.y0;
+      if (sw.ui === panel && !sw.paged && Math.abs(dx) > 0.22 && Math.abs(dx) > Math.abs(dy)*1.3){
+        sw.paged = true; sw.cancel = true; S.page += dx < 0 ? 1 : -1; panel.dirty = true;                       // swipe = flip page
+      } else if (Math.hypot(dx, dy) > 0.3) sw.cancel = true;
+    } else if (sw.kind === 'look'){
+      const k = THREE.MathUtils.degToRad(camera.fov) / 2 * 1.5;
+      v360.yaw = sw.yaw0 - (p.x - sw.x0) * k * camera.aspect;
+      v360.pitch = clamp(sw.pitch0 + (p.y - sw.y0) * k, -1.4, 1.4);
+    }
+  }
+  const list = activeList();
+  const hit = ray.intersectObjects(list, false)[0];
+  const obj = hit ? hit.object : null;
+  const ui = obj && obj.userData.ui ? obj.userData.ui : null;
+  const reg = ui ? ui.at(hit.uv) : null;
+
+  if (ui && reg) hoverReqs.push({ui, h:reg.id, pr:pinching ? reg.id : null});
+  if (obj && !ui) hovObjs.push(obj);
+
+  // a fist closed anywhere over the panel or dock grabs it
+  if (fistDown && ui) startGrab('fist', ui === dock ? 'dock' : (ui.win || 'panel'), 'move');
+
+  const fn = ui ? (reg && reg.fn) : (obj && obj.userData.onClick);
+  const key = (obj && (ui ? (reg && reg.fn ? obj.id + ':' + reg.id : null) : String(obj.id))) || null;
+  if (dwell){
+    if (key && key === hoverKey) hoverT += dt; else hoverT = 0;
+    if (key && hoverT > 1.0){ click = true; hoverT = 0; }
+  } else hoverT = 0;
+  hoverKey = key;
+
+  if (click && now > cool && !grab){
+    if (pinchDown && ui === panel && reg && reg.id === 'grab') startGrab('pinch', 'panel', 'move');
+    else if (pinchDown && ui === panel && reg && reg.id === 'resize') startGrab('pinch', 'panel', 'resize');
+    else if (pinchDown && ui === dock && reg && reg.id === 'dockbg') startGrab('pinch', 'dock', 'move');
+    else if (pinchDown && ui && ui.win && reg && (reg.id === 'grab' || reg.id === 'resize')) startGrab('pinch', ui.win, reg.id === 'grab' ? 'move' : 'resize');
+    else if (fn){
+      if (pinchDown && ui) sw = {kind:'press', ui, reg, x0:p.x, y0:p.y, cancel:false};       // pinch: decide on release (tap vs swipe)
+      else { cool = now + 350; fn(); }
+    }
+  }
+  if (pinchDown && !sw && !grab){
+    if (ui === panel && !reg) sw = {kind:'press', ui, reg:null, x0:p.x, y0:p.y, cancel:false};
+    else if (S.mode === 'v360' && !obj) sw = {kind:'look', x0:p.x, y0:p.y, yaw0:v360.yaw, pitch0:v360.pitch};
+  }
+
+  if (hit) cursor.position.copy(hit.point).addScaledVector(ray.ray.direction, -0.03);
+  else ray.ray.at(PANEL_R, cursor.position);
+  cursor.material.color.set(H.ok ? (H.pinch ? 0x39e08a : (H.fist ? 0x4f8cff : 0xffffff)) : 0xffd24a);
+  cursor.scale.setScalar(1 + hoverT*2);
+}
+
+const NEWCTX = () => ({grab:null, sw:null, wasPinch:false, wasFist:false, hoverKey:null, hoverT:0, cool:0});
+function applyHover(){
+  hovUI = null;
+  allUIs().forEach(u => {
+    let h = null, pr = null;
+    for (const q of hoverReqs){ if (q.ui !== u) continue; if (h === null || (q.pr && !pr)){ h = q.h; pr = q.pr; } }
+    if (h && !hovUI) hovUI = u;
+    if (u.hover !== h || u.press !== pr){ u.hover = h; u.press = pr; u.dirty = true; }
+  });
+  activeList().forEach(o => {
+    if (o.userData.ui) return;
+    const sc = hovObjs.includes(o) ? 1.12 : 1;
+    o.scale.x += (sc - o.scale.x)*0.3; o.scale.y = o.scale.z = o.scale.x;
+  });
+}
+function interact(now, dt){
+  hoverReqs.length = 0; hovObjs.length = 0;
+  if (ZM){                                  // two-hand zoom: whatever the cursor was over (window / dock / panel), else the panel or the 360 view
+    const z = ZM;
+    if (z.b === null){
+      z.t = hovUI || (S.mode === 'v360' ? 'fov' : (panel.mesh.visible ? panel : null));
+      z.b = z.t === 'fov' ? v360.fov : z.t === panel ? S.pscale : (z.t ? z.t.mesh.scale.x : 1);
+    }
+    if (z.t === 'fov') v360.fov = clamp(z.b / z.k, 25, 100);
+    else if (z.t === panel) S.pscale = clamp(z.b * z.k, PS_MIN, PS_MAX);
+    else if (z.t){
+      const ns = clamp(z.b * z.k, z.t === dock ? 0.6 : 0.5, z.t === dock ? 2.2 : 2.5);
+      z.t.mesh.scale.setScalar(ns); if (z.t.win) z.t.win.s = ns;
+    }
+    for (let i = 0; i < 2; i++){ CTX[i] = NEWCTX(); CURS[i].visible = false; CTX[i].wasPinch = true; }
+    applyHover();
+    return;
+  }
+  for (let i = 0; i < 2; i++){
+    H = HANDS[i]; F = H.F; cursor = CURS[i];
+    ({grab, sw, wasPinch, wasFist, hoverKey, hoverT, cool} = CTX[i]);
+    if (i === 1 && !H.ok){ cursor.visible = false; CTX[1] = NEWCTX(); continue; }
+    interactOne(now, dt, i);
+    CTX[i] = {grab, sw, wasPinch, wasFist, hoverKey, hoverT, cool};
+  }
+  H = HANDS[0]; F = H.F; cursor = CURS[0];
+  applyHover();
+}
+
+/* ---------- loop ---------- */
+function resize(){
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = (S.stereo ? w/2 : w) / h;
+  camera.updateProjectionMatrix();
+  hud.style.display = S.stereo ? 'none' : 'block';
+}
+function render(){
+  const w = innerWidth, h = innerHeight;
+  if (S.stereo){
+    camera.updateMatrixWorld(); stereo.eyeSep = S.ipd; stereo.update(camera);
+    renderer.setScissorTest(true);
+    renderer.setViewport(0, 0, w/2, h); renderer.setScissor(0, 0, w/2, h); renderer.render(scene, stereo.cameraL);
+    renderer.setViewport(w/2, 0, w/2, h); renderer.setScissor(w/2, 0, w/2, h); renderer.render(scene, stereo.cameraR);
+    renderer.setScissorTest(false);
+  } else {
+    renderer.setViewport(0, 0, w, h); renderer.render(scene, camera);
+  }
+}
+let last = 0, fpsN = 0, fpsT = 0, lowT = 0;
+function frame(now){
+  requestAnimationFrame(frame);
+  const dt = Math.min((now - last)/1000, 0.1); last = now;
+  if (N.webOpen && !N.webFloat) return;                 // the browser overlay covers the scene: pause the 3D work
+  camera.quaternion.copy(devQ); camera.updateMatrixWorld(true);
+  updateLight(now);
+  if (N.boosting && S.mr && video.currentTime !== N.drawnVT) boostFrame();
+  updateHands(now);
+  easeCursor(dt);
+  interact(now, dt);
+  syncPanelGeo();
+  updateHandViz(0); updateHandViz(1);
+  if (toast.mesh.visible){
+    if (now > N.msgUntil) toast.mesh.visible = false;
+    else toast.mesh.position.set(0, dock.mesh.position.y + 0.24, -DOCK_R + 0.02);
+  }
+  wins.forEach(w => {
+    if (!w.ui.mesh.visible) return;
+    if (w.tick && now - w.lt > w.tick){ w.lt = now; w.ui.dirty = true; }
+    if (w.vmat && videoTex && !w.vmat.map){ w.vmat.map = videoTex; w.vmat.color.set(0xffffff); w.vmat.needsUpdate = true; w.ui.dirty = true; }
+  });
+  if (S.mode === 'v360'){
+    v360g.rotation.set(v360.pitch, v360.base + v360.yaw, 0);
+    if (Math.abs(camera.fov - v360.fov) > 0.05){ camera.fov = v360.fov; camera.updateProjectionMatrix(); }
+  }
+  [panel, dock, toast].concat(wins.map(w => w.ui)).forEach(u => { if (u.dirty && u.mesh.visible && now - (u.lastDraw || 0) > 90){ u.lastDraw = now; u.redraw(); } });
+
+  if (S.mode === 'shoot'){
+    spawnAcc += dt; if (spawnAcc > 1.1){ spawnAcc = 0; spawnTarget(); }
+    targets.slice().forEach(t => { if (now - t.userData.born > 7000) popTarget(t); });
+  } else if (S.mode === 'gallery'){
+    galleryItems.forEach(m => { m.rotation.y += dt*m.userData.spd; m.rotation.x += dt*0.3*m.userData.spd; });
+  }
+  render();
+
+  fpsN++; fpsT += dt;
+  if (fpsT > 0.5){
+    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + ', det ' + D.ms.toFixed(0) + 'ms/' + (detGap ? Math.round(1000/Math.max(detGap,1)) : 0) + 'Hz)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '');
+    const fpsNow = fpsN/fpsT;
+    if (fpsNow < 20 && S.qi > 0 && S.cam !== undefined){ lowT += 0.5; if (lowT >= 2.5){ S.qi--; applyQuality(); savePrefs(); invalidateUI(); lowT = 0; } } else lowT = 0;
+    fpsN = 0; fpsT = 0;
+  }
+}
+
+/* ---------- start ---------- */
+addEventListener('resize', resize);
+
+// browser overlay buttons
+$('wgo').onclick = () => openWeb($('wurl').value);
+$('wurl').addEventListener('keydown', e => { if (e.key === 'Enter') openWeb($('wurl').value); });
+$('wh').onclick = () => { if (N.webUrl) $('wframe').src = N.webUrl; };
+$('wx').onclick = () => { window.open($('wurl').value || N.webUrl, '_blank', 'noopener'); };
+$('wc').onclick = closeWeb;
+$('wf').onclick = () => {
+  N.webFloat = (N.webFloat + 1) % 3;
+  $('web').classList.toggle('fl1', N.webFloat === 1); $('web').classList.toggle('fl2', N.webFloat === 2);
+};
+document.addEventListener('pointerdown', () => { if (N.pendingFn) N.swallow = true; }, true);
+document.addEventListener('click', () => {
+  if (!N.pendingFn) return;
+  const fn = N.pendingFn; N.pendingFn = null; N.swallow = false; fn();
+}, true);
+
+// a real touch right after a hand-triggered launch lets Chrome follow the Android link
+document.addEventListener('pointerdown', () => {
+  if (!N.pending) return;
+  const u = N.pending; N.pending = null; N.swallow = true;
+  setTimeout(() => { N.swallow = false; }, 80);
+  window.location.href = u;
+}, true);
+
+// coming back from another app: restart the camera and screen lock
+document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState !== 'visible' || !S.cam) return;
+  try{ if (N.track && N.track.readyState === 'ended') await initCamera(); else await video.play(); }catch(e){}
+  try{ if (navigator.wakeLock) await navigator.wakeLock.request('screen'); }catch(e){}
+});
+$('go').onclick = async () => {
+  $('msg').textContent = 'กำลังเริ่ม...';
+  try{ if (DeviceOrientationEvent.requestPermission) await DeviceOrientationEvent.requestPermission(); }catch(e){}
+  addEventListener('deviceorientation', onOrient, true);
+  try{ await document.documentElement.requestFullscreen(); await screen.orientation.lock('landscape'); }catch(e){}
+  try{ if (navigator.wakeLock) await navigator.wakeLock.request('screen'); }catch(e){}
+  await initCamera();
+  initHands();
+  nativeInit();
+  $('start').remove();
+  groups.shoot.visible = false; groups.gallery.visible = false; panel.mesh.visible = true;
+  applyQuality(); recenterHeading(); drawScore(); invalidateUI();
+  requestAnimationFrame(frame);
+};
+</script>
+</body>
+</html>

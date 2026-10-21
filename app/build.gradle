@@ -1,0 +1,41 @@
+plugins {
+    id 'com.android.application'
+}
+
+android {
+    namespace 'com.pocketvr.app'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.pocketvr.app'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    // fixed key checked into the repo, so every build is signed the same way and new APKs install over old ones
+    signingConfigs {
+        debug {
+            storeFile file('pocketvr.keystore')
+            storePassword 'pocketvr'
+            keyAlias 'pocketvr'
+            keyPassword 'pocketvr'
+        }
+    }
+
+    buildTypes {
+        debug {
+            signingConfig signingConfigs.debug
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+}
+
+dependencies {
+    implementation 'androidx.webkit:webkit:1.10.0'
+}

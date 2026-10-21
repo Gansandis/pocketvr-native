@@ -1,0 +1,41 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: '8.7'
+
+      - name: Build debug APK
+        run: gradle --no-daemon assembleDebug
+
+      - name: Publish APK as a release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          cp app/build/outputs/apk/debug/app-debug.apk PocketVR.apk
+          gh release create "build-${{ github.run_number }}" PocketVR.apk \
+            --title "PocketVR build ${{ github.run_number }}" \
+            --notes "Download PocketVR.apk and install it" --latest
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: PocketVR-apk
+          path: PocketVR.apk
