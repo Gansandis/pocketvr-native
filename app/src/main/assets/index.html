@@ -55,13 +55,13 @@ video{position:fixed;left:-10px;top:0;width:2px;height:2px;pointer-events:none}
 <script type="module">
 import {HandLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const VERSION = 'v3.9';
+const VERSION = 'v3.10';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
 const IPDS = [0.058, 0.063, 0.068];
 const QUAL = [0.75, 1, 1.5], QNAMES = ['ประหยัด', 'ปกติ', 'คมชัด'];
-const S = {mr:false, stereo:false, ipd:0.063, mode:'home', tab:'all', score:0, cam:false, qi:1, pscale:1.15, page:0};
+const S = {mr:false, stereo:false, ipd:0.063, mode:'home', tab:'all', score:0, cam:false, qi:1, pscale:1.15, page:0, sep:0.08};
 
 /* --- dark-room support --- */
 const NMODES = ['ปิด', 'อัตโนมัติ', 'สว่างสุด'], TMODES = ['ปิด', 'เปิด', 'อัตโนมัติ'];
@@ -123,10 +123,11 @@ function loadPrefs(){
     if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
     if (Number.isInteger(o.nm) && o.nm >= 0) N.mode = Math.min(o.nm, 2);
     if (IPDS.includes(o.ipd)) S.ipd = o.ipd;
+    if (typeof o.sp === 'number') S.sep = clamp(o.sp, 0, 0.24);
   }catch(e){}
 }
 function savePrefs(){
-  try{ localStorage.setItem('pvr_prefs', JSON.stringify(Object.assign({}, P, {qi:S.qi, nm:N.mode, ipd:S.ipd}))); }catch(e){}
+  try{ localStorage.setItem('pvr_prefs', JSON.stringify(Object.assign({}, P, {qi:S.qi, nm:N.mode, ipd:S.ipd, sp:S.sep}))); }catch(e){}
 }
 loadPrefs();
 
@@ -193,6 +194,12 @@ function invalidateUI(){ panel.dirty = true; dock.dirty = true; }
 /* ---------- actions ---------- */
 function toggleMR(){ if (!S.cam) return; setMR(!S.mr); invalidateUI(); }
 function toggleSplit(){ S.stereo = !S.stereo; resize(); invalidateUI(); }
+const SEPS = [0, 0.04, 0.08, 0.12, 0.16, 0.20];
+function cycleSep(){
+  let bi = 0; SEPS.forEach((v, i) => { if (Math.abs(v - S.sep) < Math.abs(SEPS[bi] - S.sep)) bi = i; });
+  S.sep = SEPS[(bi + 1) % SEPS.length]; savePrefs(); invalidateUI();
+  showToast('ระยะภาพซ้าย-ขวา ' + Math.round(S.sep*100) + '% (ถ้ายังเห็นซ้อน ลองเพิ่ม/ลด)', 3500);
+}
 function cycleIPD(){ S.ipd = IPDS[(IPDS.indexOf(S.ipd)+1) % IPDS.length]; savePrefs(); invalidateUI(); }
 function cycleQuality(){ S.qi = (S.qi + 1) % QUAL.length; applyQuality(); savePrefs(); invalidateUI(); }
 function zoomPanel(f){ S.pscale = clamp(S.pscale*f, PS_MIN, PS_MAX); }
@@ -282,7 +289,7 @@ async function reinitHands(){
 }
 function resetSettings(){
   Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0});
-  S.qi = 1; N.mode = 1; S.ipd = 0.063; N.lastProbe = 0;
+  S.qi = 1; N.mode = 1; S.ipd = 0.063; S.sep = 0.08; N.lastProbe = 0;
   applyQuality(); savePrefs(); invalidateUI(); showToast('รีเซ็ตการตั้งค่าแล้ว', 2500);
   reinitHands();
 }
@@ -359,6 +366,7 @@ const SETS = [
   {id:'mr',      t:'ภาพจริง (MR)',        v:() => S.mr ? 'เปิด' : 'ปิด',          on:() => S.mr,       fn:toggleMR},
   {id:'split',   t:'แบ่งจอ VR',           v:() => S.stereo ? 'เปิด' : 'ปิด',      on:() => S.stereo,   fn:toggleSplit},
   {id:'ipd',     t:'ระยะตา',              v:() => Math.round(S.ipd*1000) + ' mm', on:() => false,      fn:cycleIPD},
+  {id:'sep',     t:'ระยะภาพซ้าย-ขวา',     v:() => Math.round(S.sep*100) + '%',    on:() => false,      fn:cycleSep},
   {id:'quality', t:'คุณภาพภาพ',           v:() => QNAMES[S.qi],                   on:() => false,      fn:cycleQuality},
   {id:'gaze',    t:'เคอร์เซอร์กลางจอ',    v:() => GAZE_N[P.gaze],                 on:() => P.gaze > 0, fn:cycleGaze},
   {id:'night',   t:'โหมดมืด',             v:() => NMODES[N.mode],                 on:() => N.mode > 0, fn:cycleNight},
@@ -374,18 +382,18 @@ const SETS = [
 function drawSettings(x, ui, hv, pr){
   x.textBaseline = 'alphabetic';
   SETS.forEach((s, i) => {
-    const col = i < 7 ? 0 : 1, row = i % 7;
-    const rx = 262 + col*374, ry = 112 + row*62, rw = 360, rh = 56;
+    const col = i < 8 ? 0 : 1, row = i % 8;
+    const rx = 262 + col*374, ry = 104 + row*56, rw = 360, rh = 50;
     ui.reg('set:' + s.id, rx, ry, rw, rh, s.fn);
     const isH = hv === 'set:' + s.id, isP = pr === 'set:' + s.id;
     x.fillStyle = isP ? '#5c5c64' : (isH ? '#4a4a50' : '#3a3a3f');
     roundRect(x, rx, ry, rw, rh, 18); x.fill();
     x.fillStyle = '#fff'; x.font = '20px sans-serif'; x.textAlign = 'left';
-    x.fillText(s.t, rx + 16, ry + 35, 172);
+    x.fillText(s.t, rx + 16, ry + 32, 172);
     const on = s.on(), pw = 152, px = rx + rw - pw - 10;
-    x.fillStyle = on ? '#2e9e6b' : '#55555e'; roundRect(x, px, ry + 9, pw, 38, 19); x.fill();
+    x.fillStyle = on ? '#2e9e6b' : '#55555e'; roundRect(x, px, ry + 7, pw, 36, 18); x.fill();
     x.fillStyle = '#fff'; x.font = '18px sans-serif'; x.textAlign = 'center';
-    x.fillText(s.v(), px + pw/2, ry + 34, pw - 14);
+    x.fillText(s.v(), px + pw/2, ry + 31, pw - 14);
     if (isH){ x.strokeStyle = '#fff'; x.lineWidth = 3; roundRect(x, rx+1.5, ry+1.5, rw-3, rh-3, 17); x.stroke(); }
   });
 }
@@ -1334,13 +1342,26 @@ function resize(){
   camera.updateProjectionMatrix();
   hud.style.display = S.stereo ? 'none' : 'block';
 }
+// crop the camera picture to the viewport shape instead of stretching it
+function fitBackground(aspect){
+  const tex = scene.background;
+  if (!tex || !tex.isTexture) return;
+  const el = tex === boostTex ? boostCv : video;
+  const va = (el.videoWidth || el.width || 16) / (el.videoHeight || el.height || 9);
+  let rx = 1, ry = 1;
+  if (aspect < va) rx = aspect / va; else ry = va / aspect;
+  tex.repeat.set(rx, ry); tex.offset.set((1 - rx)/2, (1 - ry)/2);
+}
 function render(){
   const w = innerWidth, h = innerHeight;
+  fitBackground(camera.aspect);
   if (S.stereo){
     camera.updateMatrixWorld(); stereo.eyeSep = S.ipd; stereo.update(camera);
+    // each eye's picture is moved toward the middle so its centre sits in front of the lens (phone screen halves are wider apart than your eyes)
+    const d = Math.round(S.sep * w/2);
     renderer.setScissorTest(true);
-    renderer.setViewport(0, 0, w/2, h); renderer.setScissor(0, 0, w/2, h); renderer.render(scene, stereo.cameraL);
-    renderer.setViewport(w/2, 0, w/2, h); renderer.setScissor(w/2, 0, w/2, h); renderer.render(scene, stereo.cameraR);
+    renderer.setViewport(d, 0, w/2, h); renderer.setScissor(0, 0, w/2, h); renderer.render(scene, stereo.cameraL);
+    renderer.setViewport(w/2 - d, 0, w/2, h); renderer.setScissor(w/2, 0, w/2, h); renderer.render(scene, stereo.cameraR);
     renderer.setScissorTest(false);
   } else {
     renderer.setViewport(0, 0, w, h); renderer.render(scene, camera);
