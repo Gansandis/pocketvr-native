@@ -55,7 +55,7 @@ video{position:fixed;left:-10px;top:0;width:2px;height:2px;pointer-events:none}
 <script type="module">
 import {HandLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const VERSION = 'v3.10';
+const VERSION = 'v3.11';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -152,7 +152,8 @@ const groups = {shoot:new THREE.Group(), gallery:new THREE.Group()};
 Object.values(groups).forEach(g => heading.add(g));
 
 function applyQuality(){
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, QUAL[S.qi]));
+  // in the VR box the lenses magnify the screen, so keep the picture sharp: never go below 1.25x there
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, S.stereo ? Math.max(QUAL[S.qi], 1.25) : QUAL[S.qi]));
   resize();
 }
 
@@ -162,14 +163,20 @@ function roundRect(x, a, b, w, h, r){
   x.arcTo(a,b+h,a,b,r); x.arcTo(a,b,a+w,b,r); x.closePath();
 }
 // W,H = logical size used by the drawing code; k = texture sharpness multiplier
+const UITEX = [];
+// split-screen view shrinks the panels a lot, so text needs mipmaps there; flat view skips them (cheaper uploads)
+function applyTexFilter(tex){
+  const on = !!(S.stereo && renderer.capabilities.isWebGL2);
+  tex.generateMipmaps = on; tex.minFilter = on ? THREE.LinearMipmapLinearFilter : THREE.LinearFilter;
+  tex.anisotropy = on ? Math.min(4, renderer.capabilities.getMaxAnisotropy()) : 1; tex.needsUpdate = true;
+}
 function makeUI(W, H, k, draw){
   const canvas = document.createElement('canvas');
   canvas.width = Math.round(W*k); canvas.height = Math.round(H*k);
   const ctx = canvas.getContext('2d');
   const tex = new THREE.CanvasTexture(canvas);
-  tex.generateMipmaps = false; tex.minFilter = THREE.LinearFilter;
+  applyTexFilter(tex); UITEX.push(tex);
   tex.magFilter = THREE.LinearFilter;
-  tex.anisotropy = 1;
   const ui = {W, H, ctx, tex, regions:[], hover:null, press:null, dirty:true, mesh:null};
   ui.mat = new THREE.MeshBasicMaterial({map:tex, transparent:true, side:THREE.DoubleSide, fog:false, depthWrite:false});
   ui.reg = (id, x, y, w, h, fn) => ui.regions.push({id, x, y, w, h, fn});
@@ -193,7 +200,17 @@ function invalidateUI(){ panel.dirty = true; dock.dirty = true; }
 
 /* ---------- actions ---------- */
 function toggleMR(){ if (!S.cam) return; setMR(!S.mr); invalidateUI(); }
-function toggleSplit(){ S.stereo = !S.stereo; resize(); invalidateUI(); }
+function toggleSplit(){
+  S.stereo = !S.stereo;
+  if (S.stereo){            // bigger menus in the VR box so the text is readable
+    S._ps0 = S.pscale; S._ds0 = dock.mesh.scale.x;
+    S.pscale = Math.max(S.pscale, 1.55); dock.mesh.scale.setScalar(Math.max(dock.mesh.scale.x, 1.35));
+  } else {
+    if (S._ps0) S.pscale = S._ps0;
+    if (S._ds0) dock.mesh.scale.setScalar(S._ds0);
+  }
+  UITEX.forEach(applyTexFilter); applyQuality(); invalidateUI();
+}
 const SEPS = [0, 0.04, 0.08, 0.12, 0.16, 0.20];
 function cycleSep(){
   let bi = 0; SEPS.forEach((v, i) => { if (Math.abs(v - S.sep) < Math.abs(SEPS[bi] - S.sep)) bi = i; });
@@ -245,7 +262,7 @@ function normUrl(u){
 }
 function openWeb(url){
   const u = normUrl(url); if (!u){ showToast('URL ไม่ถูกต้อง'); return; }
-  if (S.stereo){ S.stereo = false; resize(); invalidateUI(); }
+  if (S.stereo) toggleSplit();
   N.webUrl = u; $('wurl').value = u; $('wframe').src = u;
   $('web').hidden = false; N.webOpen = true;
 }
@@ -700,6 +717,7 @@ function closeWin(win){
   win.ui.mesh.geometry.dispose(); win.ui.tex.dispose(); win.ui.mat.dispose();
   if (win.vmesh){ win.vmesh.geometry.dispose(); win.vmat.dispose(); }
   const i = wins.indexOf(win); if (i >= 0) wins.splice(i, 1);
+  const ti = UITEX.indexOf(win.ui.tex); if (ti >= 0) UITEX.splice(ti, 1);
   if (grab && grab.target === win) grab = null;
   CTX.forEach(c => { if (c.grab && c.grab.target === win) c.grab = null; });
   invalidateUI();
@@ -1356,6 +1374,7 @@ function render(){
   const w = innerWidth, h = innerHeight;
   fitBackground(camera.aspect);
   if (S.stereo){
+    camera.focus = PANEL_R;   // menus sit at zero parallax (identical in both eyes) = no double vision on them
     camera.updateMatrixWorld(); stereo.eyeSep = S.ipd; stereo.update(camera);
     // each eye's picture is moved toward the middle so its centre sits in front of the lens (phone screen halves are wider apart than your eyes)
     const d = Math.round(S.sep * w/2);
@@ -1407,7 +1426,7 @@ function frame(now){
   if (fpsT > 0.5){
     hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + ', det ' + D.ms.toFixed(0) + 'ms/' + (detGap ? Math.round(1000/Math.max(detGap,1)) : 0) + 'Hz)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '');
     const fpsNow = fpsN/fpsT;
-    if (fpsNow < 20 && S.qi > 0 && S.cam !== undefined){ lowT += 0.5; if (lowT >= 2.5){ S.qi--; applyQuality(); savePrefs(); invalidateUI(); lowT = 0; } } else lowT = 0;
+    if (fpsNow < 20 && S.qi > (S.stereo ? 1 : 0) && S.cam !== undefined){ lowT += 0.5; if (lowT >= 2.5){ S.qi--; applyQuality(); savePrefs(); invalidateUI(); lowT = 0; } } else lowT = 0;
     fpsN = 0; fpsT = 0;
   }
 }
