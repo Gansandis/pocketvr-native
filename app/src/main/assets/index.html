@@ -55,7 +55,7 @@ video{position:fixed;left:-10px;top:0;width:2px;height:2px;pointer-events:none}
 <script type="module">
 import {HandLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const VERSION = 'v3.13';
+const VERSION = 'v3.14';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -133,11 +133,11 @@ function loadPrefs(){
     if (Number.isInteger(o.cf) && o.cf >= 0 && o.cf < CAMFOVS.length) S.cfI = o.cf;
     if (Number.isInteger(o.vf) && o.vf >= 0 && o.vf < VFOVS.length) S.vfI = o.vf;
     if (Number.isInteger(o.cm) && o.cm >= 0 && o.cm < CMS.length) S.cmI = o.cm;
-    if (o.v !== 313) S.ptI = PTS.length - 1;   // v3.13: the laggy camera picture is the most likely cause of motion sickness, so start in the virtual room
+    if (o.v !== 314) S.ptI = 1;   // v3.14: one-time reset so the camera picture starts large (1.4x) instead of a small box
   }catch(e){}
 }
 function savePrefs(){
-  try{ localStorage.setItem('pvr_prefs', JSON.stringify(Object.assign({}, P, {qi:S.qi, nm:N.mode, ipd:S.ipd, sp:S.sep, pt:S.ptI, cf:S.cfI, vf:S.vfI, cm:S.cmI, v:313}))); }catch(e){}
+  try{ localStorage.setItem('pvr_prefs', JSON.stringify(Object.assign({}, P, {qi:S.qi, nm:N.mode, ipd:S.ipd, sp:S.sep, pt:S.ptI, cf:S.cfI, vf:S.vfI, cm:S.cmI, v:314}))); }catch(e){}
 }
 loadPrefs();
 
