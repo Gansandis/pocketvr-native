@@ -53,9 +53,20 @@ video{position:fixed;left:-10px;top:0;width:2px;height:2px;pointer-events:none}
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));</script>
 <script type="module">
-import {HandLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+const MP_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
+const MP_MODEL_CDN = "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task";
+let HandLandmarker, FilesetResolver, mpLocal = false;
+// hand-tracking files: use the copy bundled inside the APK (mp/, works offline and starts fast); otherwise fall back to the internet
+async function loadMediaPipe(){
+  if (HandLandmarker) return;
+  try{
+    const r = await fetch('mp/hand_landmarker.task', {method:'HEAD'});
+    if (r.ok){ const m = await import('./mp/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = true; return; }
+  }catch(e){}
+  const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
+}
 
-const VERSION = 'v3.16';
+const VERSION = 'v3.17';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1031,8 +1042,9 @@ let initErr = '';
 async function initHands(){
   delegate = '-'; initErr = '';
   try{
-    const fs = await FilesetResolver.forVisionTasks('https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm');
-    const model = 'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task';
+    await loadMediaPipe();
+    const fs = await FilesetResolver.forVisionTasks(mpLocal ? 'mp/wasm' : MP_CDN + '/wasm');
+    const model = mpLocal ? 'mp/hand_landmarker.task' : MP_MODEL_CDN;
     for (const d of (P.dev === 1 ? ['CPU'] : ['GPU','CPU'])){
       try{
         landmarker = await HandLandmarker.createFromOptions(fs, {baseOptions:{modelAssetPath:model, delegate:d}, runningMode:'VIDEO', numHands:P.two ? 2 : 1,
