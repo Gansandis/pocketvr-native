@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.23';
+const VERSION = 'v3.24';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -738,6 +738,7 @@ toast.mesh.visible = false; toast.mesh.rotation.x = -0.45;
 dockPivot.add(toast.mesh);
 
 /* ---------- floating windows (camera / clock / calculator / 360 controls) ---------- */
+const WGRAB = 26;   // strip under every window that holds its drag bar
 const WIN_R = 1.9, WIN_SLOTS = [0.85, -0.85, 1.25, -1.25, 1.65, -1.65], wins = [];
 let CALC = {disp:'0', acc:null, op:null, fresh:true};
 const STOPW = {run:false, t0:0, acc:0};
@@ -765,11 +766,12 @@ function winBtn(x, ui, id, label, bx, by, bw, bh, fn, o){
 }
 function drawWin(win, x, ui){
   const d = win.d, W = d.w, Hh = d.h, hv = ui.hover;
-  x.clearRect(0, 0, W, Hh); x.textBaseline = 'alphabetic';
-  ui.reg('grab', 0, 0, W, 52, null);
+  x.clearRect(0, 0, W, Hh + WGRAB); x.textBaseline = 'alphabetic';
+  ui.reg('grab', Math.max(0, W/2 - 220), Hh - 6, Math.min(W, 440), WGRAB + 6, null);     // drag bar under the window
+  x.fillStyle = hv === 'grab' ? 'rgba(255,255,255,.95)' : 'rgba(255,255,255,.5)'; roundRect(x, W/2 - 70, Hh + 8, 140, 12, 6); x.fill();
   const clear = win.type === 'cam' || win.type === 'nweb';
   if (!clear){ x.fillStyle = 'rgba(30,30,33,.96)'; roundRect(x, 0, 0, W, Hh, 28); x.fill(); }
-  x.fillStyle = hv === 'grab' ? '#3c3c42' : '#2a2a2e'; roundRect(x, 0, 0, W, 52, 26); x.fill();
+  x.fillStyle = '#2a2a2e'; roundRect(x, 0, 0, W, 52, 26); x.fill();
   if (clear) x.fillRect(0, 26, W, 26);
   x.fillStyle = '#fff'; x.font = 'bold 24px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle';
   x.fillText(d.title, 22, 28, W - 100); x.textBaseline = 'alphabetic';
@@ -783,7 +785,7 @@ function drawCamWin(x, ui, win){
   if (!S.cam){ x.fillStyle = 'rgba(20,20,22,.9)'; x.fillRect(0, 52, win.d.w, win.d.h - 52); x.fillStyle = '#aaa'; x.font = '24px sans-serif'; x.textAlign = 'center'; x.fillText('ไม่มีกล้อง', win.d.w/2, 200); }
 }
 // browser inside VR (APK only): a real WebView runs on a private virtual display; we show its pictures here and turn pinches into touches
-const NB = {cv:null, tex:null, ctx:null, busy:false, last:0, have:false, open:false, url:'', urlT:0, tm:0, startUrl:'https://www.google.com/'};
+const NB = {err:'', cv:null, tex:null, ctx:null, busy:false, last:0, have:false, open:false, url:'', urlT:0, tm:0, startUrl:'https://www.google.com/'};
 const NB_TOP = 108, NB_W = 800, NB_H = 450;                      // toolbar ends at y=108, the page area is 800x450 below it
 function nativePost(op, extra){ if (!NATIVE.ok) return; try{ AndroidBridge.postMessage(JSON.stringify(Object.assign({id:0, op}, extra || {}))); }catch(e){} }
 function nbNav(a){ nativePost('nb_nav', {a}); }
@@ -819,7 +821,8 @@ async function pollNweb(now){
   if (NB.busy || now - NB.last < 50) return;
   NB.busy = true; NB.last = now;
   try{
-    const r = await fetch('browser/frame.jpg?' + (++NATIVE.n), {cache:'no-store'});
+    const r = await fetch('/browser/frame.jpg?' + (++NATIVE.n), {cache:'no-store'});
+    NB.err = r.ok ? '' : 'HTTP ' + r.status;
     if (r.ok){
       const bmp = await createImageBitmap(await r.blob());
       if (NB.cv.width !== bmp.width || NB.cv.height !== bmp.height){ NB.cv.width = bmp.width; NB.cv.height = bmp.height; }
@@ -827,8 +830,9 @@ async function pollNweb(now){
       NB.tex.needsUpdate = true;
       if (!NB.have){ NB.have = true; wins.forEach(w => { if (w.type === 'nweb') w.ui.dirty = true; }); }
     }
-  }catch(e){}
+  }catch(e){ NB.err = String(e).slice(0, 60); }
   NB.busy = false;
+  if (!NB.have && NB.err && now - NB.urlT > 1500){ NB.urlT = now; NB.msg = 'รอภาพจากเบราว์เซอร์… (' + NB.err + ')'; wins.forEach(w => { if (w.type === 'nweb') w.ui.dirty = true; }); }
   if (NB.have && now - NB.urlT > 1500){
     NB.urlT = now;
     nativeCall('nb_url').then(m => { if (m.ok && m.data && m.data !== NB.url){ NB.url = String(m.data); wins.forEach(w => { if (w.type === 'nweb') w.ui.dirty = true; }); } });
@@ -952,23 +956,23 @@ function drawKbWin(x, ui, win){
 function createWin(type){
   const d = WINDEFS[type];
   const win = {type, d, s:1, pivot:new THREE.Group(), tick:d.tick || 0, lt:0, slot:0};
-  win.ui = makeUI(d.w, d.h, 1.5, (x, u) => drawWin(win, x, u));
+  win.ui = makeUI(d.w, d.h + WGRAB, 1.5, (x, u) => drawWin(win, x, u));
   win.ui.win = win;
-  win.ui.mesh = new THREE.Mesh(new THREE.PlaneGeometry(d.w/520, d.h/520), win.ui.mat);
+  win.ui.mesh = new THREE.Mesh(new THREE.PlaneGeometry(d.w/520, (d.h + WGRAB)/520), win.ui.mat);
   win.ui.mesh.userData.ui = win.ui;
   win.ui.mesh.position.set(0, d.y !== undefined ? d.y : (d.only ? -0.42 : 0.12), -WIN_R);
   win.pivot.add(win.ui.mesh);
   if (type === 'cam'){
     win.vmat = new THREE.MeshBasicMaterial({map:videoTex || null, color:videoTex ? 0xffffff : 0x111111, fog:false});
     const vm = new THREE.Mesh(new THREE.PlaneGeometry(d.w/520, (d.h - 52)/520), win.vmat);
-    vm.position.set(0, -26/520, -0.003); win.ui.mesh.add(vm); win.vmesh = vm;
+    vm.position.set(0, -(26 - WGRAB/2)/520, -0.003); win.ui.mesh.add(vm); win.vmesh = vm;
   }
   if (type === 'nweb'){
     if (!NB.cv){ NB.cv = document.createElement('canvas'); NB.cv.width = 1280; NB.cv.height = 720; NB.ctx = NB.cv.getContext('2d'); NB.ctx.fillStyle = '#000'; NB.ctx.fillRect(0, 0, 1280, 720);
       NB.tex = new THREE.CanvasTexture(NB.cv); NB.tex.minFilter = THREE.LinearFilter; NB.tex.generateMipmaps = false; }
     win.vmat = new THREE.MeshBasicMaterial({map:NB.tex, fog:false});
     const vm = new THREE.Mesh(new THREE.PlaneGeometry(NB_W/520, NB_H/520), win.vmat);
-    vm.position.set(0, (d.h/2 - (NB_TOP + NB_H/2))/520, -0.003); win.ui.mesh.add(vm); win.vmesh = vm;
+    vm.position.set(0, ((d.h + WGRAB)/2 - (NB_TOP + NB_H/2))/520, -0.003); win.ui.mesh.add(vm); win.vmesh = vm;
     startNweb(win);
   }
   if (d.center){ win.slot = 0; win.pivot.rotation.y = 0; }
