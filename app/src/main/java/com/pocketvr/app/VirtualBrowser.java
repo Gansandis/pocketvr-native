@@ -71,7 +71,9 @@ public class VirtualBrowser {
                 reader.setOnImageAvailableListener(this::onFrame, bg);
                 DisplayManager dm = (DisplayManager) act.getSystemService(Context.DISPLAY_SERVICE);
                 int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY;
-                display = dm.createVirtualDisplay("PocketVR-browser", w, h, 240, reader.getSurface(), flags);
+                // density chosen so pages lay out about 480 CSS pixels wide (phone layout): big text that stays readable through VR box lenses
+                int dpi = (int) Math.round(w * 160.0 / 480.0);
+                display = dm.createVirtualDisplay("PocketVR-browser", w, h, dpi, reader.getSurface(), flags);
                 if (display == null) throw new IllegalStateException("createVirtualDisplay returned null");
                 presentation = new Presentation(act, display.getDisplay()) {
                     @Override
