@@ -135,11 +135,11 @@ function loadPrefs(){
     if (Number.isInteger(o.cf) && o.cf >= 0 && o.cf < CAMFOVS.length) S.cfI = o.cf;
     if (Number.isInteger(o.vf) && o.vf >= 0 && o.vf < VFOVS.length) S.vfI = o.vf;
     if (Number.isInteger(o.cm) && o.cm >= 0 && o.cm < CMS.length) S.cmI = o.cm;
-    if (o.v !== 314) S.ptI = 1;   // v3.14: one-time reset so the camera picture starts large (1.4x) instead of a small box
+    if (o.v !== 315) S.ptI = 3;   // v3.15: one-time reset to the full-screen camera picture (the look the user preferred)
   }catch(e){}
 }
 function savePrefs(){
-  try{ localStorage.setItem('pvr_prefs', JSON.stringify(Object.assign({}, P, {qi:S.qi, nm:N.mode, ipd:S.ipd, sp:S.sep, pt:S.ptI, cf:S.cfI, vf:S.vfI, cm:S.cmI, v:314}))); }catch(e){}
+  try{ localStorage.setItem('pvr_prefs', JSON.stringify(Object.assign({}, P, {qi:S.qi, nm:N.mode, ipd:S.ipd, sp:S.sep, pt:S.ptI, cf:S.cfI, vf:S.vfI, cm:S.cmI, v:315}))); }catch(e){}
 }
 loadPrefs();
 
@@ -214,7 +214,7 @@ function invalidateUI(){ panel.dirty = true; dock.dirty = true; }
 function toggleMR(){
   if (!S.cam) return;
   setMR(!S.mr);
-  if (S.mr && S.stereo && PTS[S.ptI] < 0){ S.ptI = 1; savePrefs(); refreshBackground(); showToast('เปิดภาพกล้องแล้ว ขยาย 1.4x เกือบเต็มตา (ปรับได้ที่ตั้งค่า > ภาพกล้องใน VR Box)', 4500); }   // asking for the camera must show the camera
+  if (S.mr && S.stereo && PTS[S.ptI] < 0){ S.ptI = 3; savePrefs(); refreshBackground(); showToast('เปิดภาพกล้องแล้ว แบบเต็มจอ (ปรับได้ที่ตั้งค่า > ภาพกล้องใน VR Box)', 4500); }   // asking for the camera must show the camera
   invalidateUI();
 }
 function toggleSplit(){
