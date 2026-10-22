@@ -212,7 +212,7 @@ function invalidateUI(){ panel.dirty = true; dock.dirty = true; }
 function toggleMR(){
   if (!S.cam) return;
   setMR(!S.mr);
-  if (S.mr && S.stereo && PTS[S.ptI] < 0){ S.ptI = 0; savePrefs(); refreshBackground(); showToast('เปิดภาพกล้องแล้ว (ถ้าเวียนหัว ไปที่ตั้งค่า > ภาพกล้องใน VR Box > ปิด)', 4500); }   // asking for the camera must show the camera
+  if (S.mr && S.stereo && PTS[S.ptI] < 0){ S.ptI = 1; savePrefs(); refreshBackground(); showToast('เปิดภาพกล้องแล้ว ขยาย 1.4x เกือบเต็มตา (ปรับได้ที่ตั้งค่า > ภาพกล้องใน VR Box)', 4500); }   // asking for the camera must show the camera
   invalidateUI();
 }
 function toggleSplit(){
