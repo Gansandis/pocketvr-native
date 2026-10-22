@@ -2,6 +2,7 @@ package com.pocketvr.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.ActivityOptions;
 import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.pm.PackageManager;
@@ -9,6 +10,7 @@ import android.content.pm.ResolveInfo;
 import android.graphics.Bitmap;
 import android.graphics.Canvas;
 import android.graphics.drawable.Drawable;
+import android.media.projection.MediaProjectionManager;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
@@ -33,7 +35,10 @@ import androidx.webkit.WebViewFeature;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
+import java.util.HashMap;
+import java.util.Map;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
@@ -52,10 +57,13 @@ public class MainActivity extends Activity {
     private static final String ORIGIN = "https://" + HOST;
     private static final int REQ_FILE = 11;
     private static final int REQ_CAMERA = 12;
+    private static final int REQ_CAPTURE = 13;
 
     private WebView web;
     private ValueCallback<Uri[]> fileCallback;
     private PermissionRequest pendingCameraRequest;
+    private JavaScriptReplyProxy capReply;
+    private int capId, capW = 1280, capH = 720;
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
 
     @Override
@@ -81,6 +89,13 @@ public class MainActivity extends Activity {
         final WebViewAssetLoader loader = new WebViewAssetLoader.Builder()
                 .setDomain(HOST)
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
+                .addPathHandler("/screen/", path -> {      // latest picture of the app shown in VR
+                    byte[] b = CaptureService.jpeg;
+                    Map<String, String> hd = new HashMap<>();
+                    hd.put("Cache-Control", "no-store");
+                    if (b == null) return new WebResourceResponse("image/jpeg", null, 404, "No frame", hd, new ByteArrayInputStream(new byte[0]));
+                    return new WebResourceResponse("image/jpeg", null, 200, "OK", hd, new ByteArrayInputStream(b));
+                })
                 .build();
 
         web.setWebViewClient(new WebViewClient() {
@@ -164,8 +179,22 @@ public class MainActivity extends Activity {
         final String pkg = req.optString("pkg");
 
         if ("launch".equals(op)) {
-            boolean ok = launchPackage(pkg);
-            respond(reply, id, ok, null);
+            String err = launchPackage(pkg, req.optBoolean("vd"));
+            respond(reply, id, err == null, err);
+        } else if ("screen_start".equals(op)) {
+            if (CaptureService.running) { respond(reply, id, true, String.valueOf(CaptureService.displayId)); return; }
+            capReply = reply; capId = id;
+            capW = Math.max(320, Math.min(1920, req.optInt("w", 1280)));
+            capH = Math.max(240, Math.min(1080, req.optInt("h", 720)));
+            MediaProjectionManager mpm = (MediaProjectionManager) getSystemService(MEDIA_PROJECTION_SERVICE);
+            try {
+                startActivityForResult(mpm.createScreenCaptureIntent(), REQ_CAPTURE);
+            } catch (Exception e) {
+                respond(reply, id, false, String.valueOf(e));
+            }
+        } else if ("screen_stop".equals(op)) {
+            stopService(new Intent(this, CaptureService.class));
+            respond(reply, id, true, null);
         } else if ("url".equals(op)) {
             String u = req.optString("url");
             boolean ok = u.startsWith("http://") || u.startsWith("https://");
@@ -234,16 +263,24 @@ public class MainActivity extends Activity {
         }
     }
 
-    private boolean launchPackage(String pkg) {
-        if (pkg == null || pkg.isEmpty()) return false;
+    // returns null on success, otherwise a short error text
+    private String launchPackage(String pkg, boolean onVirtualDisplay) {
+        if (pkg == null || pkg.isEmpty()) return "no package";
         Intent i = getPackageManager().getLaunchIntentForPackage(pkg);
-        if (i == null) return false;
+        if (i == null) return "no launch intent";
         i.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
         try {
-            startActivity(i);
-            return true;
+            if (onVirtualDisplay && CaptureService.displayId >= 0) {
+                i.addFlags(Intent.FLAG_ACTIVITY_MULTIPLE_TASK);
+                ActivityOptions o = ActivityOptions.makeBasic();
+                o.setLaunchDisplayId(CaptureService.displayId);
+                startActivity(i, o.toBundle());
+            } else {
+                startActivity(i);
+            }
+            return null;
         } catch (Exception e) {
-            return false;
+            return String.valueOf(e);
         }
     }
 
@@ -284,6 +321,20 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_CAPTURE && capReply != null) {
+            final JavaScriptReplyProxy rp = capReply; final int rid = capId;
+            capReply = null;
+            if (resultCode != RESULT_OK || data == null) { respond(rp, rid, false, "ไม่ได้อนุญาต"); return; }
+            CaptureService.ready = (ok, msg) -> respond(rp, rid, ok, msg);
+            Intent svc = new Intent(this, CaptureService.class);
+            svc.putExtra("code", resultCode); svc.putExtra("data", data); svc.putExtra("w", capW); svc.putExtra("h", capH);
+            try {
+                if (Build.VERSION.SDK_INT >= 26) startForegroundService(svc); else startService(svc);
+            } catch (Exception e) {
+                respond(rp, rid, false, String.valueOf(e));
+            }
+            return;
+        }
         if (requestCode == REQ_FILE && fileCallback != null) {
             fileCallback.onReceiveValue(WebChromeClient.FileChooserParams.parseResult(resultCode, data));
             fileCallback = null;
