@@ -19,12 +19,32 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - name: Bundle hand-tracking files into the app (works offline)
+        run: |
+          set -e
+          A="$GITHUB_WORKSPACE/app/src/main/assets/mp"
+          mkdir -p "$A" /tmp/mp
+          cd /tmp/mp
+          for i in 1 2 3 4; do npm pack @mediapipe/tasks-vision@0.10.14 && break; sleep 20; done
+          tar xzf mediapipe-tasks-vision-0.10.14.tgz
+          cp package/vision_bundle.mjs "$A/"
+          cp -r package/wasm "$A/wasm"
+          curl -fL --retry 6 --retry-delay 10 -o "$A/hand_landmarker.task" \
+            https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
+          ls -la "$A" "$A/wasm"
+
       - uses: gradle/actions/setup-gradle@v3
         with:
           gradle-version: '8.7'
 
       - name: Build debug APK
-        run: gradle --no-daemon assembleDebug
+        run: |
+          # Maven Central sometimes answers 429 (too many requests) to shared CI machines, so retry a few times
+          for i in 1 2 3 4; do
+            gradle --no-daemon assembleDebug && exit 0
+            echo "build attempt $i failed, waiting before retry"; sleep $((i * 45))
+          done
+          exit 1
 
       - name: Publish APK as a release
         env:
