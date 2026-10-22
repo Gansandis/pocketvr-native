@@ -32,6 +32,12 @@ jobs:
           curl -fL --retry 6 --retry-delay 10 -o "$A/hand_landmarker.task" \
             https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task
           ls -la "$A" "$A/wasm"
+          # three.js too, so the app starts with no internet at all
+          mkdir -p "$GITHUB_WORKSPACE/app/src/main/assets/lib" /tmp/th && cd /tmp/th
+          for i in 1 2 3 4; do npm pack three@0.128.0 && break; sleep 20; done
+          tar xzf three-0.128.0.tgz
+          cp package/build/three.min.js "$GITHUB_WORKSPACE/app/src/main/assets/lib/three.min.js"
+          ls -la "$GITHUB_WORKSPACE/app/src/main/assets/lib"
 
       - uses: gradle/actions/setup-gradle@v3
         with:
