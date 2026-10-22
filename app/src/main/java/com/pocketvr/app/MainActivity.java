@@ -86,7 +86,13 @@ public class MainActivity extends Activity {
         web.setWebViewClient(new WebViewClient() {
             @Override
             public WebResourceResponse shouldInterceptRequest(WebView view, WebResourceRequest request) {
-                return loader.shouldInterceptRequest(request.getUrl());
+                WebResourceResponse r = loader.shouldInterceptRequest(request.getUrl());
+                if (r != null) {   // wasm and ES modules must carry the right type or the hand-tracking engine will not start
+                    String path = request.getUrl().getPath();
+                    if (path != null && path.endsWith(".wasm")) r.setMimeType("application/wasm");
+                    else if (path != null && (path.endsWith(".mjs") || path.endsWith(".js"))) r.setMimeType("text/javascript");
+                }
+                return r;
             }
 
             @Override
