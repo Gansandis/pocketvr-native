@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.19';
+const VERSION = 'v3.22';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -115,8 +115,15 @@ const APPS = [
 const WEBS = [
   {n:'Wikipedia',     i:'📚', url:'https://th.wikipedia.org/'},
   {n:'แผนที่ OSM',    i:'🗺', url:'https://www.openstreetmap.org/export/embed.html?bbox=100.45%2C13.65%2C100.65%2C13.85&layer=mapnik'},
-  {n:'DuckDuckGo',    i:'🔎', url:'https://html.duckduckgo.com/html/'}
+  {n:'DuckDuckGo',    i:'🔎', url:'https://html.duckduckgo.com/html/'},
+  {n:'YouTube',       i:'▶️', url:'https://m.youtube.com/'},
+  {n:'Facebook',      i:'📘', url:'https://m.facebook.com/'},
+  {n:'Google',        i:'🔍', url:'https://www.google.com/'},
+  {n:'TikTok',        i:'🎬', url:'https://www.tiktok.com/'},
+  {n:'X (Twitter)',   i:'🐦', url:'https://x.com/'},
+  {n:'Instagram',     i:'📷', url:'https://www.instagram.com/'}
 ];
+const NOEMBED = /(^|\.)(youtube\.com|youtu\.be|facebook\.com|fb\.com|instagram\.com|tiktok\.com|twitter\.com|x\.com|netflix\.com|google\.com|line\.me|discord\.com|reddit\.com|linkedin\.com|spotify\.com|shopee\.co\.th|lazada\.co\.th)$/i;   // these refuse to open inside our floating browser
 const BLOCKED_SCHEMES = /^(javascript|data|file|blob|about|vbscript):/i;
 function loadList(k){ try{ const v = JSON.parse(localStorage.getItem(k) || '[]'); return Array.isArray(v) ? v : []; }catch(e){ return []; } }
 function saveList(k, v){ try{ localStorage.setItem(k, JSON.stringify(v)); }catch(e){} }
@@ -132,12 +139,12 @@ const HOLD_R = 0.45;      // while closing the fingers below this, the cursor st
 const HIT_SLOP = 8;       // extra px around every button (logical UI px)
 const HAND_D = 1.1;       // distance (m) where the hand skeleton is drawn
 const PANEL_R = 2.2, DOCK_R = 2.0;
-const BASE_W = 2.0, BASE_H = 1.1;   // panel size (m) at scale 1
+const BASE_W = 2.0, BASE_H = 1.1 * 589 / 563;   // panel size (m) at scale 1
 const PS_MIN = 0.6, PS_MAX = 2.0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* --- saved preferences --- */
-const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0};
+const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1};
 function loadPrefs(){
   try{
     const o = JSON.parse(localStorage.getItem('pvr_prefs') || '{}');
@@ -153,11 +160,12 @@ function loadPrefs(){
     if (Number.isInteger(o.vf) && o.vf >= 0 && o.vf < VFOVS.length) S.vfI = o.vf;
     if (Number.isInteger(o.cm) && o.cm >= 0 && o.cm < CMS.length) S.cmI = o.cm;
     if (Number.isInteger(o.cq) && o.cq >= 0 && o.cq < CQS.length) S.cqI = o.cq;
+    if (o.w !== 322) P.two = 1;   // v3.22: two-hand tracking + pinch zoom start enabled
     if (o.v !== 315) S.ptI = 3;   // v3.15: one-time reset to the full-screen camera picture (the look the user preferred)
   }catch(e){}
 }
 function savePrefs(){
-  try{ localStorage.setItem('pvr_prefs', JSON.stringify(Object.assign({}, P, {qi:S.qi, nm:N.mode, ipd:S.ipd, sp:S.sep, pt:S.ptI, cf:S.cfI, vf:S.vfI, cm:S.cmI, cq:S.cqI, v:315}))); }catch(e){}
+  try{ localStorage.setItem('pvr_prefs', JSON.stringify(Object.assign({}, P, {qi:S.qi, nm:N.mode, ipd:S.ipd, sp:S.sep, pt:S.ptI, cf:S.cfI, vf:S.vfI, cm:S.cmI, cq:S.cqI, v:315, w:322}))); }catch(e){}
 }
 loadPrefs();
 
@@ -290,13 +298,22 @@ function launchApp(a){
   go(u);
 }
 function addApp(){
-  const n = (prompt('ชื่อแอป (เช่น YouTube)') || '').trim(); if (!n) return;
-  const pkg = (prompt('ชื่อแพ็กเกจ (เช่น com.google.android.youtube)\nเว้นว่างได้ถ้าลิงก์เปิดแอปได้อยู่แล้ว') || '').trim();
-  const link = (prompt('ลิงก์ที่แอปรองรับ\nเช่น https://www.youtube.com/ หรือ line://') || '').trim();
+  vrPrompt('ชื่อแอป (เช่น YouTube)', n => vrPrompt('ชื่อแพ็กเกจ (เว้นว่างได้) เช่น com.google.android.youtube', pkg => vrPrompt('ลิงก์ที่แอปรองรับ เช่น https://www.youtube.com/', link => addAppDone(n, pkg, link))));
+}
+function addAppDone(n, pkg, link){
+  n = (n || '').trim(); pkg = (pkg || '').trim(); link = (link || '').trim();
+  if (!n) return;
   if (!link || BLOCKED_SCHEMES.test(link) || !/^[a-z][a-z0-9+.\-]*:\/\//i.test(link)){ showToast('ลิงก์ไม่ถูกต้อง'); return; }
   customApps.push({n, pkg, link, i:'📱', custom:true}); saveList('pvr_apps', customApps); invalidateUI();
 }
-function clearApps(){ if (confirm('ลบแอปที่เพิ่มเองทั้งหมด?')){ customApps = []; saveList('pvr_apps', customApps); S.page = 0; invalidateUI(); } }
+// confirm() does not exist inside the APK: ask twice within 4 seconds instead
+let confirmKey = '', confirmT = 0;
+function confirmTwice(key, msg, fn){
+  const now = performance.now();
+  if (confirmKey === key && now - confirmT < 4000){ confirmKey = ''; fn(); return; }
+  confirmKey = key; confirmT = now; showToast(msg + ' — กดอีกครั้งเพื่อยืนยัน', 4000);
+}
+function clearApps(){ confirmTwice('apps', 'ลบแอปที่เพิ่มเองทั้งหมด', () => { customApps = []; saveList('pvr_apps', customApps); S.page = 0; invalidateUI(); }); }
 function normUrl(u){
   u = (u || '').trim(); if (!u) return null;
   if (/^https?:\/\//i.test(u)) return u;
@@ -306,6 +323,13 @@ function normUrl(u){
 }
 function openWeb(url){
   const u = normUrl(url); if (!u){ showToast('URL ไม่ถูกต้อง'); return; }
+  let host = ''; try{ host = new URL(u).hostname; }catch(e){}
+  if (NOEMBED.test(host)){          // the site forbids being shown inside another page: hand it to the phone's own browser / app
+    showToast('เว็บนี้ฝังใน VR ไม่ได้ เปิดด้วยเบราว์เซอร์/แอปของเครื่องแทน', 4500);
+    if (NATIVE.ok) nativeCall('url', {url:u}).then(m => { if (!m.ok) showToast('เปิดไม่ได้', 3000); });
+    else window.open(u, '_blank');
+    return;
+  }
   if (S.stereo) toggleSplit();
   N.webUrl = u; $('wurl').value = u; $('wframe').src = u;
   $('web').hidden = false; N.webOpen = true;
@@ -314,12 +338,14 @@ function closeWeb(){
   $('web').hidden = true; $('wframe').src = 'about:blank'; N.webOpen = false; invalidateUI();
 }
 function addWeb(){
-  const n = (prompt('ชื่อเว็บ') || '').trim(); if (!n) return;
-  const url = normUrl(prompt('URL (เช่น https://th.wikipedia.org)') || ''); if (!url){ showToast('URL ไม่ถูกต้อง'); return; }
-  customWebs.push({n, url, i:'🌐', custom:true}); saveList('pvr_webs', customWebs); invalidateUI();
+  vrPrompt('ชื่อเว็บ', n => vrPrompt('URL เช่น https://th.wikipedia.org', u => {
+    n = (n || '').trim(); const url = normUrl(u); if (!n) return;
+    if (!url){ showToast('URL ไม่ถูกต้อง'); return; }
+    customWebs.push({n, url, i:'🌐', custom:true}); saveList('pvr_webs', customWebs); invalidateUI();
+  }));
 }
-function askWeb(){ const u = prompt('พิมพ์ URL หรือคำค้นหา'); if (u) openWeb(u); }
-function clearWebs(){ if (confirm('ลบเว็บที่เพิ่มเองทั้งหมด?')){ customWebs = []; saveList('pvr_webs', customWebs); S.page = 0; invalidateUI(); } }
+function askWeb(){ vrPrompt('พิมพ์ URL หรือคำค้นหา', u => { if (u) openWeb(u); }); }
+function clearWebs(){ confirmTwice('webs', 'ลบเว็บที่เพิ่มเองทั้งหมด', () => { customWebs = []; saveList('pvr_webs', customWebs); S.page = 0; invalidateUI(); }); }
 function setTorch(on){
   if (!N.track || !N.torchOK) return;
   N.track.applyConstraints({advanced:[{torch:on}]})
@@ -340,8 +366,28 @@ function cyclePtr(){ cycleP('ptr', 2); }
 function cycleSmooth(){ cycleP('smooth', 3); }
 function cycleRate(){ cycleP('rate', 3); }
 function cyclePinch(){ cycleP('pinch', 3); }
-function cycleDev(){ cycleP('dev', 2); showToast('เปลี่ยนตัวประมวลผลแทร็กมือ…', 2500); reinitHands(); }
+function cycleDev(){ finishSpeedTest(); cycleP('dev', 2); showToast('เปลี่ยนตัวประมวลผลแทร็กมือ…', 2500); reinitHands(); }
 function cycleTwo(){ cycleP('two', 2); showToast(P.two ? 'โหมดสองมือเปิด: ใช้ได้ทั้งสองมือ • จีบสองมือแล้วถ่าง/หุบเพื่อซูม' : 'ปิดโหมดสองมือ', 3500); reinitHands(); }
+// one-time speed test on first run: if the GPU is slow for hand tracking, try the CPU and keep whichever is faster
+const DT = {done:false, n:0, sum:0, gpu:0};
+try{ DT.done = localStorage.getItem('pvr_dt') === '1'; }catch(e){}
+function finishSpeedTest(){ DT.done = true; try{ localStorage.setItem('pvr_dt', '1'); }catch(e){} }
+function speedTest(ms){
+  if (DT.done || P.dev === 2) return;
+  if (!(delegate === 'GPU' || delegate === 'CPU')) return;
+  if (++DT.n <= 3) return;                    // skip warm-up frames
+  DT.sum += ms;
+  if (DT.n < 13) return;
+  const avg = DT.sum / 10; DT.n = 0; DT.sum = 0;
+  if (delegate === 'GPU'){
+    if (avg <= 60){ finishSpeedTest(); return; }          // GPU is fast enough
+    DT.gpu = avg; P.dev = 1; savePrefs(); showToast('แทร็กมือช้า (' + Math.round(avg) + ' ms) ลองใช้ CPU…', 3500); reinitHands();
+  } else if (DT.gpu){
+    if (avg < DT.gpu * 0.9){ showToast('CPU เร็วกว่า (' + Math.round(avg) + ' ms) ใช้ CPU ต่อ', 3500); }
+    else { P.dev = 0; savePrefs(); showToast('GPU เร็วกว่าหรือเท่ากัน กลับไปใช้ GPU', 3500); reinitHands(); }
+    finishSpeedTest();
+  } else finishSpeedTest();
+}
 async function reinitHands(){
   try{ if (landmarker){ landmarker.close(); landmarker = null; } }catch(e){ landmarker = null; }
   HANDS.forEach(h => { h.ok = false; h.lm = null; h.pinch = false; h.fist = false; h.pp = null; }); ZM = null; ZC = null;
@@ -440,7 +486,7 @@ window.pvrBack = () => {                 // Android back button: close the brows
 };
 
 /* ---------- app panel (Quest Home style) ---------- */
-const PW = 1024, PH = 563;
+const PW = 1024, PH = 589, PBODY = 563;   // PBODY = height of the panel body; the strip below it holds the drag bar
 const NAV = [['all','▦','ทั้งหมด','แอปและเครื่องมือ'], ['apps','🎮','แอปและเกม','แอปและเกม'], ['phone','📱','แอปในเครื่อง','แอปในเครื่อง'], ['web','🌐','เว็บ','เว็บไซต์'], ['settings','⚙','ตั้งค่า','ตั้งค่า']];
 const GRAY = ['#56565e','#38383e'];
 const CARDS = {
@@ -457,9 +503,10 @@ const CARDS = {
   wcam:    {icon:'📹', t:'หน้าต่างกล้อง', sub:() => winOpen('cam') ? 'เปิดอยู่' : 'ปิดอยู่', on:() => winOpen('cam'), g:['#ff8fb1','#b8325f'], fn:() => toggleWin('cam')},
   wclock:  {icon:'⏱', t:'นาฬิกา',       sub:() => winOpen('clock') ? 'เปิดอยู่' : 'จับเวลา', on:() => winOpen('clock'), g:['#ffcf5a','#b07a12'], fn:() => toggleWin('clock')},
   wscreen: {icon:'📲', t:'หน้าจอแอปใน VR', sub:() => winOpen('screen') ? 'เปิดอยู่' : 'ดูแอปอื่น', on:() => winOpen('screen'), g:['#8d6bff','#4a2fb8'], fn:() => toggleWin('screen')},
+  wkb:     {icon:'⌨', t:'คีย์บอร์ด', sub:() => winOpen('kb') ? 'เปิดอยู่' : 'พิมพ์ใน VR', on:() => winOpen('kb'), g:['#6c8cff','#33449e'], fn:() => toggleKb()},
   wcalc:   {icon:'🧮', t:'เครื่องคิดเลข', sub:() => winOpen('calc') ? 'เปิดอยู่' : 'หน้าต่างลอย', on:() => winOpen('calc'), g:['#5fd0c4','#1c7a70'], fn:() => toggleWin('calc')}
 };
-const TABS = {all:['shoot','gallery','v360','wcam','wscreen','wclock','wcalc','mr','split','night','torch'], apps:['shoot','gallery','v360','wcam','wscreen','wclock','wcalc'], tools:['mr','split','ipd','quality','night','torch']};
+const TABS = {all:['shoot','gallery','v360','wcam','wkb','wscreen','wclock','wcalc','mr','split','night','torch'], apps:['shoot','gallery','v360','wcam','wkb','wscreen','wclock','wcalc'], tools:['mr','split','ipd','quality','night','torch']};
 
 const SETS = [
   {id:'mr',      t:'ภาพจริง (MR)',        v:() => S.mr ? 'เปิด' : 'ปิด',          on:() => S.mr,       fn:toggleMR},
@@ -526,20 +573,20 @@ function getCards(tab){
     if (customWebs.length) l.push({id:'clrweb', icon:'🗑', t:'ล้างที่เพิ่ม', sub:() => customWebs.length + ' รายการ', g:GRAY, fn:clearWebs});
     return l;
   }
-  return TABS[tab].filter(id => id !== 'wscreen' || NATIVE.ok).map(id => Object.assign({id}, CARDS[id]));
+  return TABS[tab].filter(id => id !== 'wscreen')   /* hidden: Android refuses to start other apps on our virtual display (SecurityException) */.map(id => Object.assign({id}, CARDS[id]));
 }
 function drawPanel(x, ui){
   const hv = ui.hover, pr = ui.press;
   x.clearRect(0, 0, PW, PH);
   x.textBaseline = 'alphabetic';
 
-  // grab handle (pinch it, or make a fist anywhere on the panel, to drag)
-  ui.reg('grab', 360, 0, 304, 44, null);
+  // grab handle under the panel (pinch it, or make a fist anywhere on the panel, to drag)
+  ui.reg('grab', 300, PBODY - 6, 424, PH - PBODY + 6, null);
   x.fillStyle = (hv === 'grab') ? 'rgba(255,255,255,.95)' : 'rgba(255,255,255,.5)';
-  roundRect(x, 442, 5, 140, 12, 6); x.fill();
+  roundRect(x, 442, PBODY + 8, 140, 12, 6); x.fill();
 
   // body
-  x.fillStyle = 'rgba(30,30,33,.95)'; roundRect(x, 0, 24, PW, PH-24, 40); x.fill();
+  x.fillStyle = 'rgba(30,30,33,.95)'; roundRect(x, 0, 0, PW, PBODY, 40); x.fill();
 
   // sidebar
   x.textAlign = 'left'; x.fillStyle = '#fff'; x.font = 'bold 34px sans-serif';
@@ -604,10 +651,10 @@ function drawPanel(x, ui){
   }
 
   // resize grip (bottom-right) — pinch and drag to scale the panel
-  ui.reg('resize', PW-64, PH-64, 60, 60, null);
+  ui.reg('resize', PW-64, PBODY-64, 60, 60, null);
   x.strokeStyle = (hv === 'resize') ? '#fff' : 'rgba(255,255,255,.55)'; x.lineWidth = 5; x.lineCap = 'round';
   for (let i = 0; i < 3; i++){
-    x.beginPath(); x.moveTo(PW-16-i*10, PH-14); x.lineTo(PW-16, PH-14-i*10); x.stroke();
+    x.beginPath(); x.moveTo(PW-16-i*10, PBODY-14); x.lineTo(PW-16, PBODY-14-i*10); x.stroke();
   }
 }
 const panel = makeUI(PW, PH, 1.5, drawPanel);
@@ -631,15 +678,17 @@ function syncPanelGeo(){
 }
 
 /* ---------- dock (bottom bar, draggable) ---------- */
-const DW = 1150, DH = 112;
+const DW = 1314, DH = 112;
 const DOCK = [
-  {id:'home',    icon:'🏠', c:'#4f8cff', fn:() => { S.tab = 'all'; S.page = 0; setMode('home'); }, on:() => S.mode === 'home'},
+  {id:'home',    icon:'🏠', c:'#4f8cff', fn:() => { S.tab = 'all'; S.page = 0; S.panelHide = false; setMode('home'); }, on:() => S.mode === 'home' && !S.panelHide},
+  {id:'panel',   icon:'🗂', c:'#5b6bd6', fn:togglePanel, on:() => S.mode === 'home' && !S.panelHide},
+  {id:'kb',      icon:'⌨', c:'#3f7fbf', fn:toggleKb,    on:() => winOpen('kb')},
   {id:'shoot',   icon:'🎯', c:'#e5533d', fn:() => setMode('shoot'),   on:() => S.mode === 'shoot'},
   {id:'gallery', icon:'🖼', c:'#8e5bd6', fn:() => setMode('gallery'), on:() => S.mode === 'gallery'},
   {id:'mr',      icon:'📷', c:'#e0457b', fn:toggleMR,    on:() => S.mr},
   {id:'split',   icon:'🥽', c:'#2b8f7a', fn:toggleSplit, on:() => S.stereo},
   {id:'torch',   icon:'🔦', c:'#d9a521', fn:quickTorch,  on:() => N.torchOn},
-  {id:'set',     icon:'⚙', c:'#6b7280', fn:() => { S.tab = 'settings'; S.page = 0; setMode('home'); }, on:() => false}
+  {id:'set',     icon:'⚙', c:'#6b7280', fn:() => { S.tab = 'settings'; S.page = 0; S.panelHide = false; setMode('home'); }, on:() => false}
 ];
 function drawDock(x, ui){
   const hv = ui.hover, pr = ui.press;
@@ -664,11 +713,11 @@ function drawDock(x, ui){
     if (on){ x.fillStyle = '#fff'; x.beginPath(); x.arc(px + s/2, 102, 4, 0, Math.PI*2); x.fill(); }
   };
   DOCK.forEach((d, i) => icon(d.id, d.icon, d.c, 236 + i*84, d.fn, d.on()));
-  x.fillStyle = 'rgba(255,255,255,.14)'; x.fillRect(828, 26, 2, 60);
-  icon('ctr', '⌖', '#55555e', 852, resetPanel, false);
-  x.fillStyle = 'rgba(255,255,255,.14)'; x.fillRect(940, 26, 2, 60);
-  icon('zout', '−', '#55555e', 964, () => zoomPanel(1/1.15), false);
-  icon('zin',  '+', '#55555e', 1048, () => zoomPanel(1.15), false);
+  x.fillStyle = 'rgba(255,255,255,.14)'; x.fillRect(996, 26, 2, 60);
+  icon('ctr', '⌖', '#55555e', 1020, resetPanel, false);
+  x.fillStyle = 'rgba(255,255,255,.14)'; x.fillRect(1108, 26, 2, 60);
+  icon('zout', '−', '#55555e', 1132, () => zoomPanel(1/1.15), false);
+  icon('zin',  '+', '#55555e', 1216, () => zoomPanel(1.15), false);
 }
 const dock = makeUI(DW, DH, 1.5, drawDock);
 dock.mesh = new THREE.Mesh(new THREE.PlaneGeometry(1.4*DW/896, 0.175), dock.mat);
@@ -697,6 +746,7 @@ const WINDEFS = {
   screen:{title:'📱 หน้าจอแอป',        w:640, h:412, content:drawScreenWin},
   clock: {title:'⏱ นาฬิกา',         w:480, h:330, content:drawClockWin, tick:500},
   calc:  {title:'🧮 เครื่องคิดเลข',  w:380, h:540, content:drawCalcWin},
+  kb:    {title:'⌨ คีย์บอร์ด',        w:820, h:480, content:drawKbWin, y:-0.3, center:true},
   vctl:  {title:'🎬 วิดีโอ 360°',    w:640, h:176, content:drawVctlWin, tick:500, only:'v360', noClose:true}
 };
 const allUIs = () => [panel, dock].concat(wins.map(w => w.ui));
@@ -816,6 +866,57 @@ function drawCalcWin(x, ui, win){
     winBtn(x, ui, 'k' + k, k, 16 + c*89, 160 + r*72, 81, 64, () => calcPress(k, win), {font:'30px', on:isOp && CALC.op === k});
   }));
 }
+/* ---------- VR keyboard (Thai / English), a floating window you can press with a pinch ---------- */
+const KB = {text:'', lang:'th', shift:false, title:'พิมพ์ URL หรือคำค้นหา', cb:null};
+const KB_ROWS = {
+  th:  ['ๅ/-ภถุึคตจขช', 'ๆไำพะัีรนยบล', 'ฟหกดเ้่าสวง', 'ผปแอิืทมใฝ'],
+  ths: ['+๑๒๓๔ู฿๕๖๗๘๙', '๐"ฎฑธํ๊ณฯญฐ,', 'ฤฆฏโฌ็๋ษศซ.', '()ฉฮฺ์?ฒฬฦ'],
+  en:  ['1234567890', 'qwertyuiop', 'asdfghjkl', 'zxcvbnm'],
+  ens: ['!@#$%^&*()', 'QWERTYUIOP', 'ASDFGHJKL', 'ZXCVBNM']
+};
+function kbLayout(){ return KB_ROWS[KB.lang + (KB.shift ? 's' : '')].map(r => Array.from(r)); }
+function kbType(ch, win){ if (Array.from(KB.text).length < 150) KB.text += ch; KB.shift = false; win.ui.dirty = true; }
+function kbBack(win){ KB.text = Array.from(KB.text).slice(0, -1).join(''); win.ui.dirty = true; }
+function kbEnter(win){
+  const t = KB.text, cb = KB.cb; KB.text = ''; KB.cb = null; KB.shift = false;
+  if (cb) cb(t); else if (t.trim()) openWeb(t);
+  if (!KB.cb && wins.includes(win)) closeWin(win);        // a following prompt (next question) keeps the keyboard open
+  else win.ui.dirty = true;
+}
+function vrPrompt(title, cb){
+  KB.title = title; KB.cb = cb; KB.text = '';
+  let w = wins.find(v => v.type === 'kb');
+  if (!w){ w = createWin('kb'); showToast('พิมพ์ด้วยการจีบที่ปุ่ม • กด "ไป" เมื่อเสร็จ', 3500); }
+  w.ui.dirty = true;
+}
+function drawKbWin(x, ui, win){
+  const W = win.d.w, gap = 6, kh = 58, kw = (W - 32 - 11*gap) / 12;
+  x.fillStyle = '#111114'; roundRect(x, 16, 62, W - 32, 60, 14); x.fill();
+  x.textAlign = 'left'; x.textBaseline = 'middle';
+  if (KB.text){
+    let t = KB.text; x.font = '32px sans-serif';
+    while (t.length > 1 && x.measureText(t + '▏').width > W - 64) t = t.slice(1);
+    x.fillStyle = '#fff'; x.fillText(t + '▏', 30, 94);
+  } else { x.font = '26px sans-serif'; x.fillStyle = '#7d7d86'; x.fillText(KB.title, 30, 94, W - 64); }
+  x.textBaseline = 'alphabetic';
+  const rows = kbLayout();
+  rows.forEach((row, r) => {
+    const y = 134 + r*(kh + 8);
+    const side = r === 3 ? kw*1.5 : 0;
+    const total = row.length*kw + (row.length - 1)*gap + (r === 3 ? 2*(side + gap) : 0);
+    let bx = (W - total)/2;
+    if (r === 3){ winBtn(x, ui, 'kshift', '⇧', bx, y, side, kh, () => { KB.shift = !KB.shift; win.ui.dirty = true; }, {font:'30px', on:KB.shift}); bx += side + gap; }
+    row.forEach(ch => { winBtn(x, ui, 'k:' + ch, ch, bx, y, kw, kh, () => kbType(ch, win), {font:'30px'}); bx += kw + gap; });
+    if (r === 3) winBtn(x, ui, 'kback', '⌫', bx, y, side, kh, () => kbBack(win), {font:'30px'});
+  });
+  const y = 134 + 4*(kh + 8), avail = W - 16 - 64;
+  const wl = 110, wp = 56, wg = 124, ws = avail - wl - 3*wp - wg - 5*gap;
+  let bx = 16;
+  winBtn(x, ui, 'klang', KB.lang === 'th' ? 'ไทย' : 'EN', bx, y, wl, kh, () => { KB.lang = KB.lang === 'th' ? 'en' : 'th'; KB.shift = false; win.ui.dirty = true; }, {font:'26px'}); bx += wl + gap;
+  ['.', '/', '-'].forEach(ch => { winBtn(x, ui, 'k:' + ch, ch, bx, y, wp, kh, () => kbType(ch, win), {font:'30px'}); bx += wp + gap; });
+  winBtn(x, ui, 'kspace', '␣', bx, y, ws, kh, () => kbType(' ', win), {font:'30px'}); bx += ws + gap;
+  winBtn(x, ui, 'kgo', 'ไป', bx, y, wg, kh, () => kbEnter(win), {font:'28px', on:true});
+}
 function createWin(type){
   const d = WINDEFS[type];
   const win = {type, d, s:1, pivot:new THREE.Group(), tick:d.tick || 0, lt:0, slot:0};
@@ -823,7 +924,7 @@ function createWin(type){
   win.ui.win = win;
   win.ui.mesh = new THREE.Mesh(new THREE.PlaneGeometry(d.w/520, d.h/520), win.ui.mat);
   win.ui.mesh.userData.ui = win.ui;
-  win.ui.mesh.position.set(0, d.only ? -0.42 : 0.12, -WIN_R);
+  win.ui.mesh.position.set(0, d.y !== undefined ? d.y : (d.only ? -0.42 : 0.12), -WIN_R);
   win.pivot.add(win.ui.mesh);
   if (type === 'cam'){
     win.vmat = new THREE.MeshBasicMaterial({map:videoTex || null, color:videoTex ? 0xffffff : 0x111111, fog:false});
@@ -838,7 +939,8 @@ function createWin(type){
     vm.position.set(0, -26/520, -0.003); win.ui.mesh.add(vm); win.vmesh = vm;
     startScreen(win);
   }
-  if (!d.only){
+  if (d.center){ win.slot = 0; win.pivot.rotation.y = 0; }
+  else if (!d.only){
     const used = wins.map(w => w.slot);
     win.slot = WIN_SLOTS.find(s => !used.includes(s)); if (win.slot === undefined) win.slot = 0;
     win.pivot.rotation.y = win.slot;
@@ -849,6 +951,7 @@ function createWin(type){
   return win;
 }
 function closeWin(win){
+  if (win.type === 'kb'){ KB.cb = null; KB.text = ''; }
   if (win.type === 'screen'){ if (NATIVE.ok) nativeCall('screen_stop'); NATIVE.vd = -1; SCR.have = false; }
   heading.remove(win.pivot);
   win.ui.mesh.geometry.dispose(); win.ui.tex.dispose(); win.ui.mat.dispose();
@@ -859,6 +962,7 @@ function closeWin(win){
   CTX.forEach(c => { if (c.grab && c.grab.target === win) c.grab = null; });
   invalidateUI();
 }
+function toggleKb(){ const w = wins.find(v => v.type === 'kb'); if (w) closeWin(w); else vrPrompt('พิมพ์ URL หรือคำค้นหา แล้วกด ไป', null); }
 function toggleWin(type){ const w = wins.find(v => v.type === type); if (w) closeWin(w); else { createWin(type); showToast('จีบหัวข้อหน้าต่างเพื่อลาก • มุมขวาล่างเพื่อย่อ/ขยาย', 3500); } }
 
 /* ---------- app: 360° video / photo player ---------- */
@@ -1002,11 +1106,16 @@ const galleryItems = [];
 });
 
 /* ---------- modes ---------- */
+function togglePanel(){
+  if (S.mode !== 'home'){ S.panelHide = false; setMode('home'); return; }
+  S.panelHide = !S.panelHide; panel.mesh.visible = !S.panelHide; invalidateUI();
+  showToast(S.panelHide ? 'ซ่อนแถบหน้าหลัก (กด 🗂 ที่แถบล่างเพื่อเปิด)' : 'แสดงแถบหน้าหลัก', 2500);
+}
 function setMode(m){
   const prev = S.mode; S.mode = m;
   groups.shoot.visible = (m === 'shoot');
   groups.gallery.visible = (m === 'gallery');
-  panel.mesh.visible = (m === 'home');
+  panel.mesh.visible = (m === 'home') && !S.panelHide;
   recenterHeading();
   if (m === 'v360') enter360(); else if (prev === 'v360') leave360();
   updateWinVis();
@@ -1169,6 +1278,7 @@ function updateHands(now){
   dctx.drawImage(src, 0, 0, 384, detCv.height);
   let r; try{ r = landmarker.detectForVideo(detCv, now); }catch(e){ return; }
   D.ms += ((performance.now() - t0) - D.ms) * 0.2;
+  speedTest(performance.now() - t0);
   const lms = r.landmarks || [];
   const slots = assignHands(lms, now);
   HANDS.forEach((h, i) => {
