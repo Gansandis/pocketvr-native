@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.24';
+const VERSION = 'v3.25';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -744,7 +744,7 @@ let CALC = {disp:'0', acc:null, op:null, fresh:true};
 const STOPW = {run:false, t0:0, acc:0};
 const WINDEFS = {
   cam:   {title:'📹 กล้อง',          w:480, h:322, content:drawCamWin},
-  nweb:  {title:'🌐 เบราว์เซอร์',     w:800, h:558, content:drawWebWin},
+  nweb:  {title:'🌐 เบราว์เซอร์',     w:800, h:606, content:drawWebWin},
   clock: {title:'⏱ นาฬิกา',         w:480, h:330, content:drawClockWin, tick:500},
   calc:  {title:'🧮 เครื่องคิดเลข',  w:380, h:540, content:drawCalcWin},
   kb:    {title:'⌨ คีย์บอร์ด',        w:820, h:480, content:drawKbWin, y:-0.3, center:true},
@@ -785,9 +785,13 @@ function drawCamWin(x, ui, win){
   if (!S.cam){ x.fillStyle = 'rgba(20,20,22,.9)'; x.fillRect(0, 52, win.d.w, win.d.h - 52); x.fillStyle = '#aaa'; x.font = '24px sans-serif'; x.textAlign = 'center'; x.fillText('ไม่มีกล้อง', win.d.w/2, 200); }
 }
 // browser inside VR (APK only): a real WebView runs on a private virtual display; we show its pictures here and turn pinches into touches
-const NB = {err:'', cv:null, tex:null, ctx:null, busy:false, last:0, have:false, open:false, url:'', urlT:0, tm:0, startUrl:'https://www.google.com/'};
-const NB_TOP = 108, NB_W = 800, NB_H = 450;                      // toolbar ends at y=108, the page area is 800x450 below it
+const NB = {tabs:[], cur:0, sig:'', err:'', cv:null, tex:null, ctx:null, busy:false, last:0, have:false, open:false, url:'', urlT:0, tm:0, startUrl:'https://www.google.com/'};
+const NB_TOP = 156, NB_W = 800, NB_H = 450;                      // title 0-52, toolbar 52-108, tab strip 108-156, then the page area (800x450)
 function nativePost(op, extra){ if (!NATIVE.ok) return; try{ AndroidBridge.postMessage(JSON.stringify(Object.assign({id:0, op}, extra || {}))); }catch(e){} }
+function nbCloseTab(i, win){
+  if (NB.tabs.length <= 1){ closeWin(win); return; }
+  nativePost('nb_closetab', {i}); NB.tabs.splice(i, 1); NB.cur = Math.min(NB.cur, NB.tabs.length - 1); NB.urlT = 0; win.ui.dirty = true;
+}
 function nbNav(a){ nativePost('nb_nav', {a}); }
 function nbGo(u){
   const url = normUrl(u); if (!url){ showToast('URL ไม่ถูกต้อง'); return; }
@@ -804,10 +808,27 @@ function drawWebWin(x, ui, win){
   winBtn(x, ui, 'nbfwd', '▶', 66, 58, 52, 44, () => nbNav('forward'), {font:'22px'});
   winBtn(x, ui, 'nbre', '⟳', 122, 58, 52, 44, () => nbNav('reload'), {font:'26px'});
   winBtn(x, ui, 'nbkb', '⌨', 178, 58, 52, 44, toggleKb, {font:'26px', on:winOpen('kb')});
-  ui.reg('nburl', 238, 58, W - 248, 44, () => vrPrompt('พิมพ์ URL หรือคำค้นหา', u => { if (u) nbGo(u); }));
+  ui.reg('nburl', 238, 58, W - 248, 44, () => vrPrompt('พิมพ์ URL หรือคำค้นหา (เปิดในแท็บนี้)', u => { if (u) nbGo(u); }));
   x.fillStyle = ui.hover === 'nburl' ? '#4a4a50' : '#18181b'; roundRect(x, 238, 58, W - 248, 44, 22); x.fill();
   x.fillStyle = '#d0d0d6'; x.font = '21px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle';
-  x.fillText(NB.url || 'แตะเพื่อพิมพ์ที่อยู่เว็บ', 256, 81, W - 284); x.textBaseline = 'alphabetic';
+  const curTab = NB.tabs[NB.cur];
+  x.fillText((curTab && curTab.u) || NB.url || 'แตะเพื่อพิมพ์ที่อยู่เว็บ', 256, 81, W - 284); x.textBaseline = 'alphabetic';
+  // tab strip
+  x.fillStyle = 'rgba(30,30,33,.98)'; x.fillRect(0, 108, W, 48);
+  const nt = Math.max(1, NB.tabs.length), tw = Math.min(190, (W - 74) / nt);
+  NB.tabs.forEach((t, i) => {
+    const bx = 8 + i*(tw + 4), on = i === NB.cur, hv = ui.hover === 'nbt' + i;
+    ui.reg('nbt' + i, bx, 112, tw, 40, () => { nativePost('nb_switch', {i}); NB.cur = i; ui.dirty = true; });
+    x.fillStyle = on ? '#3d3d45' : (hv ? '#34343b' : '#26262b'); roundRect(x, bx, 112, tw, 40, 12); x.fill();
+    if (on){ x.fillStyle = '#6ea8ff'; x.fillRect(bx + 10, 148, tw - 20, 3); }
+    let name = t.t || ''; if (!name){ try{ name = new URL(t.u).hostname.replace(/^(www|m)\./, ''); }catch(e){ name = 'แท็บใหม่'; } }
+    x.fillStyle = on ? '#fff' : '#b8b8c0'; x.font = '19px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle';
+    x.fillText(name, bx + 12, 133, tw - 52); x.textBaseline = 'alphabetic';
+    const cx = bx + tw - 34, hx = ui.hover === 'nbx' + i;
+    ui.reg('nbx' + i, cx, 116, 30, 32, () => nbCloseTab(i, win));
+    x.fillStyle = hx ? '#ff6b6b' : 'rgba(255,255,255,.55)'; x.font = '20px sans-serif'; x.textAlign = 'center'; x.fillText('✕', cx + 15, 139);
+  });
+  if (NB.tabs.length < 6) winBtn(x, ui, 'nbnew', '＋', 8 + NB.tabs.length*(tw + 4), 112, 44, 40, () => { nativePost('nb_newtab', {url:'https://www.google.com/'}); NB.urlT = 0; }, {font:'26px'});
   ui.reg('nbview', 0, NB_TOP, NB_W, NB_H, null);                    // page area: pinch = touch, drag = scroll
   const r = ui.regions[ui.regions.length - 1];
   r.touch = {down:(cx, cy) => nbTouch(0, cx, cy, r), move:(cx, cy) => nbTouch(2, cx, cy, r), up:(cx, cy) => nbTouch(1, cx, cy, r)};
@@ -833,13 +854,18 @@ async function pollNweb(now){
   }catch(e){ NB.err = String(e).slice(0, 60); }
   NB.busy = false;
   if (!NB.have && NB.err && now - NB.urlT > 1500){ NB.urlT = now; NB.msg = 'รอภาพจากเบราว์เซอร์… (' + NB.err + ')'; wins.forEach(w => { if (w.type === 'nweb') w.ui.dirty = true; }); }
-  if (NB.have && now - NB.urlT > 1500){
+  if (NB.have && now - NB.urlT > 1200){
     NB.urlT = now;
-    nativeCall('nb_url').then(m => { if (m.ok && m.data && m.data !== NB.url){ NB.url = String(m.data); wins.forEach(w => { if (w.type === 'nweb') w.ui.dirty = true; }); } });
+    nativeCall('nb_tabs').then(m => {
+      if (!m.ok || !m.data || !m.data.tabs) return;
+      const sig = JSON.stringify(m.data); if (sig === NB.sig) return;
+      NB.sig = sig; NB.tabs = m.data.tabs; NB.cur = m.data.cur || 0;
+      wins.forEach(w => { if (w.type === 'nweb') w.ui.dirty = true; });
+    });
   }
 }
 function startNweb(win){
-  NB.have = false; NB.open = false; NB.url = ''; NB.msg = 'กำลังเปิดเบราว์เซอร์…';
+  NB.have = false; NB.open = false; NB.url = ''; NB.tabs = []; NB.cur = 0; NB.sig = ''; NB.msg = 'กำลังเปิดเบราว์เซอร์…';
   nativeCall('nb_open', {url:NB.startUrl, w:1280, h:720}, 20000).then(m => {
     if (m.ok){ NB.open = true; }
     else { NB.msg = 'เปิดไม่ได้: ' + String(m.data || '').slice(0, 90); showToast(NB.msg, 7000); }
@@ -849,7 +875,7 @@ function startNweb(win){
 function openNativeWeb(url){
   NB.startUrl = url || 'https://www.google.com/';
   const w = wins.find(v => v.type === 'nweb');
-  if (w) nbGo(NB.startUrl); else { createWin('nweb'); showToast('จีบที่หน้าเว็บ = แตะ • จีบแล้วลาก = เลื่อน • ปุ่ม ⌨ เพื่อพิมพ์', 5000); }
+  if (w){ nativePost('nb_newtab', {url:NB.startUrl}); NB.urlT = 0; showToast('เปิดแท็บใหม่', 1800); } else { createWin('nweb'); showToast('จีบที่หน้าเว็บ = แตะ • จีบแล้วลาก = เลื่อน • ปุ่ม ⌨ เพื่อพิมพ์', 5000); }
 }
 function stopwatchMs(){ return STOPW.acc + (STOPW.run ? performance.now() - STOPW.t0 : 0); }
 function drawClockWin(x, ui, win){
