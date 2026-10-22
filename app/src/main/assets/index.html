@@ -209,7 +209,12 @@ function makeUI(W, H, k, draw){
 function invalidateUI(){ panel.dirty = true; dock.dirty = true; }
 
 /* ---------- actions ---------- */
-function toggleMR(){ if (!S.cam) return; setMR(!S.mr); invalidateUI(); }
+function toggleMR(){
+  if (!S.cam) return;
+  setMR(!S.mr);
+  if (S.mr && S.stereo && PTS[S.ptI] < 0){ S.ptI = 0; savePrefs(); refreshBackground(); showToast('เปิดภาพกล้องแล้ว (ถ้าเวียนหัว ไปที่ตั้งค่า > ภาพกล้องใน VR Box > ปิด)', 4500); }   // asking for the camera must show the camera
+  invalidateUI();
+}
 function toggleSplit(){
   S.stereo = !S.stereo;
   if (S.stereo){            // bigger menus in the VR box so the text is readable
