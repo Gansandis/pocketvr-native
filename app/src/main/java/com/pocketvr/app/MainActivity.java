@@ -285,6 +285,18 @@ public class MainActivity extends Activity {
             case "nb_url":
                 respond(reply, id, true, vb.url());
                 break;
+            case "nb_tabs":
+                respond(reply, id, true, vb.tabsInfo());
+                break;
+            case "nb_newtab":
+                vb.newTab(req.optString("url"));
+                break;
+            case "nb_switch":
+                vb.switchTab(req.optInt("i"));
+                break;
+            case "nb_closetab":
+                vb.closeTab(req.optInt("i"));
+                break;
             case "nb_close":
                 vb.close();
                 respond(reply, id, true, null);
