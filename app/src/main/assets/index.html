@@ -55,14 +55,16 @@ video{position:fixed;left:-10px;top:0;width:2px;height:2px;pointer-events:none}
 <script type="module">
 import {HandLandmarker, FilesetResolver} from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
 
-const VERSION = 'v3.14';
+const VERSION = 'v3.15';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
 const IPDS = [0.058, 0.063, 0.068];
 const PTS = [1.0, 1.4, 1.8, 0, -1], PT_N = ['เท่าจริง', 'ขยาย 1.4x', 'ขยาย 1.8x', 'เต็มจอ', 'ปิด (ห้องเสมือน)'];   // -1 = no camera picture in the VR box: zero-latency virtual room
 const CMS = [0, 0.7, 1], CM_N = ['ปิด', 'ปานกลาง', 'มาก'];   // comfort vignette strength while the head turns
-const camOn = () => S.mr && !(S.stereo && PTS[S.ptI] < 0);   // passthrough size in the VR box
+const camOn = () => S.mr && !(S.stereo && PTS[S.ptI] < 0);
+const boxMode = () => S.mr && S.stereo && PTS[S.ptI] > 0;   // camera picture is a window floating inside the virtual room
+const envShown = () => (!camOn() || boxMode()) && S.mode !== 'v360';   // passthrough size in the VR box
 const CAMFOVS = [55, 62, 68, 75, 82], VFOVS = [70, 80, 90, 100];                                // real camera width angle / VR view angle (deg)
 const baseFov = () => S.stereo ? VFOVS[S.vfI] : 70;
 const QUAL = [0.75, 1, 1.5], QNAMES = ['ประหยัด', 'ปกติ', 'คมชัด'];
@@ -369,10 +371,10 @@ function updatePtSize(){
 function refreshBackground(){
   const src = (N.boosting && boostTex) ? boostTex : videoTex;
   const on = camOn();
-  env.visible = !on && S.mode !== 'v360'; scene.fog = on ? null : new THREE.Fog(BG, 6, 22);
+  env.visible = envShown(); scene.fog = (on && !boxMode()) ? null : new THREE.Fog(BG, 6, 22);
   if (!on){ scene.background = new THREE.Color(BG); ptMesh.visible = false; PT.fx = PT.fy = 1; return; }
   if (S.stereo && PTS[S.ptI] > 0 && src){
-    scene.background = new THREE.Color(0x000000);
+    scene.background = new THREE.Color(BG);   // room around the window instead of a black void
     if (ptMesh.material.map !== src){ ptMesh.material.map = src; ptMesh.material.needsUpdate = true; }
     ptMesh.visible = true; updatePtSize();
   } else { scene.background = src; ptMesh.visible = false; PT.fx = PT.fy = 1; }
@@ -863,7 +865,7 @@ function enter360(){
   showToast('จีบแล้วลากเพื่อหมุนภาพ • จีบสองมือเพื่อซูม', 4000);
 }
 function leave360(){
-  v360g.visible = false; env.visible = !camOn();
+  v360g.visible = false; env.visible = envShown();
   if (v360.el) v360.el.pause();
   const w = wins.find(v => v.type === 'vctl'); if (w) closeWin(w);
   v360.fov = baseFov(); camera.fov = baseFov(); camera.updateProjectionMatrix();
