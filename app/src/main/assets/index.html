@@ -50,7 +50,12 @@ video{position:fixed;left:-10px;top:0;width:2px;height:2px;pointer-events:none}
 </div>
 <video id="cam" playsinline muted autoplay></video>
 
-<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+// three.js: use the copy bundled in the APK (lib/) when it exists, otherwise the CDN
+(function(){var u='https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js';
+try{var x=new XMLHttpRequest();x.open('HEAD','lib/three.min.js',false);x.send();if(x.status===200)u='lib/three.min.js';}catch(e){}
+document.write('<script src="'+u+'"><\/script>');})();
+</script>
 <script>if ("serviceWorker" in navigator) addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));</script>
 <script type="module">
 const MP_CDN = "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14";
@@ -66,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.17';
+const VERSION = 'v3.18';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
