@@ -131,7 +131,7 @@ let customApps = loadList('pvr_apps'), customWebs = loadList('pvr_webs');
 
 /* --- tunables --- */
 const PINCH_SETS = [[0.18, 0.30, 'แน่น'], [0.22, 0.34, 'กลาง'], [0.28, 0.42, 'หลวม']];   // [start, release, label]: thumb-index distance / palm size
-const SMOOTH = [[2.5, 4, 'ไว'], [1.2, 3, 'กลาง'], [0.6, 2.5, 'นุ่ม']];                    // One-Euro filter [minCutoff, beta, label]
+const SMOOTH = [[4.0, 8, 'ไวมาก'], [2.5, 5, 'ไว'], [1.0, 3, 'นุ่ม']];                    // One-Euro filter [minCutoff, beta, label]
 const RATE_MS = [33, 50, 80], RATE_N = ['เร็ว', 'กลาง', 'ประหยัด'];                          // minimum gap between hand detections
 const GAZE_N = ['ปิด', 'เปิด', 'เฉพาะแบ่งจอ'], PTR_N = ['ปลายนิ้วชี้', 'กึ่งกลางนิ้วจีบ'], DEV_N = ['GPU', 'CPU'];
 const LOST_MS = 650;      // keep the last hand pose this long after a missed detection
@@ -1343,7 +1343,7 @@ const dist2 = (a, b) => Math.hypot(a.x-b.x, a.y-b.y);
 const TIPS = [8,12,16,20], PIPS = [6,10,14,18];
 function updateHands(now){
   if (!landmarker || !S.cam || video.readyState < 2 || video.currentTime === lastVT) return;
-  detGap = Math.max(RATE_MS[P.rate], D.ms * 2.2);   // keep detection under ~45% of the frame budget
+  detGap = Math.max(RATE_MS[P.rate], D.ms * 1.2);   // keep detection under ~45% of the frame budget
   if (now - lastDet < detGap) return;
   lastVT = video.currentTime; lastDet = now;
   let src = video;
