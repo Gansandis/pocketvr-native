@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.32';
+const VERSION = 'v3.33';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1356,7 +1356,7 @@ function onMotion(e){
   if (!a || a.x == null){ accOK = false; return; }
   accOK = true; accDev.set(a.x, a.y, a.z); accT = performance.now();
 }
-const _aw = new THREE.Vector3();
+const _aw = new THREE.Vector3(), _pq2 = new THREE.Quaternion(), _fa = new THREE.Vector3(), _fb = new THREE.Vector3();
 function updateHead(dt){
   if (!gotOrient){ devUse.copy(devQ); return; }
   // 1) rotation: optional speed-adaptive smoothing (still head = steady picture, fast turn = no lag)
@@ -1385,7 +1385,13 @@ function onOrient(e){
   const o = (screen.orientation ? screen.orientation.angle : (window.orientation || 0)) * Math.PI/180;
   _e.set(e.beta*Math.PI/180, e.alpha*Math.PI/180, -e.gamma*Math.PI/180, 'YXZ');
   devRaw.setFromEuler(_e);
+  const prevQ = _pq2.copy(devQ), had = gotOrient;
   devQ.setFromEuler(_e); devQ.multiply(_q1); devQ.multiply(_q0.setFromAxisAngle(_z, -o));
+  if (had && prevQ.angleTo(devQ) > 0.6){          // a real head cannot turn 35 degrees between two sensor readings: the compass reference jumped (file picker, app switch)
+    _fa.set(0, 0, -1).applyQuaternion(prevQ); _fb.set(0, 0, -1).applyQuaternion(devQ);
+    heading.rotation.y += Math.atan2(-_fb.x, -_fb.z) - Math.atan2(-_fa.x, -_fa.z);   // carry the whole scene along so the screen stays where it was in front of you
+    devUse.copy(devQ);
+  }
   if (!gotOrient){ gotOrient = true; devUse.copy(devQ); recenterHeading(); }
 }
 function recenterHeading(){
