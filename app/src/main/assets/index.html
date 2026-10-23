@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.35';
+const VERSION = 'v3.36';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -145,14 +145,14 @@ const PS_MIN = 0.6, PS_MAX = 2.0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* --- saved preferences --- */
-const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1};
+const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1, lens:0, roi:0, wk:0};
 function loadPrefs(){
   try{
     const o = JSON.parse(localStorage.getItem('pvr_prefs') || '{}');
     for (const k of Object.keys(P)) if (Number.isInteger(o[k]) && o[k] >= 0) P[k] = o[k];
     if (o.airV !== 3) P.sel = 3;                                  // v3.29: air touch becomes the default once
     P.gaze = Math.min(P.gaze, 2); P.ptr = Math.min(P.ptr, 1); P.smooth = Math.min(P.smooth, 2);
-    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.stab = Math.min(P.stab, 2);
+    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 1); P.stab = Math.min(P.stab, 2);
     if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
     if (Number.isInteger(o.nm) && o.nm >= 0) N.mode = Math.min(o.nm, 2);
     if (IPDS.includes(o.ipd)) S.ipd = o.ipd;
@@ -374,6 +374,10 @@ function cycleSel(){ cycleP('sel', 4); showToast('เลือกด้วย: '
 function cycleAirD(){ cycleP('airD', 2); showToast(P.airD === 0 ? 'ทิศสัมผัส: เอื้อมมือไปข้างหน้า (ห่างจากกล้อง) = กด' : 'ทิศสัมผัส: ดึงมือเข้าหากล้อง = กด', 4000); }
 const DOF_N = ['3DoF (หมุนหัว)', '6DoF (ทดลอง: โน้ม/ก้าว)'], STAB_N = ['ปิด', 'กลาง', 'แรง'];
 function cycleDof(){ cycleP('dof', 2); headPos.set(0,0,0); headVel.set(0,0,0); showToast(P.dof === 0 ? '3DoF: หมุนหัวอย่างเดียว (นิ่งที่สุด)' : '6DoF ทดลอง: ใช้เซนเซอร์เร่งความเร็วจับการก้าว/โน้มตัวระยะสั้นๆ แล้วค่อยๆ ดึงกลับ (มือถือไม่มีเซนเซอร์ตำแหน่งจริง)', 5500); }
+const LENS_N = ['ปิด', 'เบา', 'กลาง', 'แรง'];
+function cycleLens(){ cycleP('lens', 4); showToast('ชดเชยเลนส์ VR Box: ' + LENS_N[P.lens] + (P.lens ? ' (บิดภาพให้ตรงเมื่อมองผ่านเลนส์ ใช้ได้ในโหมดแบ่งจอ)' : ''), 4500); }
+function cycleRoi(){ cycleP('roi', 2); roiPrev = null; showToast(P.roi ? 'ตรวจเฉพาะรอบมือ: เปิด (ทดลอง) ถ้ามือหลุดบ่อยให้ปิด' : 'ตรวจเฉพาะรอบมือ: ปิด', 4000); }
+function cycleWk(){ cycleP('wk', 2); showToast(P.wk ? 'ตรวจมือแยกเธรด: เปิด (ทดลอง) กำลังเริ่มใหม่…' : 'ตรวจมือแยกเธรด: ปิด', 3500); reinitHands(); }
 function cycleStab(){ cycleP('stab', 3); showToast('กันจอสั่น: ' + STAB_N[P.stab], 2500); }
 function cyclePokeS(){ cycleP('pokeS', 3); showToast('ความไวการจิ้ม: ' + POKE_N[P.pokeS], 2500); }
 function cycleDev(){ finishSpeedTest(); cycleP('dev', 2); showToast('เปลี่ยนตัวประมวลผลแทร็กมือ…', 2500); reinitHands(); }
@@ -399,13 +403,14 @@ function speedTest(ms){
   } else finishSpeedTest();
 }
 async function reinitHands(){
+  wkStop();
   try{ if (landmarker){ landmarker.close(); landmarker = null; } }catch(e){ landmarker = null; }
   HANDS.forEach(h => { h.ok = false; h.lm = null; h.pinch = false; h.pinchRaw = false; h.fist = false; h.pp = null; }); ZM = null; ZC = null;
   await initHands();
   invalidateUI();
 }
 function resetSettings(){
-  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1});
+  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1, lens:0, roi:0, wk:0});
   S.qi = 1; N.mode = 1; S.ipd = 0.063; S.sep = 0.08; S.ptI = 0; S.cfI = 2; S.vfI = 2; N.lastProbe = 0;
   applyQuality(); savePrefs(); invalidateUI(); showToast('รีเซ็ตการตั้งค่าแล้ว', 2500);
   reinitHands();
@@ -539,6 +544,9 @@ const SETS = [
   {id:'rate',    t:'ความถี่แทร็กมือ',     v:() => RATE_N[P.rate],                 on:() => false,      fn:cycleRate},
   {id:'airD',    t:'ทิศสัมผัสอากาศ',        v:() => P.airD === 0 ? 'เอื้อมไปข้างหน้า' : 'เข้าหากล้อง', on:() => false, fn:cycleAirD},
   {id:'dof',     t:'การติดตามหัว',        v:() => DOF_N[P.dof],                   on:() => P.dof > 0,  fn:cycleDof},
+  {id:'lens',    t:'ชดเชยเลนส์ VR Box',   v:() => LENS_N[P.lens],                  on:() => P.lens > 0, fn:cycleLens},
+  {id:'roi',     t:'ตรวจเฉพาะรอบมือ (ทดลอง)', v:() => P.roi ? 'เปิด' : 'ปิด',        on:() => P.roi > 0,  fn:cycleRoi},
+  {id:'wk',      t:'ตรวจมือแยกเธรด (ทดลอง)',  v:() => P.wk ? 'เปิด' : 'ปิด',         on:() => P.wk > 0,   fn:cycleWk},
   {id:'stab',    t:'กันจอสั่น/ขยับ',      v:() => STAB_N[P.stab],                  on:() => false,      fn:cycleStab},
   {id:'sel',     t:'เลือกด้วย',            v:() => SEL_N[P.sel],                    on:() => false,      fn:cycleSel},
   {id:'pokes',   t:'ความไวการจิ้ม',        v:() => POKE_N[P.pokeS],                 on:() => false,      fn:cyclePokeS},
@@ -803,7 +811,7 @@ function drawCamWin(x, ui, win){
   if (!S.cam){ x.fillStyle = 'rgba(20,20,22,.9)'; x.fillRect(0, 52, win.d.w, win.d.h - 52); x.fillStyle = '#aaa'; x.font = '24px sans-serif'; x.textAlign = 'center'; x.fillText('ไม่มีกล้อง', win.d.w/2, 200); }
 }
 // browser inside VR (APK only): a real WebView runs on a private virtual display; we show its pictures here and turn pinches into touches
-const NB = {desk:false, tabs:[], cur:0, sig:'', err:'', cv:null, tex:null, ctx:null, busy:false, last:0, have:false, open:false, url:'', urlT:0, tm:0, startUrl:'https://www.google.com/'};
+const NB = {slow:0, desk:false, tabs:[], cur:0, sig:'', err:'', cv:null, tex:null, ctx:null, busy:false, last:0, have:false, open:false, url:'', urlT:0, tm:0, startUrl:'https://www.google.com/'};
 const NB_TOP = 156, NB_W = 800, NB_H = 450;                      // title 0-52, toolbar 52-108, tab strip 108-156, then the page area (800x450)
 function nativePost(op, extra){ if (!NATIVE.ok) return; try{ AndroidBridge.postMessage(JSON.stringify(Object.assign({id:0, op}, extra || {}))); }catch(e){} }
 function nbNewTab(url){
@@ -1021,8 +1029,10 @@ function drawKbWin(x, ui, win){
   winBtn(x, ui, 'kspace', '␣', bx, y, ws, kh, () => kbType(' ', win), {font:'30px'}); bx += ws + gap;
   winBtn(x, ui, 'kgo', 'ไป', bx, y, wg, kh, () => kbEnter(win), {font:'28px', on:true});
 }
+const MAX_WINS = 6;
 function createWin(type){
   const d = WINDEFS[type];
+  if (type !== 'kb' && !d.only && wins.filter(v => v.type !== 'kb' && !v.d.only).length >= MAX_WINS){ showToast('เปิดหน้าต่างได้สูงสุด ' + MAX_WINS + ' หน้าต่าง ปิดบางอันก่อน', 3500); return null; }
   const win = {type, d, s:1, pivot:new THREE.Group(), tick:d.tick || 0, lt:0, slot:0};
   win.ui = makeUI(d.w, d.h + WGRAB, 1.5, (x, u) => drawWin(win, x, u));
   win.ui.win = win;
@@ -1068,7 +1078,7 @@ function closeWin(win){
   invalidateUI();
 }
 function toggleKb(){ const w = wins.find(v => v.type === 'kb'); if (w) closeWin(w); else vrPrompt('พิมพ์ URL หรือคำค้นหา แล้วกด ไป', null); }
-function toggleWin(type){ const w = wins.find(v => v.type === type); if (w) closeWin(w); else { createWin(type); showToast('จีบหัวข้อหน้าต่างเพื่อลาก • มุมขวาล่างเพื่อย่อ/ขยาย', 3500); } }
+function toggleWin(type){ const w = wins.find(v => v.type === type); if (w) closeWin(w); else { if (createWin(type)) showToast('จีบหัวข้อหน้าต่างเพื่อลาก • มุมขวาล่างเพื่อย่อ/ขยาย', 3500); } }
 
 /* ---------- app: 360° video / photo player ---------- */
 const v360 = {kind:'demo', name:'ภาพเดโม', el:null, fin:null, tex:null, demoTex:null, mat:null, mesh:null, yaw:0, pitch:0, fov:70, base:-Math.PI/2, url:null};
@@ -1233,7 +1243,8 @@ function cinUseWeb(){
   ensureCinema();
   if (!winOpen('nweb')){
     createWin('nweb'); const w = wins.find(v => v.type === 'nweb');
-    if (w){ w.s = 0.6; w.ui.mesh.scale.setScalar(0.6); w.ui.mesh.position.y = -0.55; }
+    if (!w) return;
+    { w.s = 0.6; w.ui.mesh.scale.setScalar(0.6); w.ui.mesh.position.y = -0.55; }
   }
   if (cin.el) cin.el.pause();
   cin.src = 'web'; cin.aspect = 16/9; cinSetMap(NB.tex); buildCinemaScreen();
@@ -1490,6 +1501,12 @@ async function initHands(){
   delegate = '-'; initErr = '';
   try{
     await loadMediaPipe();
+    if (P.wk){                                       // experimental: run the hand model in its own thread so drawing is never blocked
+      for (const d of (P.dev === 1 ? ['CPU'] : ['GPU','CPU'])){
+        try{ await wkStart(d); delegate = d; wkOn = true; return; }catch(e){ initErr = 'worker ' + d + ': ' + (e && e.message || e); wkStop(); }
+      }
+      showToast('ตรวจมือแยกเธรดไม่ได้บนเครื่องนี้ ใช้แบบปกติแทน', 4500);
+    }
     const fs = await FilesetResolver.forVisionTasks(mpLocal ? 'mp/wasm' : MP_CDN + '/wasm');
     const model = mpLocal ? 'mp/hand_landmarker.task' : MP_MODEL_CDN;
     for (const d of (P.dev === 1 ? ['CPU'] : ['GPU','CPU'])){
@@ -1547,21 +1564,97 @@ function boostFrame(){
 }
 const dist2 = (a, b) => Math.hypot(a.x-b.x, a.y-b.y);
 const TIPS = [8,12,16,20], PIPS = [6,10,14,18];
+// ----- experimental: hand model in a Web Worker -----
+const WK_SRC = `
+let lm = null;
+self.onmessage = async (e) => {
+  const m = e.data;
+  if (m.t === 'init'){
+    try{
+      const mod = await import(m.bundle);
+      const fs = await mod.FilesetResolver.forVisionTasks(m.wasm);
+      lm = await mod.HandLandmarker.createFromOptions(fs, {baseOptions:{modelAssetPath:m.model, delegate:m.delegate}, runningMode:'VIDEO', numHands:m.hands,
+        minHandDetectionConfidence:0.3, minHandPresenceConfidence:0.3, minTrackingConfidence:0.3});
+      postMessage({t:'ready'});
+    }catch(err){ postMessage({t:'fail', e:String(err && err.message || err)}); }
+  } else if (m.t === 'frame' && lm){
+    let r; try{ r = lm.detectForVideo(m.bmp, m.ts); }catch(err){ r = {landmarks:[]}; }
+    try{ m.bmp.close(); }catch(err){}
+    postMessage({t:'res', ts:m.ts, lms:(r.landmarks || [])});
+  }
+};`;
+let wk = null, wkOn = false, wkBusy = false, wkSent = 0, wkInfo = null;
+function wkStop(){ wkOn = false; wkBusy = false; if (wk){ try{ wk.terminate(); }catch(e){} wk = null; } }
+function wkStart(d){
+  return new Promise((res, rej) => {
+    let done = false;
+    const fail = m => { if (!done){ done = true; rej(new Error(m)); } };
+    try{
+      wk = new Worker(URL.createObjectURL(new Blob([WK_SRC], {type:'text/javascript'})));        // a classic worker: the model's loader needs importScripts
+    }catch(e){ fail('no worker'); return; }
+    const base = new URL(mpLocal ? 'mp/' : MP_CDN + '/', location.href).href.replace(/\/$/, '');
+    wk.onerror = e => fail('worker error ' + (e && e.message || ''));
+    wk.onmessage = e => {
+      const m = e.data;
+      if (m.t === 'ready'){ if (!done){ done = true; res(); } }
+      else if (m.t === 'fail') fail(m.e);
+      else if (m.t === 'res'){
+        wkBusy = false; D.ms += ((performance.now() - wkSent) - D.ms) * 0.2;
+        if (wkInfo) applyDetect(m.lms || [], performance.now(), wkInfo);
+      }
+    };
+    wk.postMessage({t:'init', bundle:base + '/vision_bundle.mjs', wasm:base + '/wasm',
+      model:mpLocal ? new URL('mp/hand_landmarker.task', location.href).href : MP_MODEL_CDN, delegate:d, hands:P.two ? 2 : 1});
+    setTimeout(() => fail('timeout'), 25000);
+  });
+}
+// ----- experimental: crop the camera picture around the hand so the model sees it bigger at the same cost -----
+let roiPrev = null, roiN = 0;
+function roiBox(sw, sh){
+  let x0 = 9, y0 = 9, x1 = -9, y1 = -9, n = 0;
+  HANDS.forEach(h => { if (h.ok && h.lm){ n++; h.lm.forEach(p => { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }); } });
+  if (!n){ roiPrev = null; return null; }
+  if (P.two && n < 2 && (++roiN % 5) === 0) return null;                      // now and then look at the whole picture so a second hand can be found
+  const px0 = x0 * sw, px1 = x1 * sw, py0 = y0 * sh, py1 = y1 * sh;
+  const q = roiPrev;
+  if (q && px0 > q.x + q.w*0.08 && px1 < q.x + q.w*0.92 && py0 > q.y + q.h*0.08 && py1 < q.y + q.h*0.92 && Math.max(px1 - px0, py1 - py0) > q.w * 0.25) return q;   // hand still comfortably inside: keep the crop steady (the model tracks better)
+  let side = Math.max(px1 - px0, py1 - py0) * 2.1; side = clamp(side, 0.55 * sh, sh);
+  const cx = (px0 + px1) / 2, cy = (py0 + py1) / 2;
+  roiPrev = {x:clamp(cx - side/2, 0, sw - side), y:clamp(cy - side/2, 0, sh - side), w:side, h:side};
+  return roiPrev;
+}
 function updateHands(now){
-  if (!landmarker || !S.cam || video.readyState < 2 || video.currentTime === lastVT) return;
-  detGap = Math.max(RATE_MS[P.rate], D.ms * 2.2);   // keep detection under ~45% of the frame budget
+  if (!(landmarker || wkOn) || !S.cam || video.readyState < 2 || video.currentTime === lastVT) return;
+  if (wkBusy){ if (now - wkSent > 4000){ showToast('เธรดแยกค้าง กลับไปใช้แบบปกติ', 4000); P.wk = 0; savePrefs(); reinitHands(); } return; }
+  detGap = wkOn ? RATE_MS[P.rate] : Math.max(RATE_MS[P.rate], D.ms * 2.2);   // keep detection under ~45% of the frame budget
   if (now - lastDet < detGap) return;
   lastVT = video.currentTime; lastDet = now;
   let src = video;
   if (N.boosting){ if (N.drawnVT !== video.currentTime) boostFrame(); src = boostCv; }
   const t0 = performance.now();
   const sw = src.videoWidth || src.width || 640, sh = src.videoHeight || src.height || 360;
-  detCv.height = Math.round(384 * sh / sw);
-  dctx.drawImage(src, 0, 0, 384, detCv.height);
+  const box = P.roi ? roiBox(sw, sh) : null;
+  const dW = box ? 288 : 384, dH = box ? 288 : Math.round(384 * sh / sw);
+  if (detCv.width !== dW) detCv.width = dW;
+  if (detCv.height !== dH) detCv.height = dH;
+  if (box) dctx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, dW, dH); else dctx.drawImage(src, 0, 0, dW, dH);
+  const info = {box, sw, sh};
+  if (wkOn){
+    wkBusy = true; wkSent = t0; wkInfo = info;
+    createImageBitmap(detCv).then(b => { if (wk) wk.postMessage({t:'frame', bmp:b, ts:now}, [b]); else b.close(); }).catch(() => { wkBusy = false; });
+    return;
+  }
   let r; try{ r = landmarker.detectForVideo(detCv, now); }catch(e){ return; }
   D.ms += ((performance.now() - t0) - D.ms) * 0.2;
   speedTest(performance.now() - t0);
-  const lms = r.landmarks || [];
+  applyDetect(r.landmarks || [], now, info);
+}
+function applyDetect(lmsRaw, now, info){
+  let lms = lmsRaw;
+  if (info.box){                                       // landmarks are relative to the crop: map them back to the whole picture
+    const b = info.box, sw = info.sw, sh = info.sh;
+    lms = lmsRaw.map(l => l.map(p => ({x:(b.x + p.x * b.w) / sw, y:(b.y + p.y * b.h) / sh, z:p.z * b.w / sw})));
+  }
   const slots = assignHands(lms, now);
   HANDS.forEach((h, i) => {
     h.n = lms.length;
@@ -1956,12 +2049,45 @@ function fitBackground(aspect){
   if (aspect < va) rx = aspect / va; else ry = va / aspect;
   tex.repeat.set(rx, ry); tex.offset.set((1 - rx)/2, (1 - ry)/2);
 }
+const LENS_K = [[0, 0], [0.10, 0.02], [0.18, 0.05], [0.28, 0.10]];
+let lensRT = null, lensMesh = null, lensCam = null, lensScene = null;
+function lensSetup(){
+  const sz = renderer.getDrawingBufferSize(new THREE.Vector2()), rw = Math.max(64, Math.round(sz.x / 2)), rh = Math.max(64, Math.round(sz.y));
+  if (!lensRT || lensRT.width !== rw || lensRT.height !== rh){
+    if (lensRT) lensRT.dispose();
+    lensRT = new THREE.WebGLRenderTarget(rw, rh, {minFilter:THREE.LinearFilter, magFilter:THREE.LinearFilter, format:THREE.RGBAFormat, depthBuffer:true, stencilBuffer:false});
+  }
+  if (!lensMesh){
+    lensCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1); lensScene = new THREE.Scene();
+    lensMesh = new THREE.Mesh(new THREE.PlaneGeometry(2, 2), new THREE.ShaderMaterial({
+      uniforms:{tex:{value:null}, c:{value:new THREE.Vector2(0.5, 0.5)}, a:{value:1}, k1:{value:0}, k2:{value:0}, zm:{value:1}},
+      vertexShader:'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+      fragmentShader:'uniform sampler2D tex; uniform vec2 c; uniform float a, k1, k2, zm; varying vec2 vUv;\n' +
+        'void main(){ vec2 v = (vUv - c) * 2.0 * vec2(a, 1.0); float r2 = dot(v, v); float f = (1.0 + k1*r2 + k2*r2*r2) * zm;\n' +
+        'vec2 uv = 0.5 + (v * f) / (2.0 * vec2(a, 1.0));\n' +
+        'if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0){ gl_FragColor = vec4(0.0, 0.0, 0.0, 1.0); return; }\n' +
+        'gl_FragColor = vec4(texture2D(tex, uv).rgb, 1.0); }',
+      depthTest:false, depthWrite:false}));
+    lensScene.add(lensMesh);
+  }
+}
+// each eye is drawn to a texture first, then warped (barrel) so that it looks straight again through the VR box lens
+function renderLensEye(eyeCam, left, w, h){
+  const k = LENS_K[P.lens], m = lensMesh.material.uniforms;
+  renderer.setScissorTest(false); renderer.setRenderTarget(lensRT); renderer.clear(); renderer.render(scene, eyeCam); renderer.setRenderTarget(null);
+  m.tex.value = lensRT.texture; m.a.value = (w/2) / h; m.k1.value = k[0]; m.k2.value = k[1]; m.zm.value = 1 / (1 + k[0] + k[1]);
+  m.c.value.set(0.5 + (left ? S.sep : -S.sep), 0.5);
+  renderer.setScissorTest(true);
+  renderer.setViewport(left ? 0 : w/2, 0, w/2, h); renderer.setScissor(left ? 0 : w/2, 0, w/2, h);
+  renderer.render(lensScene, lensCam);
+}
 function render(){
   const w = innerWidth, h = innerHeight;
   fitBackground(camera.aspect);
   if (S.stereo){
     camera.focus = PANEL_R;   // menus sit at zero parallax (identical in both eyes) = no double vision on them
     camera.updateMatrixWorld(); stereo.eyeSep = S.ipd; stereo.update(camera);
+    if (P.lens > 0){ lensSetup(); renderLensEye(stereo.cameraL, true, w, h); renderLensEye(stereo.cameraR, false, w, h); renderer.setScissorTest(false); return; }
     // each eye's picture is moved toward the middle so its centre sits in front of the lens (phone screen halves are wider apart than your eyes)
     const d = Math.round(S.sep * w/2);
     renderer.setScissorTest(true);
@@ -1973,6 +2099,7 @@ function render(){
   }
 }
 let last = 0, fpsN = 0, fpsT = 0, lowT = 0;
+const _vf = new THREE.Vector3(), _vw = new THREE.Vector3();
 function frame(now){
   requestAnimationFrame(frame);
   const dt = Math.min((now - last)/1000, 0.1); last = now;
@@ -1991,19 +2118,24 @@ function frame(now){
     if (now > N.msgUntil) toast.mesh.visible = false;
     else toast.mesh.position.set(0, dock.mesh.position.y + 0.24, -DOCK_R + 0.02);
   }
+  camera.getWorldDirection(_vf);
+  wins.forEach(w => {                                   // windows far outside the view are not redrawn (saves work with many windows open)
+    w.ui.mesh.getWorldPosition(_vw).sub(camera.position).normalize();
+    w.inView = _vf.dot(_vw) > 0.3;
+  });
   wins.forEach(w => {
-    if (!w.ui.mesh.visible) return;
+    if (!w.ui.mesh.visible || !w.inView) return;
     if (w.tick && now - w.lt > w.tick){ w.lt = now; w.ui.dirty = true; }
     if (w.vmat && videoTex && !w.vmat.map){ w.vmat.map = videoTex; w.vmat.color.set(0xffffff); w.vmat.needsUpdate = true; w.ui.dirty = true; }
   });
-  if (NB.open && NB.cv && winOpen('nweb')) pollNweb(now);
+  if (NB.open && NB.cv && winOpen('nweb')){ const nw = wins.find(v => v.type === 'nweb'); if ((nw && nw.inView) || cin.src === 'web' || now - NB.slow > 700){ NB.slow = now; pollNweb(now); } }
   if (cin.src === 'web' && !winOpen('nweb')){ cinUseVideo(); wins.forEach(w => { w.ui.dirty = true; }); }
   if (ptMesh.visible) updatePtSize();
   if (S.mode === 'v360'){
     v360g.rotation.set(v360.pitch, v360.base + v360.yaw, 0);
     if (Math.abs(camera.fov - v360.fov) > 0.05){ camera.fov = v360.fov; camera.updateProjectionMatrix(); }
   }
-  [panel, dock, toast].concat(wins.map(w => w.ui)).forEach(u => { if (u.dirty && u.mesh.visible && now - (u.lastDraw || 0) > 90){ u.lastDraw = now; u.redraw(); } });
+  [panel, dock, toast].concat(wins.map(w => w.ui)).forEach(u => { if (u.dirty && u.mesh.visible && (!u.win || u.win.inView !== false) && now - (u.lastDraw || 0) > 90){ u.lastDraw = now; u.redraw(); } });
 
   if (S.mode === 'shoot'){
     spawnAcc += dt; if (spawnAcc > 1.1){ spawnAcc = 0; spawnTarget(); }
@@ -2015,7 +2147,7 @@ function frame(now){
 
   fpsN++; fpsT += dt;
   if (fpsT > 0.5){
-    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + ', det ' + D.ms.toFixed(0) + 'ms/' + (detGap ? Math.round(1000/Math.max(detGap,1)) : 0) + 'Hz)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '');
+    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? '+เธรดแยก' : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + 'ms/' + (detGap ? Math.round(1000/Math.max(detGap,1)) : 0) + 'Hz)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '');
     const fpsNow = fpsN/fpsT;
     if (fpsNow < 20 && S.qi > (S.stereo ? 1 : 0) && S.cam !== undefined){ lowT += 0.5; if (lowT >= 2.5){ S.qi--; applyQuality(); savePrefs(); invalidateUI(); lowT = 0; } } else lowT = 0;
     fpsN = 0; fpsT = 0;
