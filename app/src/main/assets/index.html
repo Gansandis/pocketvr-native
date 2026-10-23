@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.33';
+const VERSION = 'v3.34';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1351,7 +1351,17 @@ const _z = new THREE.Vector3(0,0,1), _e = new THREE.Euler(), _q0 = new THREE.Qua
 let gotOrient = false;
 const devRaw = new THREE.Quaternion(), devUse = new THREE.Quaternion(), headPos = new THREE.Vector3(), headVel = new THREE.Vector3();
 const accDev = new THREE.Vector3(); let accT = 0, accOK = false, quietT = 0;
+let rotEma = 99, stillT = 0, lastMot = 0;
+const STILL_TH = [0, 2.0, 4.5];                             // deg/s: below this the head counts as "not turning" (cheap phones drift/creep by about this much)
+function stillNow(){ return P.stab > 0 && performance.now() - lastMot < 300 && stillT > 0.25 && rotEma < STILL_TH[P.stab]; }
 function onMotion(e){
+  const r = e.rotationRate, nowM = performance.now();
+  if (r && r.alpha != null){
+    const dtm = Math.min(0.1, (nowM - lastMot) / 1000 || 0.016), m = Math.hypot(r.alpha, r.beta, r.gamma);
+    rotEma += (m - rotEma) * Math.min(1, dtm / 0.12);
+    if (rotEma < STILL_TH[Math.max(1, P.stab)] && m < STILL_TH[Math.max(1, P.stab)] * 2) stillT += dtm; else stillT = 0;
+    lastMot = nowM;
+  }
   const a = e.acceleration;
   if (!a || a.x == null){ accOK = false; return; }
   accOK = true; accDev.set(a.x, a.y, a.z); accT = performance.now();
@@ -1387,10 +1397,13 @@ function onOrient(e){
   devRaw.setFromEuler(_e);
   const prevQ = _pq2.copy(devQ), had = gotOrient;
   devQ.setFromEuler(_e); devQ.multiply(_q1); devQ.multiply(_q0.setFromAxisAngle(_z, -o));
-  if (had && prevQ.angleTo(devQ) > 0.6){          // a real head cannot turn 35 degrees between two sensor readings: the compass reference jumped (file picker, app switch)
-    _fa.set(0, 0, -1).applyQuaternion(prevQ); _fb.set(0, 0, -1).applyQuaternion(devQ);
-    heading.rotation.y += Math.atan2(-_fb.x, -_fb.z) - Math.atan2(-_fa.x, -_fa.z);   // carry the whole scene along so the screen stays where it was in front of you
-    devUse.copy(devQ);
+  if (had){
+    const jump = prevQ.angleTo(devQ) > 0.6;        // a real head cannot turn 35 degrees between two sensor readings: the compass reference jumped (file picker, app switch)
+    if (jump || stillNow()){                       // jump, or the head is still but the sensor is creeping (drift): carry the whole scene along so the UI stays put in front of you
+      _fa.set(0, 0, -1).applyQuaternion(prevQ); _fb.set(0, 0, -1).applyQuaternion(devQ);
+      if (Math.abs(_fb.y) < 0.9) heading.rotation.y += Math.atan2(-_fb.x, -_fb.z) - Math.atan2(-_fa.x, -_fa.z);
+      if (jump) devUse.copy(devQ);
+    }
   }
   if (!gotOrient){ gotOrient = true; devUse.copy(devQ); recenterHeading(); }
 }
