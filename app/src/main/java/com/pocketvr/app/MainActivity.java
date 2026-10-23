@@ -270,6 +270,9 @@ public class MainActivity extends Activity {
                 respond(reply, id, err == null, err);
                 break;
             }
+            case "nb_desktop":
+                vb.setDesktop(req.optBoolean("on"));
+                break;
             case "nb_touch":
                 vb.touch(req.optInt("a"), (float) req.optDouble("x"), (float) req.optDouble("y"));
                 break;
