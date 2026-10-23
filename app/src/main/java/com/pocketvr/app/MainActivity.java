@@ -177,6 +177,28 @@ public class MainActivity extends Activity {
         if ("launch".equals(op)) {
             String err = launchPackage(pkg);
             respond(reply, id, err == null, err);
+        } else if ("clip".equals(op)) {
+            String text = "";
+            try {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip() != null && cm.getPrimaryClip().getItemCount() > 0) {
+                    CharSequence cs = cm.getPrimaryClip().getItemAt(0).coerceToText(this);
+                    if (cs != null) text = cs.toString();
+                }
+            } catch (Throwable ignored) {
+            }
+            respond(reply, id, true, text);
+        } else if ("clip".equals(op)) {
+            String txt = "";
+            try {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                if (cm != null && cm.hasPrimaryClip() && cm.getPrimaryClip().getItemCount() > 0) {
+                    CharSequence cs = cm.getPrimaryClip().getItemAt(0).coerceToText(this);
+                    if (cs != null) txt = cs.toString();
+                }
+            } catch (Throwable ignored) {
+            }
+            respond(reply, id, true, txt);
         } else if (op.startsWith("nb_")) {
             handleBrowser(op, req, reply, id);
         } else if ("url".equals(op)) {
