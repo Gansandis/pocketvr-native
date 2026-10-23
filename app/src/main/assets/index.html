@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.31';
+const VERSION = 'v3.32';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -766,7 +766,7 @@ const WINDEFS = {
   calc:  {title:'🧮 เครื่องคิดเลข',  w:380, h:540, content:drawCalcWin},
   kb:    {title:'⌨ คีย์บอร์ด',        w:820, h:480, content:drawKbWin, y:-0.3, center:true},
   vctl:  {title:'🎬 วิดีโอ 360°',    w:640, h:176, content:drawVctlWin, tick:500, only:'v360', noClose:true},
-  cctl:  {title:'🍿 โรงหนัง',         w:740, h:176, content:drawCctlWin, tick:500, only:'cinema', noClose:true}
+  cctl:  {title:'🍿 โรงหนัง',         w:880, h:176, content:drawCctlWin, tick:500, only:'cinema', noClose:true}
 };
 const allUIs = () => [panel, dock].concat(wins.map(w => w.ui));
 const winVisible = w => w.d.only ? S.mode === w.d.only : S.mode !== 'v360';
@@ -1116,7 +1116,7 @@ function ensure360(){
   v360.el.addEventListener('error', () => showToast('เล่นวิดีโอนี้ไม่ได้ (ฟอร์แมต/ขนาดใหญ่เกิน)', 4000));
 }
 function pickFile360(){
-  ensure360();
+  ensure360(); v360.picking = true;
   if (navigator.userActivation && !navigator.userActivation.isActive){
     N.pendingFn = () => v360.fin.click(); showToast('แตะจอ 1 ครั้งเพื่อเลือกไฟล์', 6000); return;
   }
@@ -1157,7 +1157,7 @@ function drawVctlWin(x, ui, win){
 
 
 /* ---------- app: cinema (big curved screen in a dark theatre) ---------- */
-const cin = {kind:'demo', name:'ภาพเดโม', el:null, fin:null, tex:null, demoTex:null, mat:null, screen:null, room:null, url:null, s:1, z:0, dim:2, aspect:16/9, built:false};
+const cin = {kind:'demo', name:'ภาพเดโม', el:null, fin:null, tex:null, demoTex:null, mat:null, screen:null, room:null, url:null, s:1, z:0, dim:2, aspect:16/9, built:false, src:'video', picking:false};
 const cinG = new THREE.Group(); cinG.visible = false; heading.add(cinG);
 const CIN_DIM = [0.35, 0.65, 1], CIN_R = 9, CIN_W = 9.5;
 function makeCinemaDemo(){
@@ -1192,12 +1192,6 @@ function ensureCinema(){
   room.position.set(0, 2.2, -4); cinG.add(room);
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(26, 34), new THREE.MeshBasicMaterial({color:0x100b12, fog:false}));
   floor.rotation.x = -Math.PI/2; floor.position.set(0, -1.6, -4); cinG.add(floor);
-  const seatM = new THREE.MeshBasicMaterial({color:0x3a0d16, fog:false}), seatG = new THREE.BoxGeometry(0.62, 0.62, 0.2), baseG = new THREE.BoxGeometry(0.62, 0.35, 0.6);
-  [[-2.6, -1.35], [-3.8, -1.2], [1.6, -1.25], [2.8, -1.1]].forEach(([z, y]) => {
-    for (let i = -6; i <= 6; i++){ if (Math.abs(i) < 1 && z > 0) continue;
-      const b = new THREE.Mesh(baseG, seatM); b.position.set(i*0.72, y - 0.1, z); cinG.add(b);
-      const k = new THREE.Mesh(seatG, seatM); k.position.set(i*0.72, y + 0.35, z + (z > 0 ? 0.28 : -0.28)); cinG.add(k); }
-  });
   const glow = new THREE.Mesh(new THREE.PlaneGeometry(CIN_W*1.12, CIN_W/cin.aspect*1.12), new THREE.MeshBasicMaterial({color:0x14182a, fog:false}));
   glow.position.set(0, 0.35, -CIN_R - 0.3); cinG.add(glow);
   buildCinemaScreen();
@@ -1206,19 +1200,53 @@ function ensureCinema(){
   cin.el.addEventListener('error', () => showToast('เล่นวิดีโอนี้ไม่ได้ (ฟอร์แมต/ขนาดใหญ่เกิน)', 4000));
   cin.fin = document.createElement('input'); cin.fin.type = 'file'; cin.fin.accept = 'video/*';
   cin.fin.onchange = () => {
+    setTimeout(recenterHeading, 700);
     const f = cin.fin.files && cin.fin.files[0]; cin.fin.value = ''; if (!f) return;
     if (cin.url) URL.revokeObjectURL(cin.url);
-    cin.url = URL.createObjectURL(f); cin.name = f.name.slice(0, 30);
+    cin.url = URL.createObjectURL(f); cin.name = f.name.slice(0, 30); cinUseVideo(); cin.el.removeAttribute('crossorigin');
     cin.el.src = cin.url; cin.el.muted = false;
     cin.el.play().catch(() => { cin.el.muted = true; cin.el.play().catch(() => {}); });
     const t = new THREE.VideoTexture(cin.el); t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = false;
     if (cin.tex && cin.tex !== cin.demoTex) cin.tex.dispose();
-    cin.tex = t; cin.mat.map = t; cin.mat.needsUpdate = true; cin.kind = 'video';
+    cin.tex = t; cinSetMap(t); cin.kind = 'video';
     showToast('กำลังเล่น ' + cin.name, 2500); wins.forEach(w => { w.ui.dirty = true; });
   };
 }
-function pickFileCin(){
+function cinSetMap(t){ cin.mat.map = t; cin.mat.needsUpdate = true; }
+function cinUseVideo(){
+  if (cin.src === 'web'){ cin.src = 'video'; cinSetMap(cin.tex); if (cin.el && cin.el.videoWidth) cin.aspect = clamp(cin.el.videoWidth / cin.el.videoHeight, 1, 2.6); else cin.aspect = 16/9; buildCinemaScreen(); }
+}
+function cinUseWeb(){
+  if (!NATIVE.ok){ showToast('เปิดเว็บในโรงหนังได้เฉพาะในแอป APK', 4000); return; }
   ensureCinema();
+  if (!winOpen('nweb')){
+    createWin('nweb'); const w = wins.find(v => v.type === 'nweb');
+    if (w){ w.s = 0.6; w.ui.mesh.scale.setScalar(0.6); w.ui.mesh.position.y = -0.55; }
+  }
+  if (cin.el) cin.el.pause();
+  cin.src = 'web'; cin.aspect = 16/9; cinSetMap(NB.tex); buildCinemaScreen();
+  showToast('🌐 จอโรงหนังแสดงหน้าเว็บ • เลือกหนังในหน้าต่างเว็บเล็ก (เว็บเล่นหนังแล้วจอใหญ่จะเห็นเหมือนกัน)', 6000);
+  wins.forEach(w => { w.ui.dirty = true; });
+}
+function cinFromUrl(){
+  ensureCinema();
+  vrPrompt('วางลิงก์วิดีโอตรง (.mp4 / .webm / .m3u8)', u => {
+    u = String(u || '').trim(); if (!/^https?:\/\//i.test(u)){ if (u) showToast('ลิงก์ต้องขึ้นต้นด้วย http:// หรือ https://', 3500); return; }
+    cinUseVideo(); cin.el.crossOrigin = 'anonymous'; cin.el.src = u; cin.name = u.replace(/^https?:\/\//, '').slice(0, 30);
+    cin.el.muted = false; cin.el.play().catch(() => { cin.el.muted = true; cin.el.play().catch(() => {}); });
+    const t = new THREE.VideoTexture(cin.el); t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = false;
+    if (cin.tex && cin.tex !== cin.demoTex) cin.tex.dispose();
+    cin.tex = t; cinSetMap(t); cin.kind = 'video';
+    showToast('กำลังโหลด… ถ้าจอดำแต่มีเสียง = เว็บนั้นไม่อนุญาตให้ฉายขึ้นจอ ให้ใช้ปุ่ม 🌐 แทน', 7000); wins.forEach(w => { w.ui.dirty = true; });
+  });
+}
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible' || !(cin.picking || v360.picking)) return;
+  setTimeout(() => { recenterHeading(); cin.picking = v360.picking = false; }, 700);      // the file picker can shift the compass reference: put the screen back in front
+});
+addEventListener('focus', () => { if (cin.picking || v360.picking) setTimeout(() => { recenterHeading(); cin.picking = v360.picking = false; }, 700); });
+function pickFileCin(){
+  ensureCinema(); cin.picking = true;
   if (navigator.userActivation && !navigator.userActivation.isActive){ N.pendingFn = () => cin.fin.click(); showToast('แตะจอ 1 ครั้งเพื่อเลือกไฟล์', 6000); return; }
   cin.fin.click();
 }
@@ -1241,12 +1269,12 @@ function leaveCinema(){
 function drawCctlWin(x, ui, win){
   const W = win.d.w, playing = cin.kind === 'video' && !cin.el.paused;
   const B = [['rw','⏪',() => seekCin(-10)], ['pp', playing ? '⏸' : '▶', togglePlayCin], ['ff','⏩',() => seekCin(10)], ['file','📁',pickFileCin],
-             ['zi','＋',() => sizeCin(1.12)], ['zo','－',() => sizeCin(1/1.12)], ['nr','⇥',() => distCin(1)], ['fr','⇤',() => distCin(-1)], ['dm','💡',dimCin], ['ex','🚪',() => setMode('home')]];
-  B.forEach((b, i) => winBtn(x, ui, 'c:' + b[0], b[1], 20 + i*70, 62, 64, 64, b[2], {on:b[0] === 'pp' && playing, font:'28px'}));
+             ['zi','＋',() => sizeCin(1.12)], ['zo','－',() => sizeCin(1/1.12)], ['nr','⇥',() => distCin(1)], ['fr','⇤',() => distCin(-1)], ['dm','💡',dimCin], ['url','🔗',cinFromUrl], ['web','🌐',cinUseWeb], ['ex','🚪',() => setMode('home')]];
+  B.forEach((b, i) => winBtn(x, ui, 'c:' + b[0], b[1], 20 + i*70, 62, 64, 64, b[2], {on:(b[0] === 'pp' && playing) || (b[0] === 'web' && cin.src === 'web'), font:'28px'}));
   const el = cin.el, dur = (cin.kind === 'video' && el && isFinite(el.duration)) ? el.duration : 0, cur = dur ? el.currentTime : 0;
   const tf = t => Math.floor(t/60) + ':' + String(Math.floor(t) % 60).padStart(2, '0');
   x.fillStyle = '#b8b8c0'; x.font = '20px sans-serif'; x.textAlign = 'left';
-  x.fillText(cin.name + (dur ? '  ' + tf(cur) + ' / ' + tf(dur) : '') + '   (＋－ ขนาดจอ  ⇥⇤ ใกล้/ไกล)', 24, 150, W - 48);
+  x.fillText(cin.name + (dur ? '  ' + tf(cur) + ' / ' + tf(dur) : '') + '   (＋－ ขนาด  ⇥⇤ ใกล้/ไกล  🔗 ลิงก์วิดีโอ  🌐 เว็บ)', 24, 150, W - 48);
   x.fillStyle = 'rgba(255,255,255,.18)'; roundRect(x, 24, 160, W - 48, 8, 4); x.fill();
   if (dur){ x.fillStyle = '#4f8cff'; roundRect(x, 24, 160, Math.max(8, (W - 48)*cur/dur), 8, 4); x.fill(); }
 }
@@ -1938,6 +1966,7 @@ function frame(now){
     if (w.vmat && videoTex && !w.vmat.map){ w.vmat.map = videoTex; w.vmat.color.set(0xffffff); w.vmat.needsUpdate = true; w.ui.dirty = true; }
   });
   if (NB.open && NB.cv && winOpen('nweb')) pollNweb(now);
+  if (cin.src === 'web' && !winOpen('nweb')){ cinUseVideo(); wins.forEach(w => { w.ui.dirty = true; }); }
   if (ptMesh.visible) updatePtSize();
   if (S.mode === 'v360'){
     v360g.rotation.set(v360.pitch, v360.base + v360.yaw, 0);
