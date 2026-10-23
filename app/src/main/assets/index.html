@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.29';
+const VERSION = 'v3.30';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -145,14 +145,14 @@ const PS_MIN = 0.6, PS_MAX = 2.0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* --- saved preferences --- */
-const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3};
+const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0};
 function loadPrefs(){
   try{
     const o = JSON.parse(localStorage.getItem('pvr_prefs') || '{}');
     for (const k of Object.keys(P)) if (Number.isInteger(o[k]) && o[k] >= 0) P[k] = o[k];
     if (o.airV !== 3) P.sel = 3;                                  // v3.29: air touch becomes the default once
     P.gaze = Math.min(P.gaze, 2); P.ptr = Math.min(P.ptr, 1); P.smooth = Math.min(P.smooth, 2);
-    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2);
+    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1);
     if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
     if (Number.isInteger(o.nm) && o.nm >= 0) N.mode = Math.min(o.nm, 2);
     if (IPDS.includes(o.ipd)) S.ipd = o.ipd;
@@ -370,7 +370,8 @@ function cyclePtr(){ cycleP('ptr', 2); }
 function cycleSmooth(){ cycleP('smooth', 3); }
 function cycleRate(){ cycleP('rate', 3); }
 function cyclePinch(){ cycleP('pinch', 3); }
-function cycleSel(){ cycleP('sel', 4); showToast('เลือกด้วย: ' + SEL_N[P.sel] + (P.sel === 1 ? ' (ชี้นิ้วชี้ ที่เหลือพับ แล้วจิ้มไปทางกล้อง)' : (P.sel === 3 ? ' (ยื่นนิ้วชี้ไปแตะหน้าจอ UI เหมือนจอสัมผัส ค้างไว้เพื่อลาก ดึงกลับเพื่อปล่อย)' : '')), 4500); }
+function cycleSel(){ cycleP('sel', 4); showToast('เลือกด้วย: ' + SEL_N[P.sel] + (P.sel === 1 ? ' (ชี้นิ้วชี้ ที่เหลือพับ แล้วจิ้มไปทางกล้อง)' : (P.sel === 3 ? ' (ยื่นนิ้วชี้เอื้อมไปข้างหน้าเหมือนแตะจอ ค้างไว้เพื่อลาก ดึงมือกลับเข้าหาตัวเพื่อปล่อย)' : '')), 4500); }
+function cycleAirD(){ cycleP('airD', 2); showToast(P.airD === 0 ? 'ทิศสัมผัส: เอื้อมมือไปข้างหน้า (ห่างจากกล้อง) = กด' : 'ทิศสัมผัส: ดึงมือเข้าหากล้อง = กด', 4000); }
 function cyclePokeS(){ cycleP('pokeS', 3); showToast('ความไวการจิ้ม: ' + POKE_N[P.pokeS], 2500); }
 function cycleDev(){ finishSpeedTest(); cycleP('dev', 2); showToast('เปลี่ยนตัวประมวลผลแทร็กมือ…', 2500); reinitHands(); }
 function cycleTwo(){ cycleP('two', 2); showToast(P.two ? 'โหมดสองมือเปิด: ใช้ได้ทั้งสองมือ • จีบสองมือแล้วถ่าง/หุบเพื่อซูม' : 'ปิดโหมดสองมือ', 3500); reinitHands(); }
@@ -532,6 +533,7 @@ const SETS = [
   {id:'ptr',     t:'จุดชี้ของมือ',        v:() => PTR_N[P.ptr],                   on:() => false,      fn:cyclePtr},
   {id:'smooth',  t:'ความนุ่มเคอร์เซอร์',  v:() => SMOOTH[P.smooth][2],            on:() => false,      fn:cycleSmooth},
   {id:'rate',    t:'ความถี่แทร็กมือ',     v:() => RATE_N[P.rate],                 on:() => false,      fn:cycleRate},
+  {id:'airD',    t:'ทิศสัมผัสอากาศ',        v:() => P.airD === 0 ? 'เอื้อมไปข้างหน้า' : 'เข้าหากล้อง', on:() => false, fn:cycleAirD},
   {id:'sel',     t:'เลือกด้วย',            v:() => SEL_N[P.sel],                    on:() => false,      fn:cycleSel},
   {id:'pokes',   t:'ความไวการจิ้ม',        v:() => POKE_N[P.pokeS],                 on:() => false,      fn:cyclePokeS},
   {id:'pinch',   t:'ความไวการจีบ',        v:() => PINCH_SETS[P.pinch][2],         on:() => false,      fn:cyclePinch},
@@ -1406,7 +1408,8 @@ function assignHands(lms, now){
 function updatePoke(h, lm, now, pointing){
   const pk = h.pk || (h.pk = {base:null, t:now, on:false, peak:0, prog:0});
   const palm = dist2(lm[0], lm[9]) || 1e-3;
-  const depth = Math.log(palm) - 0.6 * (lm[8].z - lm[0].z) / palm;
+  let depth = Math.log(palm) - 0.6 * (lm[8].z - lm[0].z) / palm;
+  if (P.sel === 3 && P.airD === 0) depth = -depth;        // air touch: reaching forward toward the UI = hand moving away from the camera on your face
   if (!pointing){ pk.on = false; pk.base = depth; pk.t = now; pk.prog = 0; return false; }
   if (pk.base === null){ pk.base = depth; pk.t = now; }
   const th = POKE_TH[P.pokeS] * (P.sel === 3 ? 0.8 : 1);
