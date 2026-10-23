@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.30';
+const VERSION = 'v3.31';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -81,7 +81,7 @@ const CQS = [[1280, 720, '720p'], [1920, 1080, '1080p คมสุด'], [854, 4
 const CMS = [0, 0.7, 1], CM_N = ['ปิด', 'ปานกลาง', 'มาก'];   // comfort vignette strength while the head turns
 const camOn = () => S.mr && !(S.stereo && PTS[S.ptI] < 0);
 const boxMode = () => S.mr && S.stereo && PTS[S.ptI] > 0;   // camera picture is a window floating inside the virtual room
-const envShown = () => (!camOn() || boxMode()) && S.mode !== 'v360';   // passthrough size in the VR box
+const envShown = () => (!camOn() || boxMode()) && S.mode !== 'v360' && S.mode !== 'cinema';   // passthrough size in the VR box
 const CAMFOVS = [55, 62, 68, 75, 82], VFOVS = [70, 80, 90, 100];                                // real camera width angle / VR view angle (deg)
 const baseFov = () => S.stereo ? VFOVS[S.vfI] : 70;
 const QUAL = [0.75, 1, 1.5], QNAMES = ['ประหยัด', 'ปกติ', 'คมชัด'];
@@ -145,14 +145,14 @@ const PS_MIN = 0.6, PS_MAX = 2.0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* --- saved preferences --- */
-const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0};
+const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1};
 function loadPrefs(){
   try{
     const o = JSON.parse(localStorage.getItem('pvr_prefs') || '{}');
     for (const k of Object.keys(P)) if (Number.isInteger(o[k]) && o[k] >= 0) P[k] = o[k];
     if (o.airV !== 3) P.sel = 3;                                  // v3.29: air touch becomes the default once
     P.gaze = Math.min(P.gaze, 2); P.ptr = Math.min(P.ptr, 1); P.smooth = Math.min(P.smooth, 2);
-    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1);
+    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.stab = Math.min(P.stab, 2);
     if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
     if (Number.isInteger(o.nm) && o.nm >= 0) N.mode = Math.min(o.nm, 2);
     if (IPDS.includes(o.ipd)) S.ipd = o.ipd;
@@ -372,6 +372,9 @@ function cycleRate(){ cycleP('rate', 3); }
 function cyclePinch(){ cycleP('pinch', 3); }
 function cycleSel(){ cycleP('sel', 4); showToast('เลือกด้วย: ' + SEL_N[P.sel] + (P.sel === 1 ? ' (ชี้นิ้วชี้ ที่เหลือพับ แล้วจิ้มไปทางกล้อง)' : (P.sel === 3 ? ' (ยื่นนิ้วชี้เอื้อมไปข้างหน้าเหมือนแตะจอ ค้างไว้เพื่อลาก ดึงมือกลับเข้าหาตัวเพื่อปล่อย)' : '')), 4500); }
 function cycleAirD(){ cycleP('airD', 2); showToast(P.airD === 0 ? 'ทิศสัมผัส: เอื้อมมือไปข้างหน้า (ห่างจากกล้อง) = กด' : 'ทิศสัมผัส: ดึงมือเข้าหากล้อง = กด', 4000); }
+const DOF_N = ['3DoF (หมุนหัว)', '6DoF (ทดลอง: โน้ม/ก้าว)'], STAB_N = ['ปิด', 'กลาง', 'แรง'];
+function cycleDof(){ cycleP('dof', 2); headPos.set(0,0,0); headVel.set(0,0,0); showToast(P.dof === 0 ? '3DoF: หมุนหัวอย่างเดียว (นิ่งที่สุด)' : '6DoF ทดลอง: ใช้เซนเซอร์เร่งความเร็วจับการก้าว/โน้มตัวระยะสั้นๆ แล้วค่อยๆ ดึงกลับ (มือถือไม่มีเซนเซอร์ตำแหน่งจริง)', 5500); }
+function cycleStab(){ cycleP('stab', 3); showToast('กันจอสั่น: ' + STAB_N[P.stab], 2500); }
 function cyclePokeS(){ cycleP('pokeS', 3); showToast('ความไวการจิ้ม: ' + POKE_N[P.pokeS], 2500); }
 function cycleDev(){ finishSpeedTest(); cycleP('dev', 2); showToast('เปลี่ยนตัวประมวลผลแทร็กมือ…', 2500); reinitHands(); }
 function cycleTwo(){ cycleP('two', 2); showToast(P.two ? 'โหมดสองมือเปิด: ใช้ได้ทั้งสองมือ • จีบสองมือแล้วถ่าง/หุบเพื่อซูม' : 'ปิดโหมดสองมือ', 3500); reinitHands(); }
@@ -402,7 +405,7 @@ async function reinitHands(){
   invalidateUI();
 }
 function resetSettings(){
-  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0});
+  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1});
   S.qi = 1; N.mode = 1; S.ipd = 0.063; S.sep = 0.08; S.ptI = 0; S.cfI = 2; S.vfI = 2; N.lastProbe = 0;
   applyQuality(); savePrefs(); invalidateUI(); showToast('รีเซ็ตการตั้งค่าแล้ว', 2500);
   reinitHands();
@@ -507,6 +510,7 @@ const CARDS = {
   night:   {icon:'🌙', t:'โหมดมืด',      sub:() => NMODES[N.mode] + (N.boosting ? ' ×' + N.gain.toFixed(1) : ''), on:() => N.boosting, g:GRAY, fn:cycleNight},
   torch:   {icon:'🔦', t:'ไฟฉาย',        sub:() => N.torchOK ? TMODES[N.tm] : 'ไม่รองรับ', on:() => N.torchOn, g:GRAY, fn:cycleTorch},
   center:  {icon:'⌖', t:'จัดกลางใหม่',  sub:() => 'รีเซ็ตตำแหน่ง', g:GRAY, fn:resetPanel},
+  cinema:  {icon:'🍿', t:'โรงหนัง',      sub:() => 'จอใหญ่ในห้องมืด', g:['#ff9a5a','#b3361f'], fn:() => setMode('cinema')},
   v360:    {icon:'🎬', t:'วิดีโอ 360°',  sub:() => 'ไฟล์ / เดโม', g:['#b36bff','#5a2aa8'], fn:() => setMode('v360')},
   wcam:    {icon:'📹', t:'หน้าต่างกล้อง', sub:() => winOpen('cam') ? 'เปิดอยู่' : 'ปิดอยู่', on:() => winOpen('cam'), g:['#ff8fb1','#b8325f'], fn:() => toggleWin('cam')},
   wclock:  {icon:'⏱', t:'นาฬิกา',       sub:() => winOpen('clock') ? 'เปิดอยู่' : 'จับเวลา', on:() => winOpen('clock'), g:['#ffcf5a','#b07a12'], fn:() => toggleWin('clock')},
@@ -514,7 +518,7 @@ const CARDS = {
   wkb:     {icon:'⌨', t:'คีย์บอร์ด', sub:() => winOpen('kb') ? 'เปิดอยู่' : 'พิมพ์ใน VR', on:() => winOpen('kb'), g:['#6c8cff','#33449e'], fn:() => toggleKb()},
   wcalc:   {icon:'🧮', t:'เครื่องคิดเลข', sub:() => winOpen('calc') ? 'เปิดอยู่' : 'หน้าต่างลอย', on:() => winOpen('calc'), g:['#5fd0c4','#1c7a70'], fn:() => toggleWin('calc')}
 };
-const TABS = {all:['shoot','gallery','v360','wcam','wkb','wweb','wclock','wcalc','mr','split','night','torch'], apps:['shoot','gallery','v360','wcam','wkb','wweb','wclock','wcalc'], tools:['mr','split','ipd','quality','night','torch']};
+const TABS = {all:['shoot','gallery','cinema','v360','wcam','wkb','wweb','wclock','wcalc','mr','split','night','torch'], apps:['shoot','gallery','cinema','v360','wcam','wkb','wweb','wclock','wcalc'], tools:['mr','split','ipd','quality','night','torch']};
 
 const SETS = [
   {id:'mr',      t:'ภาพจริง (MR)',        v:() => S.mr ? 'เปิด' : 'ปิด',          on:() => S.mr,       fn:toggleMR},
@@ -534,6 +538,8 @@ const SETS = [
   {id:'smooth',  t:'ความนุ่มเคอร์เซอร์',  v:() => SMOOTH[P.smooth][2],            on:() => false,      fn:cycleSmooth},
   {id:'rate',    t:'ความถี่แทร็กมือ',     v:() => RATE_N[P.rate],                 on:() => false,      fn:cycleRate},
   {id:'airD',    t:'ทิศสัมผัสอากาศ',        v:() => P.airD === 0 ? 'เอื้อมไปข้างหน้า' : 'เข้าหากล้อง', on:() => false, fn:cycleAirD},
+  {id:'dof',     t:'การติดตามหัว',        v:() => DOF_N[P.dof],                   on:() => P.dof > 0,  fn:cycleDof},
+  {id:'stab',    t:'กันจอสั่น/ขยับ',      v:() => STAB_N[P.stab],                  on:() => false,      fn:cycleStab},
   {id:'sel',     t:'เลือกด้วย',            v:() => SEL_N[P.sel],                    on:() => false,      fn:cycleSel},
   {id:'pokes',   t:'ความไวการจิ้ม',        v:() => POKE_N[P.pokeS],                 on:() => false,      fn:cyclePokeS},
   {id:'pinch',   t:'ความไวการจีบ',        v:() => PINCH_SETS[P.pinch][2],         on:() => false,      fn:cyclePinch},
@@ -759,7 +765,8 @@ const WINDEFS = {
   clock: {title:'⏱ นาฬิกา',         w:480, h:330, content:drawClockWin, tick:500},
   calc:  {title:'🧮 เครื่องคิดเลข',  w:380, h:540, content:drawCalcWin},
   kb:    {title:'⌨ คีย์บอร์ด',        w:820, h:480, content:drawKbWin, y:-0.3, center:true},
-  vctl:  {title:'🎬 วิดีโอ 360°',    w:640, h:176, content:drawVctlWin, tick:500, only:'v360', noClose:true}
+  vctl:  {title:'🎬 วิดีโอ 360°',    w:640, h:176, content:drawVctlWin, tick:500, only:'v360', noClose:true},
+  cctl:  {title:'🍿 โรงหนัง',         w:740, h:176, content:drawCctlWin, tick:500, only:'cinema', noClose:true}
 };
 const allUIs = () => [panel, dock].concat(wins.map(w => w.ui));
 const winVisible = w => w.d.only ? S.mode === w.d.only : S.mode !== 'v360';
@@ -1148,6 +1155,102 @@ function drawVctlWin(x, ui, win){
   if (dur){ x.fillStyle = '#4f8cff'; roundRect(x, 24, 160, Math.max(8, (W - 48)*cur/dur), 8, 4); x.fill(); }
 }
 
+
+/* ---------- app: cinema (big curved screen in a dark theatre) ---------- */
+const cin = {kind:'demo', name:'ภาพเดโม', el:null, fin:null, tex:null, demoTex:null, mat:null, screen:null, room:null, url:null, s:1, z:0, dim:2, aspect:16/9, built:false};
+const cinG = new THREE.Group(); cinG.visible = false; heading.add(cinG);
+const CIN_DIM = [0.35, 0.65, 1], CIN_R = 9, CIN_W = 9.5;
+function makeCinemaDemo(){
+  const c = document.createElement('canvas'); c.width = 1280; c.height = 720;
+  const x = c.getContext('2d');
+  const g = x.createLinearGradient(0, 0, 1280, 720); g.addColorStop(0, '#1b1038'); g.addColorStop(1, '#0b2a4a');
+  x.fillStyle = g; x.fillRect(0, 0, 1280, 720);
+  const cols = ['#fff', '#ffd24a', '#3be0e0', '#39e08a', '#e05cff', '#ff4d4d', '#4f8cff'];
+  cols.forEach((cc, i) => { x.fillStyle = cc; x.fillRect(i*1280/7, 600, 1280/7, 120); });
+  x.fillStyle = '#fff'; x.textAlign = 'center'; x.font = 'bold 110px sans-serif'; x.fillText('🍿 PocketVR Cinema', 640, 300);
+  x.font = '46px sans-serif'; x.fillStyle = '#cfd6e6'; x.fillText('กด 📁 เพื่อเลือกวิดีโอจากเครื่อง', 640, 400);
+  const t = new THREE.CanvasTexture(c); t.minFilter = THREE.LinearFilter; t.generateMipmaps = false; return t;
+}
+function buildCinemaScreen(){
+  const W = CIN_W, H = W / cin.aspect, L = W / CIN_R;
+  const g = new THREE.CylinderGeometry(CIN_R, CIN_R, H, 48, 1, true, Math.PI - L/2, L); g.scale(-1, 1, 1);
+  if (cin.screen){ cin.screen.geometry.dispose(); cin.screen.geometry = g; } else {
+    cin.mat = new THREE.MeshBasicMaterial({map:cin.tex, fog:false, color:new THREE.Color().setScalar(CIN_DIM[cin.dim])});
+    cin.screen = new THREE.Mesh(g, cin.mat); cinG.add(cin.screen);
+  }
+  applyCinemaLayout();
+}
+function applyCinemaLayout(){
+  if (!cin.screen) return;
+  cin.screen.scale.setScalar(cin.s); cin.screen.position.set(0, 0.35, cin.z);
+  cin.mat.color.setScalar(CIN_DIM[cin.dim]);
+}
+function ensureCinema(){
+  if (cin.built) return; cin.built = true;
+  cin.demoTex = makeCinemaDemo(); cin.tex = cin.demoTex;
+  const room = new THREE.Mesh(new THREE.BoxGeometry(26, 9, 34), new THREE.MeshBasicMaterial({color:0x07070c, side:THREE.BackSide, fog:false}));
+  room.position.set(0, 2.2, -4); cinG.add(room);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(26, 34), new THREE.MeshBasicMaterial({color:0x100b12, fog:false}));
+  floor.rotation.x = -Math.PI/2; floor.position.set(0, -1.6, -4); cinG.add(floor);
+  const seatM = new THREE.MeshBasicMaterial({color:0x3a0d16, fog:false}), seatG = new THREE.BoxGeometry(0.62, 0.62, 0.2), baseG = new THREE.BoxGeometry(0.62, 0.35, 0.6);
+  [[-2.6, -1.35], [-3.8, -1.2], [1.6, -1.25], [2.8, -1.1]].forEach(([z, y]) => {
+    for (let i = -6; i <= 6; i++){ if (Math.abs(i) < 1 && z > 0) continue;
+      const b = new THREE.Mesh(baseG, seatM); b.position.set(i*0.72, y - 0.1, z); cinG.add(b);
+      const k = new THREE.Mesh(seatG, seatM); k.position.set(i*0.72, y + 0.35, z + (z > 0 ? 0.28 : -0.28)); cinG.add(k); }
+  });
+  const glow = new THREE.Mesh(new THREE.PlaneGeometry(CIN_W*1.12, CIN_W/cin.aspect*1.12), new THREE.MeshBasicMaterial({color:0x14182a, fog:false}));
+  glow.position.set(0, 0.35, -CIN_R - 0.3); cinG.add(glow);
+  buildCinemaScreen();
+  cin.el = document.createElement('video'); cin.el.playsInline = true; cin.el.loop = true; cin.el.setAttribute('playsinline', '');
+  cin.el.addEventListener('loadedmetadata', () => { if (cin.el.videoWidth){ cin.aspect = clamp(cin.el.videoWidth / cin.el.videoHeight, 1, 2.6); buildCinemaScreen(); } });
+  cin.el.addEventListener('error', () => showToast('เล่นวิดีโอนี้ไม่ได้ (ฟอร์แมต/ขนาดใหญ่เกิน)', 4000));
+  cin.fin = document.createElement('input'); cin.fin.type = 'file'; cin.fin.accept = 'video/*';
+  cin.fin.onchange = () => {
+    const f = cin.fin.files && cin.fin.files[0]; cin.fin.value = ''; if (!f) return;
+    if (cin.url) URL.revokeObjectURL(cin.url);
+    cin.url = URL.createObjectURL(f); cin.name = f.name.slice(0, 30);
+    cin.el.src = cin.url; cin.el.muted = false;
+    cin.el.play().catch(() => { cin.el.muted = true; cin.el.play().catch(() => {}); });
+    const t = new THREE.VideoTexture(cin.el); t.minFilter = THREE.LinearFilter; t.magFilter = THREE.LinearFilter; t.generateMipmaps = false;
+    if (cin.tex && cin.tex !== cin.demoTex) cin.tex.dispose();
+    cin.tex = t; cin.mat.map = t; cin.mat.needsUpdate = true; cin.kind = 'video';
+    showToast('กำลังเล่น ' + cin.name, 2500); wins.forEach(w => { w.ui.dirty = true; });
+  };
+}
+function pickFileCin(){
+  ensureCinema();
+  if (navigator.userActivation && !navigator.userActivation.isActive){ N.pendingFn = () => cin.fin.click(); showToast('แตะจอ 1 ครั้งเพื่อเลือกไฟล์', 6000); return; }
+  cin.fin.click();
+}
+function togglePlayCin(){ if (cin.kind !== 'video') return; if (cin.el.paused) cin.el.play().catch(() => {}); else cin.el.pause(); wins.forEach(w => { w.ui.dirty = true; }); }
+function seekCin(d){ if (cin.kind !== 'video' || !cin.el.duration) return; cin.el.currentTime = clamp(cin.el.currentTime + d, 0, cin.el.duration); }
+function sizeCin(f){ cin.s = clamp(cin.s * f, 0.55, 1.8); applyCinemaLayout(); }
+function distCin(d){ cin.z = clamp(cin.z + d, -3, 4); applyCinemaLayout(); }
+function dimCin(){ cin.dim = (cin.dim + 1) % CIN_DIM.length; applyCinemaLayout(); showToast('ความสว่างจอ: ' + ['มืด', 'กลาง', 'สว่าง'][cin.dim], 1800); }
+function enterCinema(){
+  ensureCinema(); cinG.visible = true; env.visible = false; heading.updateMatrixWorld(true);
+  if (!winOpen('cctl')) createWin('cctl');
+  if (cin.kind === 'video') cin.el.play().catch(() => {});
+  showToast('🍿 โรงหนัง • 📁 เลือกวิดีโอ • ซูมสองมือเพื่อปรับขนาดจอ', 4500);
+}
+function leaveCinema(){
+  cinG.visible = false; env.visible = envShown();
+  if (cin.el) cin.el.pause();
+  const w = wins.find(v => v.type === 'cctl'); if (w) closeWin(w);
+}
+function drawCctlWin(x, ui, win){
+  const W = win.d.w, playing = cin.kind === 'video' && !cin.el.paused;
+  const B = [['rw','⏪',() => seekCin(-10)], ['pp', playing ? '⏸' : '▶', togglePlayCin], ['ff','⏩',() => seekCin(10)], ['file','📁',pickFileCin],
+             ['zi','＋',() => sizeCin(1.12)], ['zo','－',() => sizeCin(1/1.12)], ['nr','⇥',() => distCin(1)], ['fr','⇤',() => distCin(-1)], ['dm','💡',dimCin], ['ex','🚪',() => setMode('home')]];
+  B.forEach((b, i) => winBtn(x, ui, 'c:' + b[0], b[1], 20 + i*70, 62, 64, 64, b[2], {on:b[0] === 'pp' && playing, font:'28px'}));
+  const el = cin.el, dur = (cin.kind === 'video' && el && isFinite(el.duration)) ? el.duration : 0, cur = dur ? el.currentTime : 0;
+  const tf = t => Math.floor(t/60) + ':' + String(Math.floor(t) % 60).padStart(2, '0');
+  x.fillStyle = '#b8b8c0'; x.font = '20px sans-serif'; x.textAlign = 'left';
+  x.fillText(cin.name + (dur ? '  ' + tf(cur) + ' / ' + tf(dur) : '') + '   (＋－ ขนาดจอ  ⇥⇤ ใกล้/ไกล)', 24, 150, W - 48);
+  x.fillStyle = 'rgba(255,255,255,.18)'; roundRect(x, 24, 160, W - 48, 8, 4); x.fill();
+  if (dur){ x.fillStyle = '#4f8cff'; roundRect(x, 24, 160, Math.max(8, (W - 48)*cur/dur), 8, 4); x.fill(); }
+}
+
 /* ---------- app: shooting game ---------- */
 const targets = [];
 const tgeo = new THREE.SphereGeometry(0.28, 12, 10);
@@ -1204,6 +1307,7 @@ function setMode(m){
   panel.mesh.visible = (m === 'home') && !S.panelHide;
   recenterHeading();
   if (m === 'v360') enter360(); else if (prev === 'v360') leave360();
+  if (m === 'cinema') enterCinema(); else if (prev === 'cinema') leaveCinema();
   updateWinVis();
   if (m === 'shoot'){ S.score = 0; targets.slice().forEach(popTarget); drawScore(); }
   invalidateUI();
@@ -1217,14 +1321,47 @@ function setMR(on){
 const devQ = new THREE.Quaternion();
 const _z = new THREE.Vector3(0,0,1), _e = new THREE.Euler(), _q0 = new THREE.Quaternion(), _q1 = new THREE.Quaternion(-Math.sqrt(0.5), 0, 0, Math.sqrt(0.5));
 let gotOrient = false;
+const devRaw = new THREE.Quaternion(), devUse = new THREE.Quaternion(), headPos = new THREE.Vector3(), headVel = new THREE.Vector3();
+const accDev = new THREE.Vector3(); let accT = 0, accOK = false, quietT = 0;
+function onMotion(e){
+  const a = e.acceleration;
+  if (!a || a.x == null){ accOK = false; return; }
+  accOK = true; accDev.set(a.x, a.y, a.z); accT = performance.now();
+}
+const _aw = new THREE.Vector3();
+function updateHead(dt){
+  if (!gotOrient){ devUse.copy(devQ); return; }
+  // 1) rotation: optional speed-adaptive smoothing (still head = steady picture, fast turn = no lag)
+  if (P.stab === 0) devUse.copy(devQ);
+  else {
+    const ang = devUse.angleTo(devQ), c = P.stab === 1 ? [7, 3] : [3, 1.6];
+    const k = c[0] + c[1] * ang / Math.max(dt, 0.004);
+    devUse.slerp(devQ, 1 - Math.exp(-k * dt));
+  }
+  // 2) position (experimental): integrate acceleration, with damping and a pull back to the centre so it cannot drift away
+  if (P.dof === 1 && accOK && performance.now() - accT < 200){
+    _aw.copy(accDev).applyQuaternion(devRaw);                 // device -> world (x east, y north, z up)
+    const ax = _aw.x, ay = _aw.z, az = -_aw.y;                // -> three.js world
+    const m = Math.hypot(ax, ay, az);
+    if (m < 0.18){ quietT += dt; } else quietT = 0;
+    if (m >= 0.18){ headVel.x += ax * dt; headVel.y += ay * dt; headVel.z += az * dt; }
+    headVel.multiplyScalar(Math.exp(-dt * (quietT > 0.12 ? 9 : 2.5)));
+    headPos.addScaledVector(headVel, dt);
+    headPos.multiplyScalar(Math.exp(-dt * 0.5));
+    const l = headPos.length(); if (l > 0.4) headPos.multiplyScalar(0.4 / l);
+  } else if (headPos.lengthSq() > 1e-6 || headVel.lengthSq() > 1e-6){ headPos.multiplyScalar(Math.exp(-dt * 3)); headVel.set(0,0,0); }
+  else { headPos.set(0,0,0); }
+}
 function onOrient(e){
   if (e.alpha == null) return;
   const o = (screen.orientation ? screen.orientation.angle : (window.orientation || 0)) * Math.PI/180;
   _e.set(e.beta*Math.PI/180, e.alpha*Math.PI/180, -e.gamma*Math.PI/180, 'YXZ');
+  devRaw.setFromEuler(_e);
   devQ.setFromEuler(_e); devQ.multiply(_q1); devQ.multiply(_q0.setFromAxisAngle(_z, -o));
-  if (!gotOrient){ gotOrient = true; recenterHeading(); }
+  if (!gotOrient){ gotOrient = true; devUse.copy(devQ); recenterHeading(); }
 }
 function recenterHeading(){
+  headPos.set(0,0,0); headVel.set(0,0,0); devUse.copy(devQ);
   camera.quaternion.copy(devQ); camera.updateMatrixWorld(true);
   const d = new THREE.Vector3(); camera.getWorldDirection(d);
   heading.rotation.y = Math.atan2(-d.x, -d.z);
@@ -1716,10 +1853,11 @@ function interact(now, dt){
   if (ZM){                                  // two-hand zoom: whatever the cursor was over (window / dock / panel), else the panel or the 360 view
     const z = ZM;
     if (z.b === null){
-      z.t = hovUI || (S.mode === 'v360' ? 'fov' : (panel.mesh.visible ? panel : null));
-      z.b = z.t === 'fov' ? v360.fov : z.t === panel ? S.pscale : (z.t ? z.t.mesh.scale.x : 1);
+      z.t = hovUI || (S.mode === 'v360' ? 'fov' : (S.mode === 'cinema' ? 'cin' : (panel.mesh.visible ? panel : null)));
+      z.b = z.t === 'fov' ? v360.fov : z.t === 'cin' ? cin.s : z.t === panel ? S.pscale : (z.t ? z.t.mesh.scale.x : 1);
     }
     if (z.t === 'fov') v360.fov = clamp(z.b / z.k, 25, 100);
+    else if (z.t === 'cin'){ cin.s = clamp(z.b * z.k, 0.55, 1.8); applyCinemaLayout(); }
     else if (z.t === panel) S.pscale = clamp(z.b * z.k, PS_MIN, PS_MAX);
     else if (z.t){
       const ns = clamp(z.b * z.k, z.t === dock ? 0.6 : 0.5, z.t === dock ? 2.2 : 2.5);
@@ -1780,7 +1918,8 @@ function frame(now){
   requestAnimationFrame(frame);
   const dt = Math.min((now - last)/1000, 0.1); last = now;
   if (N.webOpen && !N.webFloat) return;                 // the browser overlay covers the scene: pause the 3D work
-  camera.quaternion.copy(devQ); camera.updateMatrixWorld(true);
+  updateHead(dt);
+  camera.quaternion.copy(devUse); camera.position.copy(headPos); camera.updateMatrixWorld(true);
   updateVignette(dt);
   updateLight(now);
   if (N.boosting && S.mr && video.currentTime !== N.drawnVT) boostFrame();
@@ -1860,6 +1999,8 @@ $('go').onclick = async () => {
   $('msg').textContent = 'กำลังเริ่ม...';
   try{ if (DeviceOrientationEvent.requestPermission) await DeviceOrientationEvent.requestPermission(); }catch(e){}
   addEventListener('deviceorientation', onOrient, true);
+  try{ if (window.DeviceMotionEvent && DeviceMotionEvent.requestPermission) await DeviceMotionEvent.requestPermission(); }catch(e){}
+  addEventListener('devicemotion', onMotion, true);
   try{ await document.documentElement.requestFullscreen(); await screen.orientation.lock('landscape'); }catch(e){}
   try{ if (navigator.wakeLock) await navigator.wakeLock.request('screen'); }catch(e){}
   await initCamera();
