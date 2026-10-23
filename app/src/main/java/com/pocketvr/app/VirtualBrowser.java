@@ -52,6 +52,8 @@ public class VirtualBrowser {
     private Bitmap bmp;
     private long lastFrame = 0, downTime = 0;
     private int w = 1280, h = 720;
+    private boolean desktop = false;
+    private static final String DESKTOP_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
     public VirtualBrowser(Activity a) { act = a; }
 
@@ -72,7 +74,7 @@ public class VirtualBrowser {
                 DisplayManager dm = (DisplayManager) act.getSystemService(Context.DISPLAY_SERVICE);
                 int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PRESENTATION | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY;
                 // density chosen so pages lay out about 480 CSS pixels wide (phone layout): big text that stays readable through VR box lenses
-                int dpi = (int) Math.round(w * 160.0 / 480.0);
+                int dpi = dpiFor(desktop);
                 display = dm.createVirtualDisplay("PocketVR-browser", w, h, dpi, reader.getSurface(), flags);
                 if (display == null) throw new IllegalStateException("createVirtualDisplay returned null");
                 presentation = new Presentation(act, display.getDisplay()) {
@@ -95,6 +97,28 @@ public class VirtualBrowser {
         }
     }
 
+    private int dpiFor(boolean desk) { return (int) Math.round(w * 160.0 / (desk ? 1200.0 : 480.0)); }
+
+    private void applyUa(WebView wv) {
+        WebSettings s = wv.getSettings();
+        s.setUserAgentString(desktop ? DESKTOP_UA : null);      // null = the WebView's own mobile user agent
+        s.setUseWideViewPort(true);
+        s.setLoadWithOverviewMode(true);
+    }
+
+    /** UI thread. Desktop mode = desktop user agent + a wider page layout (smaller text). Reloads every tab. */
+    public void setDesktop(boolean on) {
+        if (desktop == on) return;
+        desktop = on;
+        try { if (display != null) display.resize(w, h, dpiFor(on)); } catch (Throwable ignored) { }
+        for (final WebView wv : tabs) {
+            applyUa(wv);
+            wv.postDelayed(wv::reload, 250);
+        }
+    }
+
+    public boolean isDesktop() { return desktop; }
+
     private WebView makeWeb() {
         WebView wv = new WebView(presentation.getContext());
         WebSettings s = wv.getSettings();
@@ -106,6 +130,7 @@ public class VirtualBrowser {
         s.setSupportZoom(false);
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true);
+        applyUa(wv);
         wv.setWebViewClient(new WebViewClient());        // links stay inside this browser
         wv.setWebChromeClient(new WebChromeClient());
         root.addView(wv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
