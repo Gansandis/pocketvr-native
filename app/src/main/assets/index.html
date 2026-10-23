@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.28';
+const VERSION = 'v3.29';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -131,11 +131,11 @@ let customApps = loadList('pvr_apps'), customWebs = loadList('pvr_webs');
 
 /* --- tunables --- */
 const PINCH_SETS = [[0.18, 0.30, 'แน่น'], [0.22, 0.34, 'กลาง'], [0.28, 0.42, 'หลวม']];   // [start, release, label]: thumb-index distance / palm size
-const SMOOTH = [[4.0, 8, 'ไวมาก'], [2.5, 5, 'ไว'], [1.0, 3, 'นุ่ม']];                    // One-Euro filter [minCutoff, beta, label]
+const SMOOTH = [[2.5, 4, 'ไว'], [1.2, 3, 'กลาง'], [0.6, 2.5, 'นุ่ม']];                    // One-Euro filter [minCutoff, beta, label]
 const RATE_MS = [33, 50, 80], RATE_N = ['เร็ว', 'กลาง', 'ประหยัด'];                          // minimum gap between hand detections
 const GAZE_N = ['ปิด', 'เปิด', 'เฉพาะแบ่งจอ'], PTR_N = ['ปลายนิ้วชี้', 'กึ่งกลางนิ้วจีบ'], DEV_N = ['GPU', 'CPU'];
 const LOST_MS = 650;      // keep the last hand pose this long after a missed detection
-const SEL_N = ['จีบนิ้ว', 'จิ้มนิ้ว', 'จีบหรือจิ้ม'], POKE_TH = [0.07, 0.10, 0.14], POKE_N = ['ไว', 'กลาง', 'หนัก'];   // how a selection is made; poke = push the index finger toward the camera
+const SEL_N = ['จีบนิ้ว', 'จิ้มนิ้ว', 'จีบหรือจิ้ม', 'สัมผัสอากาศ'], POKE_TH = [0.07, 0.10, 0.14], POKE_N = ['ไว', 'กลาง', 'หนัก'];   // how a selection is made; poke = push the index finger toward the camera
 const HOLD_R = 0.45;      // while closing the fingers below this, the cursor stops moving (so it doesn't drift)
 const HIT_SLOP = 8;       // extra px around every button (logical UI px)
 const HAND_D = 1.1;       // distance (m) where the hand skeleton is drawn
@@ -145,13 +145,14 @@ const PS_MIN = 0.6, PS_MAX = 2.0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* --- saved preferences --- */
-const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:2, pokeS:1};
+const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3};
 function loadPrefs(){
   try{
     const o = JSON.parse(localStorage.getItem('pvr_prefs') || '{}');
     for (const k of Object.keys(P)) if (Number.isInteger(o[k]) && o[k] >= 0) P[k] = o[k];
+    if (o.airV !== 3) P.sel = 3;                                  // v3.29: air touch becomes the default once
     P.gaze = Math.min(P.gaze, 2); P.ptr = Math.min(P.ptr, 1); P.smooth = Math.min(P.smooth, 2);
-    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 2); P.pokeS = Math.min(P.pokeS, 2);
+    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2);
     if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
     if (Number.isInteger(o.nm) && o.nm >= 0) N.mode = Math.min(o.nm, 2);
     if (IPDS.includes(o.ipd)) S.ipd = o.ipd;
@@ -369,7 +370,7 @@ function cyclePtr(){ cycleP('ptr', 2); }
 function cycleSmooth(){ cycleP('smooth', 3); }
 function cycleRate(){ cycleP('rate', 3); }
 function cyclePinch(){ cycleP('pinch', 3); }
-function cycleSel(){ cycleP('sel', 3); showToast('เลือกด้วย: ' + SEL_N[P.sel] + (P.sel === 1 ? ' (ชี้นิ้วชี้ ที่เหลือพับ แล้วจิ้มไปทางกล้อง)' : ''), 4000); }
+function cycleSel(){ cycleP('sel', 4); showToast('เลือกด้วย: ' + SEL_N[P.sel] + (P.sel === 1 ? ' (ชี้นิ้วชี้ ที่เหลือพับ แล้วจิ้มไปทางกล้อง)' : (P.sel === 3 ? ' (ยื่นนิ้วชี้ไปแตะหน้าจอ UI เหมือนจอสัมผัส ค้างไว้เพื่อลาก ดึงกลับเพื่อปล่อย)' : '')), 4500); }
 function cyclePokeS(){ cycleP('pokeS', 3); showToast('ความไวการจิ้ม: ' + POKE_N[P.pokeS], 2500); }
 function cycleDev(){ finishSpeedTest(); cycleP('dev', 2); showToast('เปลี่ยนตัวประมวลผลแทร็กมือ…', 2500); reinitHands(); }
 function cycleTwo(){ cycleP('two', 2); showToast(P.two ? 'โหมดสองมือเปิด: ใช้ได้ทั้งสองมือ • จีบสองมือแล้วถ่าง/หุบเพื่อซูม' : 'ปิดโหมดสองมือ', 3500); reinitHands(); }
@@ -793,7 +794,7 @@ function drawCamWin(x, ui, win){
   if (!S.cam){ x.fillStyle = 'rgba(20,20,22,.9)'; x.fillRect(0, 52, win.d.w, win.d.h - 52); x.fillStyle = '#aaa'; x.font = '24px sans-serif'; x.textAlign = 'center'; x.fillText('ไม่มีกล้อง', win.d.w/2, 200); }
 }
 // browser inside VR (APK only): a real WebView runs on a private virtual display; we show its pictures here and turn pinches into touches
-const NB = {tabs:[], cur:0, sig:'', err:'', cv:null, tex:null, ctx:null, busy:false, last:0, have:false, open:false, url:'', urlT:0, tm:0, startUrl:'https://www.google.com/'};
+const NB = {desk:false, tabs:[], cur:0, sig:'', err:'', cv:null, tex:null, ctx:null, busy:false, last:0, have:false, open:false, url:'', urlT:0, tm:0, startUrl:'https://www.google.com/'};
 const NB_TOP = 156, NB_W = 800, NB_H = 450;                      // title 0-52, toolbar 52-108, tab strip 108-156, then the page area (800x450)
 function nativePost(op, extra){ if (!NATIVE.ok) return; try{ AndroidBridge.postMessage(JSON.stringify(Object.assign({id:0, op}, extra || {}))); }catch(e){} }
 function nbNewTab(url){
@@ -804,6 +805,11 @@ function nbNewTab(url){
 function nbCloseTab(i, win){
   if (NB.tabs.length <= 1){ closeWin(win); return; }
   nativePost('nb_closetab', {i}); NB.tabs.splice(i, 1); NB.cur = Math.min(NB.cur, NB.tabs.length - 1); NB.urlT = 0; win.ui.dirty = true;
+}
+function nbToggleDesktop(){
+  NB.desk = !NB.desk; nativePost('nb_desktop', {on:NB.desk});
+  showToast(NB.desk ? 'โหมดเดสก์ท็อป: เปิด (หน้าเว็บกว้างขึ้น ตัวเล็กลง)' : 'โหมดเดสก์ท็อป: ปิด', 3000);
+  wins.forEach(w => { if (w.type === 'nweb') w.ui.dirty = true; });
 }
 function nbNav(a){ nativePost('nb_nav', {a}); }
 function nbGo(u){
@@ -821,11 +827,12 @@ function drawWebWin(x, ui, win){
   winBtn(x, ui, 'nbfwd', '▶', 66, 58, 52, 44, () => nbNav('forward'), {font:'22px'});
   winBtn(x, ui, 'nbre', '⟳', 122, 58, 52, 44, () => nbNav('reload'), {font:'26px'});
   winBtn(x, ui, 'nbkb', '⌨', 178, 58, 52, 44, toggleKb, {font:'26px', on:winOpen('kb')});
-  ui.reg('nburl', 238, 58, W - 248, 44, () => vrPrompt('พิมพ์ URL หรือคำค้นหา (เปิดในแท็บนี้)', u => { if (u) nbGo(u); }));
-  x.fillStyle = ui.hover === 'nburl' ? '#4a4a50' : '#18181b'; roundRect(x, 238, 58, W - 248, 44, 22); x.fill();
+  winBtn(x, ui, 'nbdt', '🖥', 234, 58, 52, 44, nbToggleDesktop, {font:'24px', on:NB.desk});
+  ui.reg('nburl', 294, 58, W - 304, 44, () => vrPrompt('พิมพ์ URL หรือคำค้นหา (เปิดในแท็บนี้)', u => { if (u) nbGo(u); }));
+  x.fillStyle = ui.hover === 'nburl' ? '#4a4a50' : '#18181b'; roundRect(x, 294, 58, W - 304, 44, 22); x.fill();
   x.fillStyle = '#d0d0d6'; x.font = '21px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle';
   const curTab = NB.tabs[NB.cur];
-  x.fillText((curTab && curTab.u) || NB.url || 'แตะเพื่อพิมพ์ที่อยู่เว็บ', 256, 81, W - 284); x.textBaseline = 'alphabetic';
+  x.fillText((curTab && curTab.u) || NB.url || 'แตะเพื่อพิมพ์ที่อยู่เว็บ', 312, 81, W - 340); x.textBaseline = 'alphabetic';
   // tab strip
   x.fillStyle = 'rgba(30,30,33,.98)'; x.fillRect(0, 108, W, 48);
   const nt = Math.max(1, NB.tabs.length), tw = Math.min(190, (W - 74) / nt);
@@ -879,6 +886,7 @@ async function pollNweb(now){
 }
 function startNweb(win){
   NB.have = false; NB.open = false; NB.url = ''; NB.tabs = []; NB.cur = 0; NB.sig = ''; NB.msg = 'กำลังเปิดเบราว์เซอร์…';
+  nativePost('nb_desktop', {on:NB.desk});
   nativeCall('nb_open', {url:NB.startUrl, w:960, h:540}, 20000).then(m => {
     if (m.ok){ NB.open = true; }
     else { NB.msg = 'เปิดไม่ได้: ' + String(m.data || '').slice(0, 90); showToast(NB.msg, 7000); }
@@ -1343,7 +1351,7 @@ const dist2 = (a, b) => Math.hypot(a.x-b.x, a.y-b.y);
 const TIPS = [8,12,16,20], PIPS = [6,10,14,18];
 function updateHands(now){
   if (!landmarker || !S.cam || video.readyState < 2 || video.currentTime === lastVT) return;
-  detGap = Math.max(RATE_MS[P.rate], D.ms * 1.2);   // keep detection under ~45% of the frame budget
+  detGap = Math.max(RATE_MS[P.rate], D.ms * 2.2);   // keep detection under ~45% of the frame budget
   if (now - lastDet < detGap) return;
   lastVT = video.currentTime; lastDet = now;
   let src = video;
@@ -1396,12 +1404,13 @@ function assignHands(lms, now){
 // the original single-hand pipeline, run once per hand (H / F are swapped to that hand)
 // poke: index finger out, the other three folded; pushing it toward the camera makes the hand look bigger (and the fingertip closer) -> press
 function updatePoke(h, lm, now, pointing){
-  const pk = h.pk || (h.pk = {base:null, t:now, on:false, peak:0});
+  const pk = h.pk || (h.pk = {base:null, t:now, on:false, peak:0, prog:0});
   const palm = dist2(lm[0], lm[9]) || 1e-3;
   const depth = Math.log(palm) - 0.6 * (lm[8].z - lm[0].z) / palm;
-  if (!pointing){ pk.on = false; pk.base = depth; pk.t = now; return false; }
+  if (!pointing){ pk.on = false; pk.base = depth; pk.t = now; pk.prog = 0; return false; }
   if (pk.base === null){ pk.base = depth; pk.t = now; }
-  const th = POKE_TH[P.pokeS];
+  const th = POKE_TH[P.pokeS] * (P.sel === 3 ? 0.8 : 1);
+  pk.prog = pk.on ? 1 : Math.max(0, Math.min(1, (depth - pk.base) / th));
   if (!pk.on){
     const dt = Math.min(0.5, (now - pk.t) / 1000); pk.t = now;
     if (depth - pk.base > th){ pk.on = true; pk.peak = depth; }
@@ -1443,14 +1452,19 @@ function processHand(h, lm, now){
   H.pinchRaw = raw;
   const pointing = !H.fist && dist2(lm[8], lm[0]) > dist2(lm[6], lm[0]) * 1.15 &&
     dist2(lm[12], lm[0]) < dist2(lm[10], lm[0]) * 1.08 && dist2(lm[16], lm[0]) < dist2(lm[14], lm[0]) * 1.08 && dist2(lm[20], lm[0]) < dist2(lm[18], lm[0]) * 1.08;
-  const pokeOn = updatePoke(H, lm, now, P.sel !== 0 && pointing);
+  const air = P.sel === 3;
+  const idxOut = !H.fist && !raw && dist2(lm[8], lm[0]) > dist2(lm[6], lm[0]) * 1.1;      // air touch: just an extended index finger, other fingers may be relaxed
+  const pokeOn = updatePoke(H, lm, now, P.sel !== 0 && (air ? idxOut : pointing));
   const was = H.pinch;
-  const pinch = (P.sel !== 1 && raw) || (P.sel !== 0 && pokeOn);
+  const pinch = ((P.sel === 0 || P.sel === 2) && raw) || (P.sel !== 0 && pokeOn);
+  const arming = air && H.pk && H.pk.prog > 0.4;                // fingertip is nearly at the surface: freeze the cursor so the push does not shift it
 
-  if (pinch && !was) H.a = {nx, ny, cx:H.tx, cy:H.ty};          // remember where the cursor was when the pinch began
-  if (pinch && H.a){                                            // while pinching: only follow the hand's movement
+  if (pinch && !was && !(air && H.arm)) H.a = {nx, ny, cx:H.tx, cy:H.ty};          // remember where the cursor was when the pinch began
+  if (air && arming && !H.arm) H.a = {nx, ny, cx:H.tx, cy:H.ty};
+  H.arm = arming;
+  if ((pinch || arming) && H.a){                                            // while pinching: only follow the hand's movement
     H.tx = H.a.cx + (nx - H.a.nx); H.ty = H.a.cy + (ny - H.a.ny);
-  } else if (ratio > HOLD_R || pointing){                       // fingers apart (or pointing): follow normally
+  } else if (ratio > HOLD_R || pointing || air){                       // fingers apart (or pointing): follow normally
     H.tx = nx; H.ty = ny;
   }                                                             // fingers closing: hold still so small targets don't slip away
   H.pinch = pinch;
@@ -1649,7 +1663,7 @@ function interactOne(now, dt, hi){
 
   if (click && now > cool && !grab){
     // a poke on a drag bar / resize grip picks it up and it keeps following the hand until the next poke (no need to keep the finger pushed forward)
-    const gk = (H.pk && H.pk.on && P.sel !== 0 && !H.pinchRaw) ? 'sticky' : 'pinch';
+    const gk = (H.pk && H.pk.on && (P.sel === 1 || P.sel === 2) && !H.pinchRaw) ? 'sticky' : 'pinch';
     if (pinchDown && ui === panel && reg && reg.id === 'grab') startGrab(gk, 'panel', 'move');
     else if (pinchDown && ui === panel && reg && reg.id === 'resize') startGrab(gk, 'panel', 'resize');
     else if (pinchDown && ui === dock && reg && reg.id === 'dockbg') startGrab(gk, 'dock', 'move');
@@ -1674,7 +1688,9 @@ function interactOne(now, dt, hi){
   if (hit) cursor.position.copy(hit.point).addScaledVector(ray.ray.direction, -0.03);
   else ray.ray.at(PANEL_R, cursor.position);
   cursor.material.color.set(H.ok ? (H.pinch ? 0x39e08a : (H.fist ? 0x4f8cff : 0xffffff)) : 0xffd24a);
-  cursor.scale.setScalar(1 + hoverT*2);
+  const ap = (P.sel === 3 && H.ok && !H.fist && H.pk) ? H.pk.prog : 0;      // air touch: the dot shrinks and turns green as the fingertip meets the surface
+  if (ap > 0 && !H.pinch) cursor.material.color.setRGB(1 - 0.78*ap, 1 - 0.1*ap, 1 - 0.6*ap);
+  cursor.scale.setScalar((1 + hoverT*2) * (H.pinch ? 0.8 : 1.35 - 0.5*ap));
 }
 
 const NEWCTX = () => ({grab:null, sw:null, wasPinch:false, wasFist:false, hoverKey:null, hoverT:0, cool:0});
