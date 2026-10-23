@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.34';
+const VERSION = 'v3.35';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -967,6 +967,17 @@ const KB_ROWS = {
 function kbLayout(){ return KB_ROWS[KB.lang + (KB.shift ? 's' : '')].map(r => Array.from(r)); }
 const kbLive = () => !KB.cb && NATIVE.ok && winOpen('nweb');     // keys go straight into the page's focused field
 function kbType(ch, win){ if (kbLive()){ nativePost('nb_text', {t:ch}); KB.shift = false; win.ui.dirty = true; return; } if (Array.from(KB.text).length < 150) KB.text += ch; KB.shift = false; win.ui.dirty = true; }
+async function kbPaste(win){
+  let t = '';
+  if (NATIVE.ok){ const m = await nativeCall('clip'); if (m.ok && typeof m.data === 'string') t = m.data; }
+  if (!t){ try{ t = await navigator.clipboard.readText(); }catch(e){} }
+  t = String(t || '').replace(/\r?\n/g, ' ').trim();
+  if (!t){ showToast('คลิปบอร์ดว่าง หรืออ่านไม่ได้ (คัดลอกข้อความในมือถือก่อน แล้วกดวาง)', 4000); return; }
+  if (t.length > 2000) t = t.slice(0, 2000);
+  if (kbLive()) nativePost('nb_text', {t});
+  else KB.text = Array.from(KB.text + t).slice(0, 600).join('');
+  win.ui.dirty = true; showToast('วางแล้ว', 1200);
+}
 function kbBack(win){ if (kbLive()){ nativePost('nb_key', {k:'backspace'}); return; } KB.text = Array.from(KB.text).slice(0, -1).join(''); win.ui.dirty = true; }
 function kbEnter(win){
   if (kbLive()){ nativePost('nb_key', {k:'enter'}); return; }
@@ -1002,10 +1013,11 @@ function drawKbWin(x, ui, win){
     if (r === 3) winBtn(x, ui, 'kback', '⌫', bx, y, side, kh, () => kbBack(win), {font:'30px'});
   });
   const y = 134 + 4*(kh + 8), avail = W - 16 - 64;
-  const wl = 110, wp = 56, wg = 124, ws = avail - wl - 3*wp - wg - 5*gap;
+  const wl = 110, wp = 56, wg = 124, wpaste = 84, ws = avail - wl - 3*wp - wg - wpaste - 6*gap;
   let bx = 16;
   winBtn(x, ui, 'klang', KB.lang === 'th' ? 'ไทย' : 'EN', bx, y, wl, kh, () => { KB.lang = KB.lang === 'th' ? 'en' : 'th'; KB.shift = false; win.ui.dirty = true; }, {font:'26px'}); bx += wl + gap;
   ['.', '/', '-'].forEach(ch => { winBtn(x, ui, 'k:' + ch, ch, bx, y, wp, kh, () => kbType(ch, win), {font:'30px'}); bx += wp + gap; });
+  winBtn(x, ui, 'kpaste', '📋', bx, y, wpaste, kh, () => kbPaste(win), {font:'28px'}); bx += wpaste + gap;
   winBtn(x, ui, 'kspace', '␣', bx, y, ws, kh, () => kbType(' ', win), {font:'30px'}); bx += ws + gap;
   winBtn(x, ui, 'kgo', 'ไป', bx, y, wg, kh, () => kbEnter(win), {font:'28px', on:true});
 }
