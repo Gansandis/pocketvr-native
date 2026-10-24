@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.43';
+const VERSION = 'v3.45';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -145,14 +145,14 @@ const PS_MIN = 0.6, PS_MAX = 2.0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* --- saved preferences --- */
-const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1};
+const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1};
 function loadPrefs(){
   try{
     const o = JSON.parse(localStorage.getItem('pvr_prefs') || '{}');
     for (const k of Object.keys(P)) if (Number.isInteger(o[k]) && o[k] >= 0) P[k] = o[k];
     if (o.airV !== 3) P.sel = 3;                                  // v3.29: air touch becomes the default once
     P.gaze = Math.min(P.gaze, 2); P.ptr = Math.min(P.ptr, 1); P.smooth = Math.min(P.smooth, 2);
-    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 1); P.dres = Math.min(P.dres, 2); P.webfps = Math.min(P.webfps, 3); P.camfps = Math.min(P.camfps, 1); P.stab = Math.min(P.stab, 2);
+    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 1); P.dres = Math.min(P.dres, 2); P.webfps = Math.min(P.webfps, 3); P.camfps = Math.min(P.camfps, 1); P.hv = Math.min(P.hv, 2); P.gs = Math.min(P.gs, 2); P.stab = Math.min(P.stab, 2);
     if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
     if (Number.isInteger(o.nm) && o.nm >= 0) N.mode = Math.min(o.nm, 2);
     if (IPDS.includes(o.ipd)) S.ipd = o.ipd;
@@ -185,7 +185,7 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0x334466, 0.9));
 const sun = new THREE.DirectionalLight(0xffffff, 0.6); sun.position.set(1, 2, 1); scene.add(sun);
 
 const env = new THREE.Group(); scene.add(env);
-const grid = new THREE.GridHelper(30, 30, 0x4f8cff, 0x1c2b4a); grid.position.y = -1.6; env.add(grid);
+const grid = new THREE.GridHelper(30, 30, 0x4f8cff, 0x1c2b4a); grid.position.y = -1.6; grid.renderOrder = -2000; env.add(grid);   // drawn before the camera picture (renderOrder -1000), so the picture simply paints over the grid
 
 const heading = new THREE.Group(); scene.add(heading);
 const groups = {shoot:new THREE.Group(), gallery:new THREE.Group()};
@@ -377,6 +377,9 @@ function cycleDof(){ cycleP('dof', 2); headPos.set(0,0,0); headVel.set(0,0,0); s
 const LENS_N = ['ปิด', 'เบา', 'กลาง', 'แรง'];
 function cycleLens(){ cycleP('lens', 4); showToast('ชดเชยเลนส์ VR Box: ' + LENS_N[P.lens] + (P.lens ? ' (บิดภาพให้ตรงเมื่อมองผ่านเลนส์ ใช้ได้ในโหมดแบ่งจอ)' : ''), 4500); }
 function cycleRoi(){ cycleP('roi', 2); roiPrev = null; showToast(P.roi ? 'ตรวจเฉพาะรอบมือ: เปิด (ทดลอง) ถ้ามือหลุดบ่อยให้ปิด' : 'ตรวจเฉพาะรอบมือ: ปิด', 4000); }
+const HV_N = ['โครงกระดูก', 'เงามือเรืองแสง', 'ทั้งสอง'], GS_N = ['ตามตรงๆ', 'นุ่ม', 'นุ่มมาก'], GS_T = [0, 0.07, 0.16];
+function cycleHv(){ cycleP('hv', 3); showToast('รูปแบบมือ: ' + HV_N[P.hv], 2500); }
+function cycleGs(){ cycleP('gs', 3); showToast('แผงตามมือตอนลาก: ' + GS_N[P.gs], 2500); }
 const WEBFPS = [10, 15, 20, 30], CAMFPS = [30, 60];
 function cycleWebFps(){ cycleP('webfps', 4); NB.fpsSent = 0; showToast('เฟรมเรตเว็บใน VR: ' + WEBFPS[P.webfps] + ' • ต่ำ = เครื่องลื่นขึ้น วิดีโอในเว็บจะกระตุกขึ้น', 4000); }
 function cycleCamFps(){ cycleP('camfps', 2); applyCamFps(); showToast('เฟรมเรตกล้อง: ' + CAMFPS[P.camfps] + (P.camfps === 0 ? ' (เครื่องเย็นกว่า แต่ภาพจริงในแว่นดีเลย์มากขึ้นเล็กน้อย)' : ''), 4500); }
@@ -416,7 +419,7 @@ async function reinitHands(){
   invalidateUI();
 }
 function resetSettings(){
-  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1});
+  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1});
   S.qi = 1; N.mode = 1; S.ipd = 0.063; S.sep = 0.08; S.ptI = 3; S.cfI = 2; S.vfI = 2; N.lastProbe = 0;
   applyQuality(); savePrefs(); invalidateUI(); showToast('รีเซ็ตการตั้งค่าแล้ว', 2500);
   reinitHands();
@@ -431,7 +434,7 @@ function applyExposure(){
 }
 // head-locked camera picture for the VR box, sized to the camera's real viewing angle so the world isn't magnified (magnification = dizziness)
 const PT = {fx:1, fy:1};
-const ptMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({color:0xffffff, depthTest:true, depthFunc:THREE.AlwaysDepth, depthWrite:true, polygonOffset:true, polygonOffsetFactor:3, polygonOffsetUnits:3, fog:false}));   // writes depth (slightly pushed back) so the room grid behind the camera picture is hidden
+const ptMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({color:0xffffff, depthTest:false, depthWrite:false, fog:false}));
 ptMesh.renderOrder = -1000; ptMesh.frustumCulled = false; ptMesh.visible = false; ptMesh.position.set(0, 0, -PANEL_R); camera.add(ptMesh);
 const vigCv = document.createElement('canvas'); vigCv.width = vigCv.height = 128;
 { const g = vigCv.getContext('2d'), gr = g.createRadialGradient(64, 64, 20, 64, 64, 64);
@@ -553,6 +556,8 @@ const SETS = [
   {id:'airD',    t:'ทิศสัมผัสอากาศ',        v:() => P.airD === 0 ? 'เอื้อมไปข้างหน้า' : 'เข้าหากล้อง', on:() => false, fn:cycleAirD},
   {id:'dof',     t:'การติดตามหัว',        v:() => DOF_N[P.dof],                   on:() => P.dof > 0,  fn:cycleDof},
   {id:'lens',    t:'ชดเชยเลนส์ VR Box',   v:() => LENS_N[P.lens],                  on:() => P.lens > 0, fn:cycleLens},
+  {id:'hv',      t:'รูปแบบมือ',            v:() => HV_N[P.hv],                      on:() => false,      fn:cycleHv},
+  {id:'gs',      t:'แผงตามมือตอนลาก',     v:() => GS_N[P.gs],                      on:() => false,      fn:cycleGs},
   {id:'webfps',  t:'เฟรมเรตเว็บใน VR',     v:() => WEBFPS[P.webfps] + ' fps',       on:() => false,      fn:cycleWebFps},
   {id:'camfps',  t:'เฟรมเรตกล้อง',         v:() => CAMFPS[P.camfps] + ' fps',       on:() => false,      fn:cycleCamFps},
   {id:'dres',    t:'ความละเอียดตรวจมือ',   v:() => DRES_N[P.dres],                  on:() => false,      fn:cycleDres},
@@ -1374,7 +1379,6 @@ function setMode(m){
   recenterHeading();
   if (m === 'v360') enter360(); else if (prev === 'v360') leave360();
   if (m === 'cinema') enterCinema(); else if (prev === 'cinema') leaveCinema();
-  ptMesh.material.depthWrite = (m !== 'v360' && m !== 'cinema');       // the 360 sphere / cinema room are far behind the picture plane: let them draw over it as before
   updateWinVis();
   if (m === 'shoot'){ S.score = 0; targets.slice().forEach(popTarget); drawScore(); }
   invalidateUI();
@@ -1795,6 +1799,22 @@ function placeBone(mesh, a, b){
   mesh.scale.set(1, len, 1);
   mesh.quaternion.setFromUnitVectors(UP, _d.multiplyScalar(1/len));
 }
+const FILL_V = (CONN.length * 2 + 4) * 3;                       // triangles: two per bone + four for the palm
+const PALM_TRI = [[0,1,5],[0,5,9],[0,9,13],[0,13,17]];
+// a soft, solid-looking hand made of fat ribbons along every bone (faces the camera); hides single-joint jitter far better than dots
+function fillHand(mesh, hs, wk){
+  const a = mesh.geometry.attributes.position.array; let o = 0;
+  const put = (p, dx, dy) => { a[o++] = p.x + dx; a[o++] = p.y + dy; a[o++] = p.z; };
+  for (let k = 0; k < CONN.length; k++){
+    const p = hs[CONN[k][0]], q = hs[CONN[k][1]];
+    let nx = -(q.y - p.y), ny = q.x - p.x; const L = Math.hypot(nx, ny) || 1; nx /= L; ny /= L;
+    const wp = wk * -p.z, wq = wk * -q.z;
+    put(p, nx*wp, ny*wp); put(p, -nx*wp, -ny*wp); put(q, nx*wq, ny*wq);
+    put(q, nx*wq, ny*wq); put(p, -nx*wp, -ny*wp); put(q, -nx*wq, -ny*wq);
+  }
+  for (const t of PALM_TRI){ put(hs[t[0]], 0, 0); put(hs[t[1]], 0, 0); put(hs[t[2]], 0, 0); }
+  mesh.geometry.attributes.position.needsUpdate = true;
+}
 function makeViz(){
   const g = new THREE.Group(); g.visible = false; camera.add(g);
   const pts = new THREE.Points(new THREE.BufferGeometry(), jointMat);
@@ -1803,9 +1823,13 @@ function makeViz(){
   lines.geometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(CONN.length*6), 3)); lines.frustumCulled = false; g.add(lines);
   const tipMat = new THREE.MeshBasicMaterial({color:0xffffff, fog:false});
   const tA = new THREE.Mesh(tipGeo, tipMat), tB = new THREE.Mesh(tipGeo, tipMat); g.add(tA); g.add(tB);
+  const mkFill = (op, add) => { const gm = new THREE.BufferGeometry(); gm.setAttribute('position', new THREE.BufferAttribute(new Float32Array(FILL_V*3), 3));
+    const m = new THREE.Mesh(gm, new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:op, depthTest:false, depthWrite:false, side:THREE.DoubleSide, fog:false, blending:add ? THREE.AdditiveBlending : THREE.NormalBlending}));
+    m.frustumCulled = false; m.renderOrder = 997; g.add(m); return m; };
+  const fillA = mkFill(0.30, false), fillB = mkFill(0.16, true);       // body of the hand + a wider soft glow around it
   const rm = new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.55, depthTest:false, fog:false});
   const rb = new THREE.Mesh(rayGeo, rm); rb.renderOrder = 998; rb.visible = false; scene.add(rb);
-  return {g, pts, lines, tipMat, tA, tB, rm, rb, hs:Array.from({length:21}, () => new THREE.Vector3()), init:false};
+  return {g, pts, lines, fillA, fillB, tipMat, tA, tB, rm, rb, hs:Array.from({length:21}, () => new THREE.Vector3()), init:false};
 }
 const VIZ = [makeViz(), makeViz()];
 function updateHandViz(i){
@@ -1827,9 +1851,12 @@ function updateHandViz(i){
   for (let k = 0; k < 21; k++){ jp[k*3] = hs[k].x; jp[k*3+1] = hs[k].y; jp[k*3+2] = hs[k].z; }
   for (let k = 0; k < CONN.length; k++){ const p = hs[CONN[k][0]], q = hs[CONN[k][1]], o = k*6; bp[o] = p.x; bp[o+1] = p.y; bp[o+2] = p.z; bp[o+3] = q.x; bp[o+4] = q.y; bp[o+5] = q.z; }
   v.pts.geometry.attributes.position.needsUpdate = true; v.lines.geometry.attributes.position.needsUpdate = true;
+  v.pts.visible = v.lines.visible = P.hv !== 1;
+  v.fillA.visible = v.fillB.visible = P.hv !== 0;
+  if (P.hv !== 0){ fillHand(v.fillA, hs, 0.016); fillHand(v.fillB, hs, 0.030); }
   v.tA.position.copy(hs[4]); v.tB.position.copy(hs[8]);
   const col = h.pinch ? 0x39e08a : (h.fist ? 0x4f8cff : 0xffffff);
-  v.tipMat.color.set(col); v.rm.color.set(col);
+  v.tipMat.color.set(col); v.rm.color.set(col); v.fillA.material.color.set(col); v.fillB.material.color.set(h.pinch ? 0x39e08a : (h.fist ? 0x4f8cff : 0xa8d4ff));
   if (h.fist) _a.copy(hs[9]); else _a.copy(hs[4]).add(hs[8]).multiplyScalar(0.5);
   v.g.localToWorld(_a);
   _b.copy(cur.position);
@@ -1908,25 +1935,27 @@ function interactOne(now, dt, hi){
       grab = null;
     } else {
       const r = rayYawY(grab.R);
+      const kg = P.gs ? 1 - Math.exp(-dt / GS_T[P.gs]) : 1; if (!grab.sm) grab.sm = {};
+      const sm = (key, target, init) => { if (grab.sm[key] === undefined) grab.sm[key] = init; grab.sm[key] += (target - grab.sm[key]) * kg; return grab.sm[key]; };   // the dragged panel glides after the hand instead of jumping with every detection
       if (gw){
         const wn = grab.target;
         if (grab.type === 'resize'){
           const w0 = wn.d.w/520*grab.s0, h0 = wn.d.h/520*grab.s0, dx = (r.yaw - grab.rayYaw)*grab.R, dy = r.y - grab.rayY;
-          wn.s = clamp(grab.s0 * (1 + 0.5*(dx/(w0/2) - dy/(h0/2))), 0.5, 2.5); wn.ui.mesh.scale.setScalar(wn.s);
+          wn.s = sm('s', clamp(grab.s0 * (1 + 0.5*(dx/(w0/2) - dy/(h0/2))), 0.5, 2.5), grab.s0); wn.ui.mesh.scale.setScalar(wn.s);
         } else {
-          wn.pivot.rotation.y = grab.yaw0 - (r.yaw - grab.rayYaw);
-          wn.ui.mesh.position.y = clamp(grab.y0 + (r.y - grab.rayY), -1, 1);
+          wn.pivot.rotation.y = sm('yaw', grab.yaw0 - (r.yaw - grab.rayYaw), grab.yaw0);
+          wn.ui.mesh.position.y = sm('y', clamp(grab.y0 + (r.y - grab.rayY), -1, 1), grab.y0);
         }
       } else if (grab.type === 'resize'){
         const w0 = BASE_W*grab.s0, h0 = BASE_H*grab.s0;
         const dx = (r.yaw - grab.rayYaw)*grab.R, dy = r.y - grab.rayY;
-        S.pscale = clamp(grab.s0 * (1 + 0.5*(dx/(w0/2) - dy/(h0/2))), PS_MIN, PS_MAX);
+        S.pscale = sm('s', clamp(grab.s0 * (1 + 0.5*(dx/(w0/2) - dy/(h0/2))), PS_MIN, PS_MAX), grab.s0);
       } else if (grab.target === 'panel'){
-        panelPivot.rotation.y = grab.yaw0 - (r.yaw - grab.rayYaw);
-        panelPivot.position.y = clamp(grab.y0 + (r.y - grab.rayY), -0.5, 1.0);
+        panelPivot.rotation.y = sm('yaw', grab.yaw0 - (r.yaw - grab.rayYaw), grab.yaw0);
+        panelPivot.position.y = sm('y', clamp(grab.y0 + (r.y - grab.rayY), -0.5, 1.0), grab.y0);
       } else {
-        dockPivot.rotation.y = grab.yaw0 - (r.yaw - grab.rayYaw);
-        dock.mesh.position.y = clamp(grab.y0 + (r.y - grab.rayY), -1.1, 0.5);
+        dockPivot.rotation.y = sm('yaw', grab.yaw0 - (r.yaw - grab.rayYaw), grab.yaw0);
+        dock.mesh.position.y = sm('y', clamp(grab.y0 + (r.y - grab.rayY), -1.1, 0.5), grab.y0);
       }
       const hid = grab.type === 'resize' ? 'resize' : (grab.target === 'dock' ? 'dockbg' : 'grab');
       hoverReqs.push({ui:gu, h:hid, pr:hid});
