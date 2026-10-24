@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.50';
+const VERSION = 'v3.51';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1865,6 +1865,33 @@ function fillHand(mesh, hs, lw, palm){
   mesh.geometry.attributes.position.needsUpdate = true;
   mesh.geometry.setDrawRange(0, o / 3);
 }
+const OL_N = 320;
+const _ol = Array.from({length:21}, () => ({x:0, y:0}));
+function drawOutline(v, hs, D, flat, col, glow){
+  for (let k = 0; k < 21; k++){ const q = _ol[k], z = flat ? D : Math.max(0.2, -hs[k].z); q.x = hs[k].x * D / z; q.y = hs[k].y * D / z; }
+  const palm = Math.hypot(_ol[0].x - _ol[9].x, _ol[0].y - _ol[9].y) || 0.05;
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (const q of _ol){ if (q.x < x0) x0 = q.x; if (q.x > x1) x1 = q.x; if (q.y < y0) y0 = q.y; if (q.y > y1) y1 = q.y; }
+  const mg = palm * 0.45, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, S = Math.max(x1 - x0, y1 - y0) + mg * 2, K = OL_N / S;
+  const X = q => (q.x - cx) * K + OL_N / 2, Y = q => OL_N / 2 - (q.y - cy) * K;
+  const c = v.olX; c.clearRect(0, 0, OL_N, OL_N); c.lineCap = c.lineJoin = 'round';
+  const lw = Math.max(2.2, palm * 0.045 * K);                                  // edge thickness in canvas pixels
+  const pass = (extra, comp, colr, blur) => {
+    c.globalCompositeOperation = comp; c.strokeStyle = c.fillStyle = colr; c.shadowColor = glow; c.shadowBlur = blur;
+    c.beginPath(); c.moveTo(X(_ol[0]), Y(_ol[0])); for (const i of [1, 5, 9, 13, 17]) c.lineTo(X(_ol[i]), Y(_ol[i])); c.closePath();
+    c.lineWidth = Math.max(1, extra); c.fill(); c.stroke();
+    for (let k = 0; k < CONN.length; k++){
+      const a = CONN[k][0], b = CONN[k][1], w = palm * (RAD_K[a] + RAD_K[b]) * 0.5 * 0.62 * 2 * K;
+      c.lineWidth = Math.max(1, w + extra); c.beginPath(); c.moveTo(X(_ol[a]), Y(_ol[a])); c.lineTo(X(_ol[b]), Y(_ol[b])); c.stroke();
+    }
+  };
+  pass(lw * 2, 'source-over', col, glow ? 8 : 0);
+  c.shadowBlur = 0;
+  pass(0, 'destination-out', '#000', 0);
+  c.globalCompositeOperation = 'source-over';
+  v.olT.needsUpdate = true;
+  v.olM.position.set(cx, cy, -D); v.olM.scale.set(S, S, 1); v.olM.visible = true;
+}
 function makeViz(){
   const g = new THREE.Group(); g.visible = false; camera.add(g);
   const pts = new THREE.Points(new THREE.BufferGeometry(), jointMat);
@@ -1877,14 +1904,20 @@ function makeViz(){
     const m = new THREE.Mesh(gm, new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:op, depthTest:false, depthWrite:false, side:THREE.DoubleSide, fog:false, blending:add ? THREE.AdditiveBlending : THREE.NormalBlending}));
     m.frustumCulled = false; m.renderOrder = 997; g.add(m); return m; };
   const fillA = mkFill(0.95, false), fillB = mkFill(0.22, true);       // body of the hand + a wider soft glow around it
+  // outline picture: the hand silhouette (bones as thick rounded strokes) is drawn on a small canvas, the inside is erased, only the edge remains
+  const olC = document.createElement('canvas'); olC.width = olC.height = OL_N;
+  const olT = new THREE.CanvasTexture(olC); olT.minFilter = THREE.LinearFilter; olT.generateMipmaps = false;
+  const olM = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({map:olT, transparent:true, depthTest:false, depthWrite:false, fog:false}));
+  olM.frustumCulled = false; olM.renderOrder = 997; olM.visible = false; g.add(olM);
+  fillA.visible = fillB.visible = false;
   const rm = new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.55, depthTest:false, fog:false});
   const rb = new THREE.Mesh(rayGeo, rm); rb.renderOrder = 998; rb.visible = false; scene.add(rb);
-  return {g, pts, lines, fillA, fillB, tipMat, tA, tB, rm, rb, hs:Array.from({length:21}, () => new THREE.Vector3()), init:false};
+  return {g, pts, lines, fillA, fillB, olC, olT, olM, olX:olC.getContext('2d'), tipMat, tA, tB, rm, rb, hs:Array.from({length:21}, () => new THREE.Vector3()), init:false};
 }
 const VIZ = [makeViz(), makeViz()];
 function updateHandViz(i){
   const v = VIZ[i], h = HANDS[i], cur = CURS[i];
-  if (!h.ok || !h.lm){ v.g.visible = false; v.rb.visible = false; v.init = false; return; }
+  if (!h.ok || !h.lm){ v.g.visible = false; v.olM.visible = false; v.rb.visible = false; v.init = false; return; }
   v.g.visible = true;
   const tNow = performance.now(), vdt = Math.min(0.1, (tNow - (v.t || tNow)) / 1000 || 0.016); v.t = tNow;
   const flat = camOn();                                                   // with the camera picture on: draw the hand flat ON the picture so it lies over the real hand in both eyes
@@ -1915,8 +1948,8 @@ function updateHandViz(i){
   for (let k = 0; k < CONN.length; k++){ const p = hs[CONN[k][0]], q = hs[CONN[k][1]], o = k*6; bp[o] = p.x; bp[o+1] = p.y; bp[o+2] = p.z; bp[o+3] = q.x; bp[o+4] = q.y; bp[o+5] = q.z; }
   v.pts.geometry.attributes.position.needsUpdate = true; v.lines.geometry.attributes.position.needsUpdate = true;
   v.pts.visible = v.lines.visible = P.hv !== 1;
-  v.fillA.visible = v.fillB.visible = P.hv !== 0;
-  if (P.hv !== 0){ const palm = Math.hypot(hs[0].x - hs[9].x, hs[0].y - hs[9].y) || 0.05; fillHand(v.fillA, hs, 0.010, palm); fillHand(v.fillB, hs, 0.040, palm); }
+  v.olM.visible = P.hv !== 0;
+  if (P.hv !== 0) drawOutline(v, hs, D, flat, h.pinch ? '#39e08a' : (h.fist ? '#4f8cff' : '#ffffff'), h.pinch ? '#39e08a' : (h.fist ? '#4f8cff' : '#a8d4ff'));
   v.tA.position.copy(hs[4]); v.tB.position.copy(hs[8]);
   v.tA.visible = v.tB.visible = P.hv !== 1;                                  // outline mode: no balls on the fingertips and no laser line (the ring cursor marks the fingertip)
   const col = h.pinch ? 0x39e08a : (h.fist ? 0x4f8cff : 0xffffff);
