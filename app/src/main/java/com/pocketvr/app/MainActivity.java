@@ -295,6 +295,9 @@ public class MainActivity extends Activity {
                 respond(reply, id, err == null, err);
                 break;
             }
+            case "nb_fps":
+                vb.setGap(req.optInt("ms", 66));
+                break;
             case "nb_desktop":
                 vb.setDesktop(req.optBoolean("on"));
                 break;
