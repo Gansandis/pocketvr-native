@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.51';
+const VERSION = 'v3.52';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1461,7 +1461,7 @@ function recenterHeading(){
 let videoTex = null, landmarker = null, lastVT = -1, frameN = 0, delegate = '-';
 function newHand(){ return {ok:false, x:0, y:0, tx:0, ty:0, px:0, py:0, ptx:0, pty:0, pinch:false, pinchRaw:false, pk:null, fist:false, lastSeen:0, lm:null, a:null, pp:null, n:0, F:null}; }
 let H = null, F = null, HANDS = [], ZM = null, ZC = null;   // H / F always point at the hand currently being processed
-const D = {ms:0};              // average time of one hand detection (ms)
+const D = {ms:0, inf:0};              // average time of one hand detection (ms)
 let lastDet = 0, detGap = 0;
 const detCv = document.createElement('canvas'); detCv.width = 384; detCv.height = 216;
 const dctx = detCv.getContext('2d');
@@ -1598,9 +1598,11 @@ self.onmessage = async (e) => {
       postMessage({t:'ready'});
     }catch(err){ postMessage({t:'fail', e:String(err && err.message || err)}); }
   } else if (m.t === 'frame' && lm){
+    const t0 = performance.now();
     let r; try{ r = lm.detectForVideo(m.bmp, m.ts); }catch(err){ r = {landmarks:[]}; }
+    const inf = performance.now() - t0;
     try{ m.bmp.close(); }catch(err){}
-    postMessage({t:'res', ts:m.ts, lms:(r.landmarks || [])});
+    postMessage({t:'res', ts:m.ts, inf, lms:(r.landmarks || [])});
   }
 };`;
 let wk = null, wkOn = false, wkBusy = false, wkSent = 0, wkInfo = null;
@@ -1619,7 +1621,7 @@ function wkStart(d){
       if (m.t === 'ready'){ if (!done){ done = true; res(); } }
       else if (m.t === 'fail') fail(m.e);
       else if (m.t === 'res'){
-        wkBusy = false; D.ms += ((performance.now() - wkSent) - D.ms) * 0.2;
+        wkBusy = false; D.ms += ((performance.now() - wkSent) - D.ms) * 0.2; if (m.inf !== undefined) D.inf += (m.inf - D.inf) * 0.2;
         if (wkInfo) applyDetect(m.lms || [], performance.now(), wkInfo);
       }
     };
@@ -1865,9 +1867,11 @@ function fillHand(mesh, hs, lw, palm){
   mesh.geometry.attributes.position.needsUpdate = true;
   mesh.geometry.setDrawRange(0, o / 3);
 }
-const OL_N = 320;
+const OL_N = 256;
 const _ol = Array.from({length:21}, () => ({x:0, y:0}));
 function drawOutline(v, hs, D, flat, col, glow){
+  const tn = performance.now(); if (tn - (v.olAt || 0) < 33) return;          // the picture is redrawn about 30 times a second (canvas work is costly on a phone)
+  v.olAt = tn;
   for (let k = 0; k < 21; k++){ const q = _ol[k], z = flat ? D : Math.max(0.2, -hs[k].z); q.x = hs[k].x * D / z; q.y = hs[k].y * D / z; }
   const palm = Math.hypot(_ol[0].x - _ol[9].x, _ol[0].y - _ol[9].y) || 0.05;
   let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
@@ -1885,8 +1889,8 @@ function drawOutline(v, hs, D, flat, col, glow){
       c.lineWidth = Math.max(1, w + extra); c.beginPath(); c.moveTo(X(_ol[a]), Y(_ol[a])); c.lineTo(X(_ol[b]), Y(_ol[b])); c.stroke();
     }
   };
-  pass(lw * 2, 'source-over', col, glow ? 8 : 0);
-  c.shadowBlur = 0;
+  if (glow) pass(lw * 4.2, 'source-over', glow, 0);                           // pale halo = a wider copy underneath (cheaper than shadowBlur)
+  pass(lw * 2, 'source-over', col, 0);
   pass(0, 'destination-out', '#000', 0);
   c.globalCompositeOperation = 'source-over';
   v.olT.needsUpdate = true;
@@ -2303,7 +2307,7 @@ function frame(now){
 
   fpsN++; fpsT += dt;
   if (fpsT > 0.5){
-    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? '+เธรดแยก' : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + 'ms/' + (detGap ? Math.round(1000/Math.max(detGap,1)) : 0) + 'Hz)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '');
+    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? '+เธรดแยก' : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + ')' : '') + 'ms/' + (detGap ? Math.round(1000/Math.max(detGap,1)) : 0) + 'Hz)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '');
     const fpsNow = fpsN/fpsT;
     if (fpsNow < 20 && S.qi > (S.stereo ? 1 : 0) && S.cam !== undefined){ lowT += 0.5; if (lowT >= 2.5){ S.qi--; applyQuality(); savePrefs(); invalidateUI(); lowT = 0; } } else lowT = 0;
     fpsN = 0; fpsT = 0;
