@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.52';
+const VERSION = 'v3.53';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1867,7 +1867,8 @@ function fillHand(mesh, hs, lw, palm){
   mesh.geometry.attributes.position.needsUpdate = true;
   mesh.geometry.setDrawRange(0, o / 3);
 }
-const OL_N = 256;
+const OL_N = 448;
+const GRP_W = [0.130, 0.125, 0.130, 0.125, 0.105];      // finger thickness (fraction of palm length), one value per finger so the edge stays smooth
 const _ol = Array.from({length:21}, () => ({x:0, y:0}));
 function drawOutline(v, hs, D, flat, col, glow){
   const tn = performance.now(); if (tn - (v.olAt || 0) < 33) return;          // the picture is redrawn about 30 times a second (canvas work is costly on a phone)
@@ -1879,17 +1880,17 @@ function drawOutline(v, hs, D, flat, col, glow){
   const mg = palm * 0.45, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, S = Math.max(x1 - x0, y1 - y0) + mg * 2, K = OL_N / S;
   const X = q => (q.x - cx) * K + OL_N / 2, Y = q => OL_N / 2 - (q.y - cy) * K;
   const c = v.olX; c.clearRect(0, 0, OL_N, OL_N); c.lineCap = c.lineJoin = 'round';
-  const lw = Math.max(2.2, palm * 0.045 * K);                                  // edge thickness in canvas pixels
+  const lw = Math.max(1.8, palm * 0.022 * K);                                  // edge thickness in canvas pixels
   const pass = (extra, comp, colr, blur) => {
     c.globalCompositeOperation = comp; c.strokeStyle = c.fillStyle = colr; c.shadowColor = glow; c.shadowBlur = blur;
     c.beginPath(); c.moveTo(X(_ol[0]), Y(_ol[0])); for (const i of [1, 5, 9, 13, 17]) c.lineTo(X(_ol[i]), Y(_ol[i])); c.closePath();
     c.lineWidth = Math.max(1, extra); c.fill(); c.stroke();
     for (let k = 0; k < CONN.length; k++){
-      const a = CONN[k][0], b = CONN[k][1], w = palm * (RAD_K[a] + RAD_K[b]) * 0.5 * 0.62 * 2 * K;
+      const a = CONN[k][0], b = CONN[k][1], w = palm * GRP_W[Math.floor((Math.max(a, b) - 1) / 4)] * 0.62 * 2 * K;
       c.lineWidth = Math.max(1, w + extra); c.beginPath(); c.moveTo(X(_ol[a]), Y(_ol[a])); c.lineTo(X(_ol[b]), Y(_ol[b])); c.stroke();
     }
   };
-  if (glow) pass(lw * 4.2, 'source-over', glow, 0);                           // pale halo = a wider copy underneath (cheaper than shadowBlur)
+  if (glow) pass(lw * 4, 'source-over', glow, 0);                           // pale halo = a wider copy underneath (cheaper than shadowBlur)
   pass(lw * 2, 'source-over', col, 0);
   pass(0, 'destination-out', '#000', 0);
   c.globalCompositeOperation = 'source-over';
