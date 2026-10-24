@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.45';
+const VERSION = 'v3.46';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1799,18 +1799,25 @@ function placeBone(mesh, a, b){
   mesh.scale.set(1, len, 1);
   mesh.quaternion.setFromUnitVectors(UP, _d.multiplyScalar(1/len));
 }
-const FILL_V = (CONN.length * 2 + 4) * 3;                       // triangles: two per bone + four for the palm
+const FILL_V = (CONN.length * 6 + 21 * 8 * 3 + 4 * 3);          // ribbon (2 triangles) per bone + an 8-sided disc per joint + 4 palm triangles
 const PALM_TRI = [[0,1,5],[0,5,9],[0,9,13],[0,13,17]];
-// a soft, solid-looking hand made of fat ribbons along every bone (faces the camera); hides single-joint jitter far better than dots
-function fillHand(mesh, hs, wk){
+const RAD_K = [0.26, 0.17,0.14,0.12,0.105, 0.17,0.125,0.11,0.095, 0.18,0.13,0.115,0.10, 0.17,0.125,0.11,0.095, 0.15,0.11,0.095,0.085];   // joint radius as a fraction of palm length
+const DC = Array.from({length:9}, (_, i) => [Math.cos(i * Math.PI / 4), Math.sin(i * Math.PI / 4)]);
+// a soft, rounded hand: a capsule along every bone, sized from the palm so it fits the real hand at any distance
+function fillHand(mesh, hs, grow, palm){
   const a = mesh.geometry.attributes.position.array; let o = 0;
   const put = (p, dx, dy) => { a[o++] = p.x + dx; a[o++] = p.y + dy; a[o++] = p.z; };
+  const R = k => palm * RAD_K[k] * grow;
   for (let k = 0; k < CONN.length; k++){
-    const p = hs[CONN[k][0]], q = hs[CONN[k][1]];
+    const i = CONN[k][0], j = CONN[k][1], p = hs[i], q = hs[j];
     let nx = -(q.y - p.y), ny = q.x - p.x; const L = Math.hypot(nx, ny) || 1; nx /= L; ny /= L;
-    const wp = wk * -p.z, wq = wk * -q.z;
+    const wp = R(i), wq = R(j);
     put(p, nx*wp, ny*wp); put(p, -nx*wp, -ny*wp); put(q, nx*wq, ny*wq);
     put(q, nx*wq, ny*wq); put(p, -nx*wp, -ny*wp); put(q, -nx*wq, -ny*wq);
+  }
+  for (let k = 0; k < 21; k++){
+    const c = hs[k], r = R(k);
+    for (let i = 0; i < 8; i++){ put(c, 0, 0); put(c, DC[i][0]*r, DC[i][1]*r); put(c, DC[i+1][0]*r, DC[i+1][1]*r); }
   }
   for (const t of PALM_TRI){ put(hs[t[0]], 0, 0); put(hs[t[1]], 0, 0); put(hs[t[2]], 0, 0); }
   mesh.geometry.attributes.position.needsUpdate = true;
@@ -1837,14 +1844,27 @@ function updateHandViz(i){
   if (!h.ok || !h.lm){ v.g.visible = false; v.rb.visible = false; v.init = false; return; }
   v.g.visible = true;
   const tNow = performance.now(), vdt = Math.min(0.1, (tNow - (v.t || tNow)) / 1000 || 0.016); v.t = tNow;
-  const kxy = 1 - Math.exp(-vdt / 0.05), kz = 1 - Math.exp(-vdt / 0.14);       // glide between detections (13-30 Hz) instead of jumping; depth is the noisiest part so it glides slower
-  const hs = v.hs, tH = Math.tan(THREE.MathUtils.degToRad(camera.fov/2)), asp = camera.aspect;
+  const flat = camOn();                                                   // with the camera picture on: draw the hand flat ON the picture so it lies over the real hand in both eyes
+  const kxy = 1 - Math.exp(-vdt / (flat ? 0.03 : 0.05)), kz = 1 - Math.exp(-vdt / 0.14);
+  const hs = v.hs, tH = Math.tan(THREE.MathUtils.degToRad(camera.fov/2)), asp = camera.aspect, D = PANEL_R * 0.97;
+  if (!v.mx){ v.mx = new Float32Array(21); v.my = new Float32Array(21); v.vx = new Float32Array(21); v.vy = new Float32Array(21); v.tMeas = 0; v.lastLm = null; }
+  if (h.lm !== v.lastLm){                                                // a new detection arrived: measure it and how fast each point is moving
+    const dtm = (tNow - v.tMeas) / 1000, okv = v.tMeas > 0 && dtm > 0.008 && dtm < 0.35 && v.init;
+    for (let k = 0; k < 21; k++){
+      const l = h.lm[k], dep = flat ? D : Math.min(2, Math.max(0.5, HAND_D + l.z*2.5));
+      const mx = (l.x*2-1) * tH * asp * dep * PT.fx, my = -(l.y*2-1) * tH * dep * PT.fy;
+      if (okv){ v.vx[k] = v.vx[k]*0.5 + ((mx - v.mx[k]) / dtm)*0.5; v.vy[k] = v.vy[k]*0.5 + ((my - v.my[k]) / dtm)*0.5; } else { v.vx[k] = 0; v.vy[k] = 0; }
+      v.mx[k] = mx; v.my[k] = my;
+    }
+    v.lastLm = h.lm; v.tMeas = tNow;
+  }
+  const lead = Math.min(0.1, (tNow - v.tMeas) / 1000 + 0.035);          // draw where the hand probably is NOW (detections arrive late), not where it was
   for (let k = 0; k < 21; k++){
     const l = h.lm[k];
-    const depth = Math.min(2, Math.max(0.5, HAND_D + l.z*2.5));
-    const tx = (l.x*2-1) * tH * asp * depth * PT.fx, ty = -(l.y*2-1) * tH * depth * PT.fy, tz = -depth;
+    const depth = flat ? D : Math.min(2, Math.max(0.5, HAND_D + l.z*2.5));
+    const tx = v.mx[k] + v.vx[k] * lead, ty = v.my[k] + v.vy[k] * lead, tz = -depth;
     if (!v.init) hs[k].set(tx, ty, tz);
-    else { hs[k].x += (tx - hs[k].x)*kxy; hs[k].y += (ty - hs[k].y)*kxy; hs[k].z += (tz - hs[k].z)*kz; }
+    else { hs[k].x += (tx - hs[k].x)*kxy; hs[k].y += (ty - hs[k].y)*kxy; hs[k].z += (tz - hs[k].z)*(flat ? 1 : kz); }
   }
   v.init = true;
   const jp = v.pts.geometry.attributes.position.array, bp = v.lines.geometry.attributes.position.array;
@@ -1853,7 +1873,7 @@ function updateHandViz(i){
   v.pts.geometry.attributes.position.needsUpdate = true; v.lines.geometry.attributes.position.needsUpdate = true;
   v.pts.visible = v.lines.visible = P.hv !== 1;
   v.fillA.visible = v.fillB.visible = P.hv !== 0;
-  if (P.hv !== 0){ fillHand(v.fillA, hs, 0.016); fillHand(v.fillB, hs, 0.030); }
+  if (P.hv !== 0){ const palm = Math.hypot(hs[0].x - hs[9].x, hs[0].y - hs[9].y) || 0.05; fillHand(v.fillA, hs, 1, palm); fillHand(v.fillB, hs, 1.7, palm); }
   v.tA.position.copy(hs[4]); v.tB.position.copy(hs[8]);
   const col = h.pinch ? 0x39e08a : (h.fist ? 0x4f8cff : 0xffffff);
   v.tipMat.color.set(col); v.rm.color.set(col); v.fillA.material.color.set(col); v.fillB.material.color.set(h.pinch ? 0x39e08a : (h.fist ? 0x4f8cff : 0xa8d4ff));
@@ -2099,6 +2119,7 @@ function fitBackground(aspect){
   let rx = 1, ry = 1;
   if (aspect < va) rx = aspect / va; else ry = va / aspect;
   tex.repeat.set(rx, ry); tex.offset.set((1 - rx)/2, (1 - ry)/2);
+  PT.fx = 1 / rx; PT.fy = 1 / ry;      // the picture is cropped to the view: the hand (and cursor) must be mapped inside the same crop or they drift away from the real hand
 }
 const LENS_K = [[0, 0], [0.10, 0.02], [0.18, 0.05], [0.28, 0.10]];
 let lensRT = null, lensMesh = null, lensCam = null, lensScene = null;
