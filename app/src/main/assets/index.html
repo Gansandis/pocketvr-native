@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.47';
+const VERSION = 'v3.48';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -621,7 +621,7 @@ function drawPanel(x, ui){
   x.textBaseline = 'alphabetic';
 
   // grab handle under the panel (pinch it, or make a fist anywhere on the panel, to drag)
-  ui.reg('grab', 300, PBODY - 6, 424, PH - PBODY + 6, null);
+  ui.reg('grab', 180, PBODY - 20, 664, PH - PBODY + 20, null);
   x.fillStyle = (hv === 'grab') ? 'rgba(255,255,255,.95)' : 'rgba(255,255,255,.5)';
   roundRect(x, 442, PBODY + 8, 140, 12, 6); x.fill();
 
@@ -779,7 +779,7 @@ dockPivot.add(toast.mesh);
 
 /* ---------- floating windows (camera / clock / calculator / 360 controls) ---------- */
 const WBOOST = 1.35;   // windows are made bigger inside the VR box so their text can be read
-const WGRAB = 26;   // strip under every window that holds its drag bar
+const WGRAB = 40;   // strip under every window that holds its drag bar
 const WIN_R = 1.9, WIN_SLOTS = [0.85, -0.85, 1.25, -1.25, 1.65, -1.65], wins = [];
 let CALC = {disp:'0', acc:null, op:null, fresh:true};
 const STOPW = {run:false, t0:0, acc:0};
@@ -809,8 +809,8 @@ function winBtn(x, ui, id, label, bx, by, bw, bh, fn, o){
 function drawWin(win, x, ui){
   const d = win.d, W = d.w, Hh = d.h, hv = ui.hover;
   x.clearRect(0, 0, W, Hh + WGRAB); x.textBaseline = 'alphabetic';
-  ui.reg('grab', Math.max(0, W/2 - 220), Hh - 6, Math.min(W, 440), WGRAB + 6, null);     // drag bar under the window
-  x.fillStyle = hv === 'grab' ? 'rgba(255,255,255,.95)' : 'rgba(255,255,255,.5)'; roundRect(x, W/2 - 70, Hh + 8, 140, 12, 6); x.fill();
+  ui.reg('grab', Math.max(0, W/2 - 320), Hh - 22, Math.min(W, 640), WGRAB + 22, null);     // drag bar under the window
+  x.fillStyle = hv === 'grab' ? 'rgba(255,255,255,.95)' : 'rgba(255,255,255,.5)'; roundRect(x, W/2 - 90, Hh + 12, 180, 14, 7); x.fill();
   const clear = win.type === 'cam' || win.type === 'nweb';
   if (!clear){ x.fillStyle = 'rgba(30,30,33,.96)'; roundRect(x, 0, 0, W, Hh, 28); x.fill(); }
   x.fillStyle = '#2a2a2e'; roundRect(x, 0, 0, W, 52, 26); x.fill();
@@ -1063,7 +1063,7 @@ function createWin(type){
   if (type === 'cam'){
     win.vmat = new THREE.MeshBasicMaterial({map:videoTex || null, color:videoTex ? 0xffffff : 0x111111, fog:false});
     const vm = new THREE.Mesh(new THREE.PlaneGeometry(d.w/520, (d.h - 52)/520), win.vmat);
-    vm.position.set(0, -(26 - WGRAB/2)/520, -0.003); win.ui.mesh.add(vm); win.vmesh = vm;
+    vm.position.set(0, -(WGRAB/2)/520, -0.003); win.ui.mesh.add(vm); win.vmesh = vm;
   }
   if (type === 'nweb'){
     if (!NB.cv){ NB.cv = document.createElement('canvas'); NB.cv.width = 960; NB.cv.height = 540; NB.ctx = NB.cv.getContext('2d'); NB.ctx.fillStyle = '#000'; NB.ctx.fillRect(0, 0, 960, 540);
@@ -1725,7 +1725,7 @@ function updatePoke(h, lm, now, pointing){
   if (P.sel === 3 && P.airD === 0) depth = -depth;        // air touch: reaching forward toward the UI = hand moving away from the camera on your face
   if (!pointing){ pk.on = false; pk.base = depth; pk.t = now; pk.prog = 0; return false; }
   if (pk.base === null){ pk.base = depth; pk.t = now; }
-  const th = POKE_TH[P.pokeS] * (P.sel === 3 ? 0.8 : 1);
+  const th = POKE_TH[P.pokeS] * (P.sel === 3 ? 0.5 : 1);
   pk.prog = pk.on ? 1 : Math.max(0, Math.min(1, (depth - pk.base) / th));
   if (!pk.on){
     const dt = Math.min(0.5, (now - pk.t) / 1000); pk.t = now;
@@ -1810,11 +1810,34 @@ function fillHand(mesh, hs, lw, palm){
   const side = {x: hs[17].x - hs[5].x, y: hs[17].y - hs[5].y};            // which way the little finger lies
   let n = 0; const z = hs[0].z;
   const add = (x, y) => { const q = _op[n++]; q.x = x; q.y = y; q.z = z; };
+  const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const curl = [false, false, false, false, false];
+  let nc = 0;
+  for (let c = 1; c < 5; c++){ const ch = OUT_CH[c]; if (d2(hs[ch[3]], hs[0]) < d2(hs[ch[1]], hs[0]) * 1.02){ curl[c] = true; nc++; } }
+  if (nc >= 3){                                                             // fist: one rounded blob (convex hull of the joints)
+    const pts = [];
+    for (let k = 0; k < 21; k++){ const r = palm * RAD_K[k] * 0.85; for (let i = 0; i < 8; i++) pts.push([hs[k].x + DC[i][0]*r, hs[k].y + DC[i][1]*r]); }
+    pts.sort((u, v) => u[0] - v[0] || u[1] - v[1]);
+    const cr = (o, a, b) => (a[0]-o[0])*(b[1]-o[1]) - (a[1]-o[1])*(b[0]-o[0]);
+    const lo = [], up = [];
+    for (const q of pts){ while (lo.length >= 2 && cr(lo[lo.length-2], lo[lo.length-1], q) <= 0) lo.pop(); lo.push(q); }
+    for (let i = pts.length - 1; i >= 0; i--){ const q = pts[i]; while (up.length >= 2 && cr(up[up.length-2], up[up.length-1], q) <= 0) up.pop(); up.push(q); }
+    lo.pop(); up.pop();
+    const hull = lo.concat(up);
+    for (const q of hull){ if (n < 88) add(q[0], q[1]); }
+    if (hull.length) add(hull[0][0], hull[0][1]);
+  } else {
   add(hs[0].x, hs[0].y);
   for (let c = 0; c < 5; c++){
     const ch = OUT_CH[c], m = [];
+    const pos = [];
+    for (let i = 0; i < 4; i++){                                           // a bent finger is drawn as a short straight stub so the line never folds over itself
+      const a0 = hs[ch[i]];
+      if (curl[c]){ const b0 = hs[ch[0]], t0 = hs[ch[3]], f = i / 3 * 0.8; pos.push({x: b0.x + (t0.x - b0.x)*f, y: b0.y + (t0.y - b0.y)*f}); }
+      else pos.push(a0);
+    }
     for (let i = 0; i < 4; i++){
-      const p = hs[ch[i]], q = hs[ch[Math.min(3, i + 1)]], o = hs[ch[Math.max(0, i - 1)]];
+      const p = pos[i], q = pos[Math.min(3, i + 1)], o = pos[Math.max(0, i - 1)];
       let dx = q.x - o.x, dy = q.y - o.y; const L = Math.hypot(dx, dy) || 1; dx /= L; dy /= L;
       let nx = -dy, ny = dx; if (nx * side.x + ny * side.y < 0){ nx = -nx; ny = -ny; }   // nx,ny points to the little-finger side
       m.push({p, nx, ny, dx, dy, r: palm * RAD_K[ch[i]] * 0.85});
@@ -1827,6 +1850,7 @@ function fillHand(mesh, hs, lw, palm){
     if (c === 4){ const e = m[0]; add(e.p.x + e.nx*e.r*1.2, e.p.y + e.ny*e.r*1.2); }
   }
   add(hs[0].x, hs[0].y);
+  }
   const a = mesh.geometry.attributes.position.array; let o = 0;
   for (let i = 0; i < n - 1; i++){
     const p0 = _op[Math.max(0, i - 1)], p1 = _op[i], p2 = _op[i + 1], p3 = _op[Math.min(n - 1, i + 2)];
