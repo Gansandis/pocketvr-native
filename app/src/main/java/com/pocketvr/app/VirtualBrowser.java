@@ -39,6 +39,7 @@ import java.nio.ByteBuffer;
  */
 public class VirtualBrowser {
     public static volatile byte[] jpeg = null;
+    public static volatile int seq = 0;
 
     private final Activity act;
     private VirtualDisplay display;
@@ -139,7 +140,12 @@ public class VirtualBrowser {
 
     private void showTab(int i) {
         cur = i;
-        for (int k = 0; k < tabs.size(); k++) tabs.get(k).setVisibility(k == i ? View.VISIBLE : View.GONE);   // hidden tabs keep running (e.g. music)
+        for (int k = 0; k < tabs.size(); k++) {
+            WebView t = tabs.get(k);
+            t.setVisibility(k == i ? View.VISIBLE : View.GONE);
+            // tabs that are not shown are put to rest (timers / animations slow down like a background tab in Chrome; sound keeps playing) so many tabs do not make the phone lag
+            if (k == i) t.onResume(); else t.onPause();
+        }
     }
 
     /** UI thread. */
@@ -198,6 +204,7 @@ public class VirtualBrowser {
             ByteArrayOutputStream out = new ByteArrayOutputStream(90000);
             src.compress(Bitmap.CompressFormat.JPEG, 72, out);
             jpeg = out.toByteArray();
+            seq++;
         } catch (Throwable ignored) {
         } finally {
             if (img != null) img.close();
