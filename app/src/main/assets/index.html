@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.55';
+const VERSION = 'v3.56';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -145,7 +145,7 @@ const PS_MIN = 0.6, PS_MAX = 2.0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* --- saved preferences --- */
-const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1, pri:0};
+const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1, pri:1};
 function loadPrefs(){
   try{
     const o = JSON.parse(localStorage.getItem('pvr_prefs') || '{}');
@@ -1885,16 +1885,29 @@ function fillHand(mesh, hs, lw, palm){
 const OL_N = 448;
 const GRP_W = [0.130, 0.125, 0.130, 0.125, 0.105];      // finger thickness (fraction of palm length), one value per finger so the edge stays smooth
 const _ol = Array.from({length:21}, () => ({x:0, y:0}));
-function drawOutline(v, hs, D, flat, col, glow){
-  const tn = performance.now(); if (tn - (v.olAt || 0) < 33) return;          // the picture is redrawn about 30 times a second (canvas work is costly on a phone)
-  v.olAt = tn;
+function drawOutline(v, hs, D, flat, col, glow, ppu){
+  const tn = performance.now(); if (tn - (v.olAt || 0) < 33) return;          // the picture is redrawn at most about 30 times a second (canvas work is costly on a phone)
   for (let k = 0; k < 21; k++){ const q = _ol[k], z = flat ? D : Math.max(0.2, -hs[k].z); q.x = hs[k].x * D / z; q.y = hs[k].y * D / z; }
   const palm = Math.hypot(_ol[0].x - _ol[9].x, _ol[0].y - _ol[9].y) || 0.05;
   let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
   for (const q of _ol){ if (q.x < x0) x0 = q.x; if (q.x > x1) x1 = q.x; if (q.y < y0) y0 = q.y; if (q.y > y1) y1 = q.y; }
-  const mg = palm * 0.45, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, S = Math.max(x1 - x0, y1 - y0) + mg * 2, K = OL_N / S;
-  const X = q => (q.x - cx) * K + OL_N / 2, Y = q => OL_N / 2 - (q.y - cy) * K;
-  const c = v.olX; c.clearRect(0, 0, OL_N, OL_N); c.lineCap = c.lineJoin = 'round';
+  const mg = palm * 0.45, cx = (x0 + x1) / 2, cy = (y0 + y1) / 2, S = Math.max(x1 - x0, y1 - y0) + mg * 2;
+  // same drawing as last time (hand still, same colour): keep the old picture, no canvas work and no upload
+  const sig = col + glow;
+  if (v.olPrev && v.olSig === sig){
+    let moved = 0;
+    for (let k = 0; k < 21; k++){ const q = _ol[k], o = v.olPrev[k]; const d = Math.abs(q.x - o.x) + Math.abs(q.y - o.y); if (d > moved) moved = d; }
+    if (moved < palm * 0.012 && Math.abs(S - v.olS) < palm * 0.02) return;
+  }
+  v.olAt = tn; v.olSig = sig; v.olS = S;
+  if (!v.olPrev) v.olPrev = _ol.map(() => ({x:0, y:0}));
+  for (let k = 0; k < 21; k++){ v.olPrev[k].x = _ol[k].x; v.olPrev[k].y = _ol[k].y; }
+  // canvas size follows how big the hand looks on screen (a small hand does not need a big picture)
+  const want = Math.max(192, Math.min(448, Math.round(S * ppu * 0.85 / 32) * 32));
+  if (Math.abs(want - (v.olN || 0)) >= 64 || !v.olN){ v.olN = want; v.olC.width = want; v.olC.height = want; }
+  const N = v.olN, K = N / S;
+  const X = q => (q.x - cx) * K + N / 2, Y = q => N / 2 - (q.y - cy) * K;
+  const c = v.olX; c.clearRect(0, 0, N, N); c.lineCap = c.lineJoin = 'round';
   const lw = Math.max(1.8, palm * 0.022 * K);                                  // edge thickness in canvas pixels
   const pass = (extra, comp, colr, blur) => {
     c.globalCompositeOperation = comp; c.strokeStyle = c.fillStyle = colr; c.shadowColor = glow; c.shadowBlur = blur;
@@ -1925,7 +1938,7 @@ function makeViz(){
     m.frustumCulled = false; m.renderOrder = 997; g.add(m); return m; };
   const fillA = mkFill(0.95, false), fillB = mkFill(0.22, true);       // body of the hand + a wider soft glow around it
   // outline picture: the hand silhouette (bones as thick rounded strokes) is drawn on a small canvas, the inside is erased, only the edge remains
-  const olC = document.createElement('canvas'); olC.width = olC.height = OL_N;
+  const olC = document.createElement('canvas'); olC.width = olC.height = 320;
   const olT = new THREE.CanvasTexture(olC); olT.minFilter = THREE.LinearFilter; olT.generateMipmaps = false;
   const olM = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({map:olT, transparent:true, depthTest:false, depthWrite:false, fog:false}));
   olM.frustumCulled = false; olM.renderOrder = 997; olM.visible = false; g.add(olM);
@@ -1969,7 +1982,7 @@ function updateHandViz(i){
   v.pts.geometry.attributes.position.needsUpdate = true; v.lines.geometry.attributes.position.needsUpdate = true;
   v.pts.visible = v.lines.visible = P.hv !== 1;
   v.olM.visible = P.hv !== 0;
-  if (P.hv !== 0) drawOutline(v, hs, D, flat, h.pinch ? '#39e08a' : (h.fist ? '#4f8cff' : '#ffffff'), h.pinch ? '#39e08a' : (h.fist ? '#4f8cff' : '#a8d4ff'));
+  if (P.hv !== 0) drawOutline(v, hs, D, flat, h.pinch ? '#39e08a' : (h.fist ? '#4f8cff' : '#ffffff'), h.pinch ? '#39e08a' : (h.fist ? '#4f8cff' : '#a8d4ff'), innerHeight * renderer.getPixelRatio() / (2 * tH * D));
   v.tA.position.copy(hs[4]); v.tB.position.copy(hs[8]);
   v.tA.visible = v.tB.visible = P.hv !== 1;                                  // outline mode: no balls on the fingertips and no laser line (the ring cursor marks the fingertip)
   const col = h.pinch ? 0x39e08a : (h.fist ? 0x4f8cff : 0xffffff);
@@ -2012,13 +2025,14 @@ function startGrab(kind, target, type){
   else if (target === 'panel'){ grab.yaw0 = panelPivot.rotation.y; grab.y0 = panelPivot.position.y; grab.s0 = S.pscale; }
   else { grab.yaw0 = dockPivot.rotation.y; grab.y0 = dock.mesh.position.y; }
 }
+const _AL = [];                                  // reused every call: no new array per frame
 function activeList(){
-  const l = [];
+  const l = _AL; l.length = 0;
   if (panel.mesh.visible) l.push(panel.mesh);
   l.push(dock.mesh);
-  wins.forEach(w => { if (w.ui.mesh.visible) l.push(w.ui.mesh); });
-  if (S.mode === 'shoot') l.push(...targets);
-  else if (S.mode === 'gallery') l.push(...galleryItems);
+  for (let i = 0; i < wins.length; i++) if (wins[i].ui.mesh.visible) l.push(wins[i].ui.mesh);
+  if (S.mode === 'shoot'){ for (let i = 0; i < targets.length; i++) l.push(targets[i]); }
+  else if (S.mode === 'gallery'){ for (let i = 0; i < galleryItems.length; i++) l.push(galleryItems[i]); }
   return l;
 }
 function interactOne(now, dt, hi){
@@ -2193,7 +2207,7 @@ function interact(now, dt){
     ({grab, sw, wasPinch, wasFist, hoverKey, hoverT, cool} = CTX[i]);
     if (i === 1 && !H.ok){ cursor.visible = false; CTX[1] = NEWCTX(); continue; }
     interactOne(now, dt, i);
-    CTX[i] = {grab, sw, wasPinch, wasFist, hoverKey, hoverT, cool};
+    const cx = CTX[i]; cx.grab = grab; cx.sw = sw; cx.wasPinch = wasPinch; cx.wasFist = wasFist; cx.hoverKey = hoverKey; cx.hoverT = hoverT; cx.cool = cool;
   }
   H = HANDS[0]; F = H.F; cursor = CURS[0];
   applyHover();
@@ -2311,7 +2325,10 @@ function frame(now){
     v360g.rotation.set(v360.pitch, v360.base + v360.yaw, 0);
     if (Math.abs(camera.fov - v360.fov) > 0.05){ camera.fov = v360.fov; camera.updateProjectionMatrix(); }
   }
-  [panel, dock, toast].concat(wins.map(w => w.ui)).forEach(u => { if (u.dirty && u.mesh.visible && (!u.win || u.win.inView !== false) && now - (u.lastDraw || 0) > 90){ u.lastDraw = now; u.redraw(); } });
+  for (let i = -3; i < wins.length; i++){
+    const u = i === -3 ? panel : (i === -2 ? dock : (i === -1 ? toast : wins[i].ui));
+    if (u.dirty && u.mesh.visible && (!u.win || u.win.inView !== false) && now - (u.lastDraw || 0) > 90){ u.lastDraw = now; u.redraw(); }
+  }
 
   if (S.mode === 'shoot'){
     spawnAcc += dt; if (spawnAcc > 1.1){ spawnAcc = 0; spawnTarget(); }
