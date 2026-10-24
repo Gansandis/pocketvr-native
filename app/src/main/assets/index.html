@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.37';
+const VERSION = 'v3.38';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1611,16 +1611,16 @@ function wkStart(d){
   });
 }
 // ----- experimental: crop the camera picture around the hand so the model sees it bigger at the same cost -----
-let roiPrev = null, roiN = 0;
+let roiPrev = null, roiN = 0, roiDisc = false;
 function roiBox(sw, sh){
   let x0 = 9, y0 = 9, x1 = -9, y1 = -9, n = 0;
   HANDS.forEach(h => { if (h.ok && h.lm){ n++; h.lm.forEach(p => { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }); } });
   if (!n){ roiPrev = null; return null; }
-  if (P.two && n < 2 && (++roiN % 5) === 0) return null;                      // now and then look at the whole picture so a second hand can be found
+  if (P.two && n < 2 && (++roiN % 30) === 0){ roiDisc = true; return null; }   // rarely look at the whole picture so a second hand can be found (switching view often makes the hand jump)
   const px0 = x0 * sw, px1 = x1 * sw, py0 = y0 * sh, py1 = y1 * sh;
   const q = roiPrev;
-  if (q && px0 > q.x + q.w*0.08 && px1 < q.x + q.w*0.92 && py0 > q.y + q.h*0.08 && py1 < q.y + q.h*0.92 && Math.max(px1 - px0, py1 - py0) > q.w * 0.25) return q;   // hand still comfortably inside: keep the crop steady (the model tracks better)
-  let side = Math.max(px1 - px0, py1 - py0) * 2.1; side = clamp(side, 0.55 * sh, sh);
+  if (q && px0 > q.x + q.w*0.15 && px1 < q.x + q.w*0.85 && py0 > q.y + q.h*0.15 && py1 < q.y + q.h*0.85 && Math.max(px1 - px0, py1 - py0) > q.w * 0.25) return q;   // hand still comfortably inside: keep the crop steady (the model tracks better)
+  let side = Math.max(px1 - px0, py1 - py0) * 2.4; side = clamp(side, 0.6 * sh, sh);
   const cx = (px0 + px1) / 2, cy = (py0 + py1) / 2;
   roiPrev = {x:clamp(cx - side/2, 0, sw - side), y:clamp(cy - side/2, 0, sh - side), w:side, h:side};
   return roiPrev;
@@ -1635,12 +1635,13 @@ function updateHands(now){
   if (N.boosting){ if (N.drawnVT !== video.currentTime) boostFrame(); src = boostCv; }
   const t0 = performance.now();
   const sw = src.videoWidth || src.width || 640, sh = src.videoHeight || src.height || 360;
+  roiDisc = false;
   const box = P.roi ? roiBox(sw, sh) : null;
   const dW = box ? 288 : 384, dH = box ? 288 : Math.round(384 * sh / sw);
   if (detCv.width !== dW) detCv.width = dW;
   if (detCv.height !== dH) detCv.height = dH;
   if (box) dctx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, dW, dH); else dctx.drawImage(src, 0, 0, dW, dH);
-  const info = {box, sw, sh};
+  const info = {box, sw, sh, disc:roiDisc};
   if (wkOn){
     wkBusy = true; wkSent = t0; wkInfo = info;
     createImageBitmap(detCv).then(b => { if (wk) wk.postMessage({t:'frame', bmp:b, ts:now}, [b]); else b.close(); }).catch(() => { wkBusy = false; });
@@ -1653,6 +1654,7 @@ function updateHands(now){
 }
 function applyDetect(lmsRaw, now, info){
   let lms = lmsRaw;
+  if (info.disc && lmsRaw.length <= HANDS.filter(h => h.ok).length) return;     // a look at the whole picture only counts when it finds an extra hand; otherwise keep the steady crop result
   if (info.box){                                       // landmarks are relative to the crop: map them back to the whole picture
     const b = info.box, sw = info.sw, sh = info.sh;
     lms = lmsRaw.map(l => l.map(p => ({x:(b.x + p.x * b.w) / sw, y:(b.y + p.y * b.h) / sh, z:p.z * b.w / sw})));
