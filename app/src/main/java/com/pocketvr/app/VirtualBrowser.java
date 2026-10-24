@@ -40,6 +40,8 @@ import java.nio.ByteBuffer;
 public class VirtualBrowser {
     public static volatile byte[] jpeg = null;
     public static volatile int seq = 0;
+    public static volatile long gapMs = 66;
+    public void setGap(int ms) { gapMs = Math.max(20, Math.min(1000, ms)); }
 
     private final Activity act;
     private VirtualDisplay display;
@@ -192,7 +194,7 @@ public class VirtualBrowser {
             img = r.acquireLatestImage();
             if (img == null) return;
             long now = SystemClock.uptimeMillis();
-            if (now - lastFrame < 50) return;           // about 20 pictures per second
+            if (now - lastFrame < gapMs) return;        // picture rate chosen by the page (saves CPU)
             lastFrame = now;
             Image.Plane p = img.getPlanes()[0];
             ByteBuffer buf = p.getBuffer();
