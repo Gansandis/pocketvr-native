@@ -86,9 +86,12 @@ public class MainActivity extends Activity {
                 .setDomain(HOST)
                 .addPathHandler("/assets/", new WebViewAssetLoader.AssetsPathHandler(this))
                 .addPathHandler("/browser/", path -> {     // latest picture of the browser shown inside VR
-                    byte[] b = VirtualBrowser.jpeg;
                     Map<String, String> hd = new HashMap<>();
                     hd.put("Cache-Control", "no-store");
+                    if (path.startsWith("seq")) {                 // tiny answer: lets the page skip downloading a picture that has not changed
+                        return new WebResourceResponse("text/plain", "utf-8", 200, "OK", hd, new ByteArrayInputStream(String.valueOf(VirtualBrowser.seq).getBytes()));
+                    }
+                    byte[] b = VirtualBrowser.jpeg;
                     if (b == null) return new WebResourceResponse("image/jpeg", null, 404, "No frame", hd, new ByteArrayInputStream(new byte[0]));
                     return new WebResourceResponse("image/jpeg", null, 200, "OK", hd, new ByteArrayInputStream(b));
                 })
