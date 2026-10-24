@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.46';
+const VERSION = 'v3.47';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1803,24 +1803,42 @@ const FILL_V = (CONN.length * 6 + 21 * 8 * 3 + 4 * 3);          // ribbon (2 tri
 const PALM_TRI = [[0,1,5],[0,5,9],[0,9,13],[0,13,17]];
 const RAD_K = [0.26, 0.17,0.14,0.12,0.105, 0.17,0.125,0.11,0.095, 0.18,0.13,0.115,0.10, 0.17,0.125,0.11,0.095, 0.15,0.11,0.095,0.085];   // joint radius as a fraction of palm length
 const DC = Array.from({length:9}, (_, i) => [Math.cos(i * Math.PI / 4), Math.sin(i * Math.PI / 4)]);
-// a soft, rounded hand: a capsule along every bone, sized from the palm so it fits the real hand at any distance
-function fillHand(mesh, hs, grow, palm){
+// outline only: a glowing line that follows the edge of the hand (no filled body)
+const OUT_CH = [[1,2,3,4],[5,6,7,8],[9,10,11,12],[13,14,15,16],[17,18,19,20]];
+const _op = Array.from({length:90}, () => ({x:0, y:0, z:0}));
+function fillHand(mesh, hs, lw, palm){
+  const side = {x: hs[17].x - hs[5].x, y: hs[17].y - hs[5].y};            // which way the little finger lies
+  let n = 0; const z = hs[0].z;
+  const add = (x, y) => { const q = _op[n++]; q.x = x; q.y = y; q.z = z; };
+  add(hs[0].x, hs[0].y);
+  for (let c = 0; c < 5; c++){
+    const ch = OUT_CH[c], m = [];
+    for (let i = 0; i < 4; i++){
+      const p = hs[ch[i]], q = hs[ch[Math.min(3, i + 1)]], o = hs[ch[Math.max(0, i - 1)]];
+      let dx = q.x - o.x, dy = q.y - o.y; const L = Math.hypot(dx, dy) || 1; dx /= L; dy /= L;
+      let nx = -dy, ny = dx; if (nx * side.x + ny * side.y < 0){ nx = -nx; ny = -ny; }   // nx,ny points to the little-finger side
+      m.push({p, nx, ny, dx, dy, r: palm * RAD_K[ch[i]] * 0.85});
+    }
+    for (let i = 0; i < 4; i++){ const e = m[i]; add(e.p.x - e.nx*e.r, e.p.y - e.ny*e.r); }   // up the thumb-side edge
+    const t = m[3];
+    for (let a = 1; a <= 3; a++){ const an = a * Math.PI / 4; const cx = Math.cos(an), sx = Math.sin(an);   // round fingertip
+      add(t.p.x + (-t.nx*cx + t.dx*sx) * t.r, t.p.y + (-t.ny*cx + t.dy*sx) * t.r); }
+    for (let i = 3; i >= 0; i--){ const e = m[i]; add(e.p.x + e.nx*e.r, e.p.y + e.ny*e.r); }  // down the other edge
+    if (c === 4){ const e = m[0]; add(e.p.x + e.nx*e.r*1.2, e.p.y + e.ny*e.r*1.2); }
+  }
+  add(hs[0].x, hs[0].y);
   const a = mesh.geometry.attributes.position.array; let o = 0;
-  const put = (p, dx, dy) => { a[o++] = p.x + dx; a[o++] = p.y + dy; a[o++] = p.z; };
-  const R = k => palm * RAD_K[k] * grow;
-  for (let k = 0; k < CONN.length; k++){
-    const i = CONN[k][0], j = CONN[k][1], p = hs[i], q = hs[j];
-    let nx = -(q.y - p.y), ny = q.x - p.x; const L = Math.hypot(nx, ny) || 1; nx /= L; ny /= L;
-    const wp = R(i), wq = R(j);
-    put(p, nx*wp, ny*wp); put(p, -nx*wp, -ny*wp); put(q, nx*wq, ny*wq);
-    put(q, nx*wq, ny*wq); put(p, -nx*wp, -ny*wp); put(q, -nx*wq, -ny*wq);
+  for (let i = 0; i < n - 1; i++){
+    const p0 = _op[Math.max(0, i - 1)], p1 = _op[i], p2 = _op[i + 1], p3 = _op[Math.min(n - 1, i + 2)];
+    let ax = p2.x - p0.x, ay = p2.y - p0.y, bx = p3.x - p1.x, by = p3.y - p1.y;
+    let la = Math.hypot(ax, ay) || 1, lb = Math.hypot(bx, by) || 1;
+    const ax2 = -ay/la*lw*palm, ay2 = ax/la*lw*palm, bx2 = -by/lb*lw*palm, by2 = bx/lb*lw*palm;
+    const z0 = p1.z;
+    a[o++]=p1.x+ax2; a[o++]=p1.y+ay2; a[o++]=z0;  a[o++]=p1.x-ax2; a[o++]=p1.y-ay2; a[o++]=z0;  a[o++]=p2.x+bx2; a[o++]=p2.y+by2; a[o++]=z0;
+    a[o++]=p2.x+bx2; a[o++]=p2.y+by2; a[o++]=z0;  a[o++]=p1.x-ax2; a[o++]=p1.y-ay2; a[o++]=z0;  a[o++]=p2.x-bx2; a[o++]=p2.y-by2; a[o++]=z0;
   }
-  for (let k = 0; k < 21; k++){
-    const c = hs[k], r = R(k);
-    for (let i = 0; i < 8; i++){ put(c, 0, 0); put(c, DC[i][0]*r, DC[i][1]*r); put(c, DC[i+1][0]*r, DC[i+1][1]*r); }
-  }
-  for (const t of PALM_TRI){ put(hs[t[0]], 0, 0); put(hs[t[1]], 0, 0); put(hs[t[2]], 0, 0); }
   mesh.geometry.attributes.position.needsUpdate = true;
+  mesh.geometry.setDrawRange(0, o / 3);
 }
 function makeViz(){
   const g = new THREE.Group(); g.visible = false; camera.add(g);
@@ -1833,7 +1851,7 @@ function makeViz(){
   const mkFill = (op, add) => { const gm = new THREE.BufferGeometry(); gm.setAttribute('position', new THREE.BufferAttribute(new Float32Array(FILL_V*3), 3));
     const m = new THREE.Mesh(gm, new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:op, depthTest:false, depthWrite:false, side:THREE.DoubleSide, fog:false, blending:add ? THREE.AdditiveBlending : THREE.NormalBlending}));
     m.frustumCulled = false; m.renderOrder = 997; g.add(m); return m; };
-  const fillA = mkFill(0.30, false), fillB = mkFill(0.16, true);       // body of the hand + a wider soft glow around it
+  const fillA = mkFill(0.95, false), fillB = mkFill(0.30, true);       // body of the hand + a wider soft glow around it
   const rm = new THREE.MeshBasicMaterial({color:0xffffff, transparent:true, opacity:0.55, depthTest:false, fog:false});
   const rb = new THREE.Mesh(rayGeo, rm); rb.renderOrder = 998; rb.visible = false; scene.add(rb);
   return {g, pts, lines, fillA, fillB, tipMat, tA, tB, rm, rb, hs:Array.from({length:21}, () => new THREE.Vector3()), init:false};
@@ -1845,7 +1863,7 @@ function updateHandViz(i){
   v.g.visible = true;
   const tNow = performance.now(), vdt = Math.min(0.1, (tNow - (v.t || tNow)) / 1000 || 0.016); v.t = tNow;
   const flat = camOn();                                                   // with the camera picture on: draw the hand flat ON the picture so it lies over the real hand in both eyes
-  const kxy = 1 - Math.exp(-vdt / (flat ? 0.03 : 0.05)), kz = 1 - Math.exp(-vdt / 0.14);
+  const kxy = 1 - Math.exp(-vdt / (flat ? 0.018 : 0.05)), kz = 1 - Math.exp(-vdt / 0.14);
   const hs = v.hs, tH = Math.tan(THREE.MathUtils.degToRad(camera.fov/2)), asp = camera.aspect, D = PANEL_R * 0.97;
   if (!v.mx){ v.mx = new Float32Array(21); v.my = new Float32Array(21); v.vx = new Float32Array(21); v.vy = new Float32Array(21); v.tMeas = 0; v.lastLm = null; }
   if (h.lm !== v.lastLm){                                                // a new detection arrived: measure it and how fast each point is moving
@@ -1858,7 +1876,7 @@ function updateHandViz(i){
     }
     v.lastLm = h.lm; v.tMeas = tNow;
   }
-  const lead = Math.min(0.1, (tNow - v.tMeas) / 1000 + 0.035);          // draw where the hand probably is NOW (detections arrive late), not where it was
+  const lead = Math.min(0.16, (tNow - v.tMeas) / 1000 + 0.06);          // draw where the hand probably is NOW (detections arrive late), not where it was
   for (let k = 0; k < 21; k++){
     const l = h.lm[k];
     const depth = flat ? D : Math.min(2, Math.max(0.5, HAND_D + l.z*2.5));
@@ -1873,7 +1891,7 @@ function updateHandViz(i){
   v.pts.geometry.attributes.position.needsUpdate = true; v.lines.geometry.attributes.position.needsUpdate = true;
   v.pts.visible = v.lines.visible = P.hv !== 1;
   v.fillA.visible = v.fillB.visible = P.hv !== 0;
-  if (P.hv !== 0){ const palm = Math.hypot(hs[0].x - hs[9].x, hs[0].y - hs[9].y) || 0.05; fillHand(v.fillA, hs, 1, palm); fillHand(v.fillB, hs, 1.7, palm); }
+  if (P.hv !== 0){ const palm = Math.hypot(hs[0].x - hs[9].x, hs[0].y - hs[9].y) || 0.05; fillHand(v.fillA, hs, 0.022, palm); fillHand(v.fillB, hs, 0.075, palm); }
   v.tA.position.copy(hs[4]); v.tB.position.copy(hs[8]);
   const col = h.pinch ? 0x39e08a : (h.fist ? 0x4f8cff : 0xffffff);
   v.tipMat.color.set(col); v.rm.color.set(col); v.fillA.material.color.set(col); v.fillB.material.color.set(h.pinch ? 0x39e08a : (h.fist ? 0x4f8cff : 0xa8d4ff));
