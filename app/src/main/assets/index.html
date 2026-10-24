@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.53';
+const VERSION = 'v3.54';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1586,27 +1586,30 @@ const dist2 = (a, b) => Math.hypot(a.x-b.x, a.y-b.y);
 const TIPS = [8,12,16,20], PIPS = [6,10,14,18];
 // ----- experimental: hand model in a Web Worker -----
 const WK_SRC = `
-let lm = null;
+let lm = null, lm2 = null;
 self.onmessage = async (e) => {
   const m = e.data;
   if (m.t === 'init'){
     try{
       const mod = await import(m.bundle);
       const fs = await mod.FilesetResolver.forVisionTasks(m.wasm);
-      lm = await mod.HandLandmarker.createFromOptions(fs, {baseOptions:{modelAssetPath:m.model, delegate:m.delegate}, runningMode:'VIDEO', numHands:m.hands,
+      const mk = n => mod.HandLandmarker.createFromOptions(fs, {baseOptions:{modelAssetPath:m.model, delegate:m.delegate}, runningMode:'VIDEO', numHands:n,
         minHandDetectionConfidence:0.3, minHandPresenceConfidence:0.3, minTrackingConfidence:0.3});
-      postMessage({t:'ready'});
+      lm = await mk(1);                                   // one-hand model: fast (it does not keep searching for a second hand)
+      if (m.hands === 2){ try{ lm2 = await mk(2); }catch(err){ lm2 = null; } }   // two-hand model: used only while two hands are really there
+      postMessage({t:'ready', two:!!lm2});
     }catch(err){ postMessage({t:'fail', e:String(err && err.message || err)}); }
   } else if (m.t === 'frame' && lm){
     const t0 = performance.now();
-    let r; try{ r = lm.detectForVideo(m.bmp, m.ts); }catch(err){ r = {landmarks:[]}; }
+    const L = (m.mode === 'B' && lm2) ? lm2 : lm;
+    let r; try{ r = L.detectForVideo(m.bmp, m.ts); }catch(err){ r = {landmarks:[]}; }
     const inf = performance.now() - t0;
     try{ m.bmp.close(); }catch(err){}
-    postMessage({t:'res', ts:m.ts, inf, lms:(r.landmarks || [])});
+    postMessage({t:'res', ts:m.ts, inf, mode:(m.mode === 'B' && lm2) ? 'B' : 'A', lms:(r.landmarks || [])});
   }
 };`;
-let wk = null, wkOn = false, wkBusy = false, wkSent = 0, wkInfo = null;
-function wkStop(){ wkOn = false; wkBusy = false; if (wk){ try{ wk.terminate(); }catch(e){} wk = null; } }
+let wk = null, wkOn = false, wkBusy = false, wkSent = 0, wkInfo = null, wkTwo = false, wkProbeN = 0, wkTwoAt = 0, wkHas2 = false, wkMode = 'A';
+function wkStop(){ wkOn = false; wkBusy = false; wkTwo = false; wkProbeN = 0; if (wk){ try{ wk.terminate(); }catch(e){} wk = null; } }
 function wkStart(d){
   return new Promise((res, rej) => {
     let done = false;
@@ -1618,11 +1621,16 @@ function wkStart(d){
     wk.onerror = e => fail('worker error ' + (e && e.message || ''));
     wk.onmessage = e => {
       const m = e.data;
-      if (m.t === 'ready'){ if (!done){ done = true; res(); } }
+      if (m.t === 'ready'){ wkHas2 = !!m.two; if (!done){ done = true; res(); } }
       else if (m.t === 'fail') fail(m.e);
       else if (m.t === 'res'){
         wkBusy = false; D.ms += ((performance.now() - wkSent) - D.ms) * 0.2; if (m.inf !== undefined) D.inf += (m.inf - D.inf) * 0.2;
-        if (wkInfo) applyDetect(m.lms || [], performance.now(), wkInfo);
+        const tn = performance.now();
+        if (P.two && wkHas2 && m.mode === 'B'){                       // two hands present: stay on the two-hand model; otherwise fall back to the fast one-hand model
+          if ((m.lms || []).length >= 2){ wkTwo = true; wkTwoAt = tn; }
+          else if (wkTwo && tn - wkTwoAt > 1200) wkTwo = false;
+        }
+        if (wkInfo) applyDetect(m.lms || [], tn, wkInfo);
       }
     };
     wk.postMessage({t:'init', bundle:base + '/vision_bundle.mjs', wasm:base + '/wasm',
@@ -1667,7 +1675,10 @@ function updateHands(now){
   const info = {box, sw, sh};
   if (wkOn){
     wkBusy = true; wkSent = t0; wkInfo = info;
-    createImageBitmap(detCv).then(b => { if (wk) wk.postMessage({t:'frame', bmp:b, ts:now}, [b]); else b.close(); }).catch(() => { wkBusy = false; });
+    let mode = 'A';
+    if (P.two && wkHas2){ if (wkTwo) mode = 'B'; else if (++wkProbeN >= 8){ wkProbeN = 0; mode = 'B'; } }   // every 8th look uses the two-hand model to find a second hand
+    wkMode = mode;
+    createImageBitmap(detCv).then(b => { if (wk) wk.postMessage({t:'frame', bmp:b, ts:now, mode}, [b]); else b.close(); }).catch(() => { wkBusy = false; });
     return;
   }
   let r; try{ r = landmarker.detectForVideo(detCv, now); }catch(e){ return; }
@@ -2308,7 +2319,7 @@ function frame(now){
 
   fpsN++; fpsT += dt;
   if (fpsT > 0.5){
-    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? '+เธรดแยก' : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + ')' : '') + 'ms/' + (detGap ? Math.round(1000/Math.max(detGap,1)) : 0) + 'Hz)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '');
+    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? '+เธรดแยก' + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + ')' : '') + 'ms/' + (detGap ? Math.round(1000/Math.max(detGap,1)) : 0) + 'Hz)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '');
     const fpsNow = fpsN/fpsT;
     if (fpsNow < 20 && S.qi > (S.stereo ? 1 : 0) && S.cam !== undefined){ lowT += 0.5; if (lowT >= 2.5){ S.qi--; applyQuality(); savePrefs(); invalidateUI(); lowT = 0; } } else lowT = 0;
     fpsN = 0; fpsT = 0;
