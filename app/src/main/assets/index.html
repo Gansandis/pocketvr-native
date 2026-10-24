@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.36';
+const VERSION = 'v3.37';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -272,7 +272,7 @@ function cycleCQ(){
   showToast('ความละเอียดกล้อง ' + CQS[S.cqI][2] + (S.cqI === 1 ? ' (ถ้ากระตุก ลดลง)' : ''), 3500);
 }
 function cycleCF(){ S.cfI = (S.cfI + 1) % CAMFOVS.length; savePrefs(); invalidateUI(); showToast('มุมกล้องจริง ' + CAMFOVS[S.cfI] + '° (ปรับจนภาพจริงขนาดตรงกับตาเห็น)', 4000); }
-function cycleVF(){ S.vfI = (S.vfI + 1) % VFOVS.length; savePrefs(); resize(); invalidateUI(); showToast('มุมมอง VR ' + VFOVS[S.vfI] + '°', 3000); }
+function cycleVF(){ S.vfI = (S.vfI + 1) % VFOVS.length; savePrefs(); resize(); refreshBackground(); invalidateUI(); showToast('มุมมอง VR ' + VFOVS[S.vfI] + '°', 3000); }
 function cycleIPD(){ S.ipd = IPDS[(IPDS.indexOf(S.ipd)+1) % IPDS.length]; savePrefs(); invalidateUI(); }
 function cycleQuality(){ S.qi = (S.qi + 1) % QUAL.length; applyQuality(); savePrefs(); invalidateUI(); }
 function zoomPanel(f){ S.pscale = clamp(S.pscale*f, PS_MIN, PS_MAX); }
@@ -452,8 +452,10 @@ function updatePtSize(){
   const tH = Math.tan(THREE.MathUtils.degToRad(camera.fov) / 2);
   PT.fx = (w / 2) / (PANEL_R * tH * camera.aspect); PT.fy = (w / va / 2) / (PANEL_R * tH);   // hand coordinates follow the picture, so the skeleton lands on your real hand
 }
+function resetTexCrop(t){ if (t){ t.repeat.set(1, 1); t.offset.set(0, 0); } }
 function refreshBackground(){
   const src = (N.boosting && boostTex) ? boostTex : videoTex;
+  resetTexCrop(videoTex); resetTexCrop(boostTex);        // a crop left over from the flat view must not leak into the VR-box picture (stripes / a box instead of the full picture)
   const on = camOn();
   env.visible = envShown(); scene.fog = (on && !boxMode()) ? null : new THREE.Fog(BG, 6, 22);
   if (!on){ scene.background = new THREE.Color(BG); ptMesh.visible = false; PT.fx = PT.fy = 1; return; }
@@ -1792,13 +1794,15 @@ function updateHandViz(i){
   const v = VIZ[i], h = HANDS[i], cur = CURS[i];
   if (!h.ok || !h.lm){ v.g.visible = false; v.rb.visible = false; v.init = false; return; }
   v.g.visible = true;
+  const tNow = performance.now(), vdt = Math.min(0.1, (tNow - (v.t || tNow)) / 1000 || 0.016); v.t = tNow;
+  const kxy = 1 - Math.exp(-vdt / 0.05), kz = 1 - Math.exp(-vdt / 0.14);       // glide between detections (13-30 Hz) instead of jumping; depth is the noisiest part so it glides slower
   const hs = v.hs, tH = Math.tan(THREE.MathUtils.degToRad(camera.fov/2)), asp = camera.aspect;
   for (let k = 0; k < 21; k++){
     const l = h.lm[k];
     const depth = Math.min(2, Math.max(0.5, HAND_D + l.z*2.5));
     const tx = (l.x*2-1) * tH * asp * depth * PT.fx, ty = -(l.y*2-1) * tH * depth * PT.fy, tz = -depth;
     if (!v.init) hs[k].set(tx, ty, tz);
-    else { hs[k].x += (tx - hs[k].x)*0.5; hs[k].y += (ty - hs[k].y)*0.5; hs[k].z += (tz - hs[k].z)*0.5; }
+    else { hs[k].x += (tx - hs[k].x)*kxy; hs[k].y += (ty - hs[k].y)*kxy; hs[k].z += (tz - hs[k].z)*kz; }
   }
   v.init = true;
   const jp = v.pts.geometry.attributes.position.array, bp = v.lines.geometry.attributes.position.array;
@@ -2090,6 +2094,7 @@ function render(){
     if (P.lens > 0){ lensSetup(); renderLensEye(stereo.cameraL, true, w, h); renderLensEye(stereo.cameraR, false, w, h); renderer.setScissorTest(false); return; }
     // each eye's picture is moved toward the middle so its centre sits in front of the lens (phone screen halves are wider apart than your eyes)
     const d = Math.round(S.sep * w/2);
+    renderer.setScissorTest(false); renderer.clear();      // wipe everything first: pixels outside the shifted eye pictures must never show an old frame
     renderer.setScissorTest(true);
     renderer.setViewport(d, 0, w/2, h); renderer.setScissor(0, 0, w/2, h); renderer.render(scene, stereo.cameraL);
     renderer.setViewport(w/2 - d, 0, w/2, h); renderer.setScissor(w/2, 0, w/2, h); renderer.render(scene, stereo.cameraR);
