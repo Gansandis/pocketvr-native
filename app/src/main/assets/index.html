@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.42';
+const VERSION = 'v3.43';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -163,11 +163,11 @@ function loadPrefs(){
     if (Number.isInteger(o.cm) && o.cm >= 0 && o.cm < CMS.length) S.cmI = o.cm;
     if (Number.isInteger(o.cq) && o.cq >= 0 && o.cq < CQS.length) S.cqI = o.cq;
     if (o.w !== 322) P.two = 1;   // v3.22: two-hand tracking + pinch zoom start enabled
-    if (o.v !== 315) S.ptI = 3;   // v3.15: one-time reset to the full-screen camera picture (the look the user preferred)
+    if (o.v !== 315 || o.fs !== 1) S.ptI = 3;   // one-time reset (again in v3.43) to the full-screen camera picture (the look the user preferred)
   }catch(e){}
 }
 function savePrefs(){
-  try{ localStorage.setItem('pvr_prefs', JSON.stringify(Object.assign({}, P, {qi:S.qi, nm:N.mode, ipd:S.ipd, sp:S.sep, pt:S.ptI, cf:S.cfI, vf:S.vfI, cm:S.cmI, cq:S.cqI, v:315, w:322}))); }catch(e){}
+  try{ localStorage.setItem('pvr_prefs', JSON.stringify(Object.assign({}, P, {qi:S.qi, nm:N.mode, ipd:S.ipd, sp:S.sep, pt:S.ptI, cf:S.cfI, vf:S.vfI, cm:S.cmI, cq:S.cqI, v:315, w:322, fs:1}))); }catch(e){}
 }
 loadPrefs();
 
