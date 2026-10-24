@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.54';
+const VERSION = 'v3.55';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -145,12 +145,13 @@ const PS_MIN = 0.6, PS_MAX = 2.0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* --- saved preferences --- */
-const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1};
+const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1, pri:0};
 function loadPrefs(){
   try{
     const o = JSON.parse(localStorage.getItem('pvr_prefs') || '{}');
     for (const k of Object.keys(P)) if (Number.isInteger(o[k]) && o[k] >= 0) P[k] = o[k];
     if (o.airV !== 3) P.sel = 3;                                  // v3.29: air touch becomes the default once
+    P.pri = Math.min(P.pri, 2);
     P.gaze = Math.min(P.gaze, 2); P.ptr = Math.min(P.ptr, 1); P.smooth = Math.min(P.smooth, 2);
     P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 1); P.dres = Math.min(P.dres, 2); P.webfps = Math.min(P.webfps, 3); P.camfps = Math.min(P.camfps, 1); P.hv = Math.min(P.hv, 2); P.gs = Math.min(P.gs, 2); P.stab = Math.min(P.stab, 2);
     if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
@@ -379,6 +380,8 @@ function cycleLens(){ cycleP('lens', 4); showToast('ชดเชยเลนส�
 function cycleRoi(){ cycleP('roi', 2); roiPrev = null; showToast(P.roi ? 'ตรวจเฉพาะรอบมือ: เปิด (ทดลอง) ถ้ามือหลุดบ่อยให้ปิด' : 'ตรวจเฉพาะรอบมือ: ปิด', 4000); }
 const HV_N = ['โครงกระดูก', 'เงามือเรืองแสง', 'ทั้งสอง'], GS_N = ['ตามตรงๆ', 'นุ่ม', 'นุ่มมาก'], GS_T = [0, 0.07, 0.16];
 function cycleHv(){ cycleP('hv', 3); showToast('รูปแบบมือ: ' + HV_N[P.hv], 2500); }
+const PRI_N = ['ภาพลื่นสุด', 'สมดุล (วาด 45 fps)', 'ตามมือไว (วาด 30 fps)'], PRI_FPS = [0, 45, 30];
+function cyclePri(){ cycleP('pri', 3); showToast('ลำดับความสำคัญ: ' + PRI_N[P.pri] + (P.pri ? ' — ลดการวาดตอนมีมือ เพื่อให้การ์ดจอเหลือให้ตรวจจับมือ' : ''), 4000); }
 function cycleGs(){ cycleP('gs', 3); showToast('แผงตามมือตอนลาก: ' + GS_N[P.gs], 2500); }
 const WEBFPS = [10, 15, 20, 30], CAMFPS = [30, 60];
 function cycleWebFps(){ cycleP('webfps', 4); NB.fpsSent = 0; showToast('เฟรมเรตเว็บใน VR: ' + WEBFPS[P.webfps] + ' • ต่ำ = เครื่องลื่นขึ้น วิดีโอในเว็บจะกระตุกขึ้น', 4000); }
@@ -557,6 +560,7 @@ const SETS = [
   {id:'dof',     t:'การติดตามหัว',        v:() => DOF_N[P.dof],                   on:() => P.dof > 0,  fn:cycleDof},
   {id:'lens',    t:'ชดเชยเลนส์ VR Box',   v:() => LENS_N[P.lens],                  on:() => P.lens > 0, fn:cycleLens},
   {id:'hv',      t:'รูปแบบมือ',            v:() => HV_N[P.hv],                      on:() => false,      fn:cycleHv},
+  {id:'pri',     t:'ภาพลื่น / ตามมือไว', v:() => PRI_N[P.pri],                     on:() => P.pri > 0,  fn:cyclePri},
   {id:'gs',      t:'แผงตามมือตอนลาก',     v:() => GS_N[P.gs],                      on:() => false,      fn:cycleGs},
   {id:'webfps',  t:'เฟรมเรตเว็บใน VR',     v:() => WEBFPS[P.webfps] + ' fps',       on:() => false,      fn:cycleWebFps},
   {id:'camfps',  t:'เฟรมเรตกล้อง',         v:() => CAMFPS[P.camfps] + ' fps',       on:() => false,      fn:cycleCamFps},
@@ -2265,7 +2269,7 @@ function render(){
     renderer.setViewport(0, 0, w, h); renderer.render(scene, camera);
   }
 }
-let last = 0, fpsN = 0, fpsT = 0, lowT = 0;
+let last = 0, fpsN = 0, fpsT = 0, lowT = 0, lastRenderT = 0;
 const _vf = new THREE.Vector3(), _vw = new THREE.Vector3();
 function frame(now){
   requestAnimationFrame(frame);
@@ -2315,7 +2319,8 @@ function frame(now){
   } else if (S.mode === 'gallery'){
     galleryItems.forEach(m => { m.rotation.y += dt*m.userData.spd; m.rotation.x += dt*0.3*m.userData.spd; });
   }
-  render();
+  const capF = (P.pri && wkOn && (HANDS[0].ok || HANDS[1].ok)) ? PRI_FPS[P.pri] : 0;     // hands in view: draw fewer pictures so the graphics chip has time left for the hand model
+  if (!capF || now - lastRenderT >= 1000 / capF - 4){ lastRenderT = now; render(); }
 
   fpsN++; fpsT += dt;
   if (fpsT > 0.5){
