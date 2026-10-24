@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.41';
+const VERSION = 'v3.42';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -431,7 +431,7 @@ function applyExposure(){
 }
 // head-locked camera picture for the VR box, sized to the camera's real viewing angle so the world isn't magnified (magnification = dizziness)
 const PT = {fx:1, fy:1};
-const ptMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({color:0xffffff, depthTest:false, depthWrite:true, polygonOffset:true, polygonOffsetFactor:3, polygonOffsetUnits:3, fog:false}));   // writes depth (slightly pushed back) so the room grid behind the camera picture is hidden
+const ptMesh = new THREE.Mesh(new THREE.PlaneGeometry(1, 1), new THREE.MeshBasicMaterial({color:0xffffff, depthTest:true, depthFunc:THREE.AlwaysDepth, depthWrite:true, polygonOffset:true, polygonOffsetFactor:3, polygonOffsetUnits:3, fog:false}));   // writes depth (slightly pushed back) so the room grid behind the camera picture is hidden
 ptMesh.renderOrder = -1000; ptMesh.frustumCulled = false; ptMesh.visible = false; ptMesh.position.set(0, 0, -PANEL_R); camera.add(ptMesh);
 const vigCv = document.createElement('canvas'); vigCv.width = vigCv.height = 128;
 { const g = vigCv.getContext('2d'), gr = g.createRadialGradient(64, 64, 20, 64, 64, 64);
@@ -1625,16 +1625,18 @@ function wkStart(d){
   });
 }
 // ----- experimental: crop the camera picture around the hand so the model sees it bigger at the same cost -----
-let roiPrev = null, roiN = 0, roiDisc = false, lastHandSeen = 0;
+let roiPrev = null, roiN = 0, lastHandSeen = 0;
 function roiBox(sw, sh){
   let x0 = 9, y0 = 9, x1 = -9, y1 = -9, n = 0;
   HANDS.forEach(h => { if (h.ok && h.lm){ n++; h.lm.forEach(p => { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }); } });
-  if (!n){ roiPrev = null; return null; }
-  if (P.two && n < 2 && (++roiN % 30) === 0){ roiDisc = true; return null; }   // rarely look at the whole picture so a second hand can be found (switching view often makes the hand jump)
-  const px0 = x0 * sw, px1 = x1 * sw, py0 = y0 * sh, py1 = y1 * sh;
+  if (!n){ roiPrev = null; roiN = 0; return null; }
+  // two hands wanted: look at the whole picture until BOTH are being tracked (that is how the second one gets found), then crop around both together
+  if (P.two){ if (n < 2){ roiPrev = null; roiN = 0; return null; } if (++roiN < 8) return null; }
+  const px0 = x0 * sw, px1 = x1 * sw, py0 = y0 * sh, py1 = y1 * sh, ext = Math.max(px1 - px0, py1 - py0);
+  if (P.two && ext * 1.5 > sh){ roiPrev = null; return null; }                  // the hands are too far apart for one crop: use the whole picture
   const q = roiPrev;
-  if (q && px0 > q.x + q.w*0.15 && px1 < q.x + q.w*0.85 && py0 > q.y + q.h*0.15 && py1 < q.y + q.h*0.85 && Math.max(px1 - px0, py1 - py0) > q.w * 0.25) return q;   // hand still comfortably inside: keep the crop steady (the model tracks better)
-  let side = Math.max(px1 - px0, py1 - py0) * 2.4; side = clamp(side, 0.6 * sh, sh);
+  if (q && px0 > q.x + q.w*0.12 && px1 < q.x + q.w*0.88 && py0 > q.y + q.h*0.12 && py1 < q.y + q.h*0.88 && ext > q.w * (P.two ? 0.3 : 0.25)) return q;   // hands still comfortably inside: keep the crop steady (the model tracks better)
+  let side = ext * (P.two ? 1.7 : 2.4); side = clamp(side, 0.6 * sh, sh);
   const cx = (px0 + px1) / 2, cy = (py0 + py1) / 2;
   roiPrev = {x:clamp(cx - side/2, 0, sw - side), y:clamp(cy - side/2, 0, sh - side), w:side, h:side};
   return roiPrev;
@@ -1651,13 +1653,12 @@ function updateHands(now){
   if (N.boosting){ if (N.drawnVT !== video.currentTime) boostFrame(); src = boostCv; }
   const t0 = performance.now();
   const sw = src.videoWidth || src.width || 640, sh = src.videoHeight || src.height || 360;
-  roiDisc = false;
   const box = P.roi ? roiBox(sw, sh) : null;
   const bw = DRES[P.dres], dW = box ? Math.round(bw * 0.75) : bw, dH = box ? dW : Math.round(bw * sh / sw);
   if (detCv.width !== dW) detCv.width = dW;
   if (detCv.height !== dH) detCv.height = dH;
   if (box) dctx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, dW, dH); else dctx.drawImage(src, 0, 0, dW, dH);
-  const info = {box, sw, sh, disc:roiDisc};
+  const info = {box, sw, sh};
   if (wkOn){
     wkBusy = true; wkSent = t0; wkInfo = info;
     createImageBitmap(detCv).then(b => { if (wk) wk.postMessage({t:'frame', bmp:b, ts:now}, [b]); else b.close(); }).catch(() => { wkBusy = false; });
@@ -1670,7 +1671,6 @@ function updateHands(now){
 }
 function applyDetect(lmsRaw, now, info){
   let lms = lmsRaw;
-  if (info.disc && lmsRaw.length <= HANDS.filter(h => h.ok).length) return;     // a look at the whole picture only counts when it finds an extra hand; otherwise keep the steady crop result
   if (info.box){                                       // landmarks are relative to the crop: map them back to the whole picture
     const b = info.box, sw = info.sw, sh = info.sh;
     lms = lmsRaw.map(l => l.map(p => ({x:(b.x + p.x * b.w) / sw, y:(b.y + p.y * b.h) / sh, z:p.z * b.w / sw})));
