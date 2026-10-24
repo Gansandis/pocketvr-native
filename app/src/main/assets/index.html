@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.38';
+const VERSION = 'v3.40';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -145,14 +145,14 @@ const PS_MIN = 0.6, PS_MAX = 2.0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* --- saved preferences --- */
-const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1, lens:0, roi:0, wk:0};
+const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1};
 function loadPrefs(){
   try{
     const o = JSON.parse(localStorage.getItem('pvr_prefs') || '{}');
     for (const k of Object.keys(P)) if (Number.isInteger(o[k]) && o[k] >= 0) P[k] = o[k];
     if (o.airV !== 3) P.sel = 3;                                  // v3.29: air touch becomes the default once
     P.gaze = Math.min(P.gaze, 2); P.ptr = Math.min(P.ptr, 1); P.smooth = Math.min(P.smooth, 2);
-    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 1); P.stab = Math.min(P.stab, 2);
+    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 1); P.dres = Math.min(P.dres, 2); P.stab = Math.min(P.stab, 2);
     if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
     if (Number.isInteger(o.nm) && o.nm >= 0) N.mode = Math.min(o.nm, 2);
     if (IPDS.includes(o.ipd)) S.ipd = o.ipd;
@@ -377,6 +377,8 @@ function cycleDof(){ cycleP('dof', 2); headPos.set(0,0,0); headVel.set(0,0,0); s
 const LENS_N = ['ปิด', 'เบา', 'กลาง', 'แรง'];
 function cycleLens(){ cycleP('lens', 4); showToast('ชดเชยเลนส์ VR Box: ' + LENS_N[P.lens] + (P.lens ? ' (บิดภาพให้ตรงเมื่อมองผ่านเลนส์ ใช้ได้ในโหมดแบ่งจอ)' : ''), 4500); }
 function cycleRoi(){ cycleP('roi', 2); roiPrev = null; showToast(P.roi ? 'ตรวจเฉพาะรอบมือ: เปิด (ทดลอง) ถ้ามือหลุดบ่อยให้ปิด' : 'ตรวจเฉพาะรอบมือ: ปิด', 4000); }
+const DRES = [320, 384, 512], DRES_N = ['ต่ำ (เร็ว)', 'กลาง', 'สูง (เจอมือแม่น ช้าลง)'];
+function cycleDres(){ cycleP('dres', 3); showToast('ความละเอียดตรวจมือ: ' + DRES_N[P.dres] + ' • สูง = เจอมือไกล/สองมือดีขึ้นแต่ความถี่ลดลง', 4500); }
 function cycleWk(){ cycleP('wk', 2); showToast(P.wk ? 'ตรวจมือแยกเธรด: เปิด (ทดลอง) กำลังเริ่มใหม่…' : 'ตรวจมือแยกเธรด: ปิด', 3500); reinitHands(); }
 function cycleStab(){ cycleP('stab', 3); showToast('กันจอสั่น: ' + STAB_N[P.stab], 2500); }
 function cyclePokeS(){ cycleP('pokeS', 3); showToast('ความไวการจิ้ม: ' + POKE_N[P.pokeS], 2500); }
@@ -410,7 +412,7 @@ async function reinitHands(){
   invalidateUI();
 }
 function resetSettings(){
-  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1, lens:0, roi:0, wk:0});
+  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1});
   S.qi = 1; N.mode = 1; S.ipd = 0.063; S.sep = 0.08; S.ptI = 0; S.cfI = 2; S.vfI = 2; N.lastProbe = 0;
   applyQuality(); savePrefs(); invalidateUI(); showToast('รีเซ็ตการตั้งค่าแล้ว', 2500);
   reinitHands();
@@ -547,6 +549,7 @@ const SETS = [
   {id:'airD',    t:'ทิศสัมผัสอากาศ',        v:() => P.airD === 0 ? 'เอื้อมไปข้างหน้า' : 'เข้าหากล้อง', on:() => false, fn:cycleAirD},
   {id:'dof',     t:'การติดตามหัว',        v:() => DOF_N[P.dof],                   on:() => P.dof > 0,  fn:cycleDof},
   {id:'lens',    t:'ชดเชยเลนส์ VR Box',   v:() => LENS_N[P.lens],                  on:() => P.lens > 0, fn:cycleLens},
+  {id:'dres',    t:'ความละเอียดตรวจมือ',   v:() => DRES_N[P.dres],                  on:() => false,      fn:cycleDres},
   {id:'roi',     t:'ตรวจเฉพาะรอบมือ (ทดลอง)', v:() => P.roi ? 'เปิด' : 'ปิด',        on:() => P.roi > 0,  fn:cycleRoi},
   {id:'wk',      t:'ตรวจมือแยกเธรด (ทดลอง)',  v:() => P.wk ? 'เปิด' : 'ปิด',         on:() => P.wk > 0,   fn:cycleWk},
   {id:'stab',    t:'กันจอสั่น/ขยับ',      v:() => STAB_N[P.stab],                  on:() => false,      fn:cycleStab},
@@ -813,7 +816,7 @@ function drawCamWin(x, ui, win){
   if (!S.cam){ x.fillStyle = 'rgba(20,20,22,.9)'; x.fillRect(0, 52, win.d.w, win.d.h - 52); x.fillStyle = '#aaa'; x.font = '24px sans-serif'; x.textAlign = 'center'; x.fillText('ไม่มีกล้อง', win.d.w/2, 200); }
 }
 // browser inside VR (APK only): a real WebView runs on a private virtual display; we show its pictures here and turn pinches into touches
-const NB = {slow:0, desk:false, tabs:[], cur:0, sig:'', err:'', cv:null, tex:null, ctx:null, busy:false, last:0, have:false, open:false, url:'', urlT:0, tm:0, startUrl:'https://www.google.com/'};
+const NB = {seq:'', slow:0, desk:false, tabs:[], cur:0, sig:'', err:'', cv:null, tex:null, ctx:null, busy:false, last:0, have:false, open:false, url:'', urlT:0, tm:0, startUrl:'https://www.google.com/'};
 const NB_TOP = 156, NB_W = 800, NB_H = 450;                      // title 0-52, toolbar 52-108, tab strip 108-156, then the page area (800x450)
 function nativePost(op, extra){ if (!NATIVE.ok) return; try{ AndroidBridge.postMessage(JSON.stringify(Object.assign({id:0, op}, extra || {}))); }catch(e){} }
 function nbNewTab(url){
@@ -881,6 +884,10 @@ async function pollNweb(now){
   if (NB.busy || now - NB.last < 50) return;
   NB.busy = true; NB.last = now;
   try{
+    if (NB.have){                                       // ask for the tiny counter first: if the page has not changed there is nothing to download, decode or upload
+      const q = await fetch('/browser/seq?' + (++NATIVE.n), {cache:'no-store'});
+      if (q.ok){ const sq = await q.text(); if (sq === NB.seq){ NB.busy = false; return; } NB.seq = sq; }
+    }
     const r = await fetch('/browser/frame.jpg?' + (++NATIVE.n), {cache:'no-store'});
     NB.err = r.ok ? '' : 'HTTP ' + r.status;
     if (r.ok){
@@ -1611,7 +1618,7 @@ function wkStart(d){
   });
 }
 // ----- experimental: crop the camera picture around the hand so the model sees it bigger at the same cost -----
-let roiPrev = null, roiN = 0, roiDisc = false;
+let roiPrev = null, roiN = 0, roiDisc = false, lastHandSeen = 0;
 function roiBox(sw, sh){
   let x0 = 9, y0 = 9, x1 = -9, y1 = -9, n = 0;
   HANDS.forEach(h => { if (h.ok && h.lm){ n++; h.lm.forEach(p => { if (p.x < x0) x0 = p.x; if (p.x > x1) x1 = p.x; if (p.y < y0) y0 = p.y; if (p.y > y1) y1 = p.y; }); } });
@@ -1629,6 +1636,8 @@ function updateHands(now){
   if (!(landmarker || wkOn) || !S.cam || video.readyState < 2 || video.currentTime === lastVT) return;
   if (wkBusy){ if (now - wkSent > 4000){ showToast('เธรดแยกค้าง กลับไปใช้แบบปกติ', 4000); P.wk = 0; savePrefs(); reinitHands(); } return; }
   detGap = wkOn ? RATE_MS[P.rate] : Math.max(RATE_MS[P.rate], D.ms * 2.2);   // keep detection under ~45% of the frame budget
+  if (HANDS[0].ok || HANDS[1].ok) lastHandSeen = now;
+  else if (now - lastHandSeen > 2500) detGap = Math.max(detGap, 170);          // nobody is using the hands: look about 6 times a second to save battery and CPU (a hand is found again within a moment)
   if (now - lastDet < detGap) return;
   lastVT = video.currentTime; lastDet = now;
   let src = video;
@@ -1637,7 +1646,7 @@ function updateHands(now){
   const sw = src.videoWidth || src.width || 640, sh = src.videoHeight || src.height || 360;
   roiDisc = false;
   const box = P.roi ? roiBox(sw, sh) : null;
-  const dW = box ? 288 : 384, dH = box ? 288 : Math.round(384 * sh / sw);
+  const bw = DRES[P.dres], dW = box ? Math.round(bw * 0.75) : bw, dH = box ? dW : Math.round(bw * sh / sw);
   if (detCv.width !== dW) detCv.width = dW;
   if (detCv.height !== dH) detCv.height = dH;
   if (box) dctx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, dW, dH); else dctx.drawImage(src, 0, 0, dW, dH);
@@ -1809,7 +1818,7 @@ function updateHandViz(i){
   v.init = true;
   const jp = v.pts.geometry.attributes.position.array, bp = v.lines.geometry.attributes.position.array;
   for (let k = 0; k < 21; k++){ jp[k*3] = hs[k].x; jp[k*3+1] = hs[k].y; jp[k*3+2] = hs[k].z; }
-  CONN.forEach((c, k) => { const p = hs[c[0]], q = hs[c[1]]; bp.set([p.x,p.y,p.z,q.x,q.y,q.z], k*6); });
+  for (let k = 0; k < CONN.length; k++){ const p = hs[CONN[k][0]], q = hs[CONN[k][1]], o = k*6; bp[o] = p.x; bp[o+1] = p.y; bp[o+2] = p.z; bp[o+3] = q.x; bp[o+4] = q.y; bp[o+5] = q.z; }
   v.pts.geometry.attributes.position.needsUpdate = true; v.lines.geometry.attributes.position.needsUpdate = true;
   v.tA.position.copy(hs[4]); v.tB.position.copy(hs[8]);
   const col = h.pinch ? 0x39e08a : (h.fist ? 0x4f8cff : 0xffffff);
