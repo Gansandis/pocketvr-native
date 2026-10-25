@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.65';
+const VERSION = 'v3.66';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1740,10 +1740,11 @@ async function nativeStart(d){
   if (!r.ok) throw new Error('native ' + d + ': ' + (typeof r.data === 'string' ? r.data : 'ไม่ตอบ'));
   wkHas2 = !!(r.data && r.data.two); wkNative = true; nhFail = 0; nhIn = 0;
 }
+const NH_DEPTH = 1;                                                  // pictures allowed on the way at once: 2 raised detections to 13 Hz but the graphics chip never rested and the screen fell to 31 fps
 let nhIn = 0;                                                        // pictures sent to the app and not answered yet (two may be on the way, so the model never sits idle)
 function nativeDetect(now, mode, info, t0){
   const jpg = detCv.toDataURL('image/jpeg', 0.7).slice(23);          // small picture as JPEG text (strip "data:image/jpeg;base64,")
-  nhIn++; if (nhIn < 2) wkBusy = false;
+  nhIn++; if (nhIn < NH_DEPTH) wkBusy = false;
   nativeCall('nh_det', {jpg, ts:Math.round(now), mode}, 6000).then(r => {
     nhIn = Math.max(0, nhIn - 1);
     if (!wkNative) return;
