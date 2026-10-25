@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.68';
+const VERSION = 'v3.69';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1559,7 +1559,7 @@ const DET = D;                  // the detection timings (a local variable named
 let qiCap = null;               // picture quality the auto scaler may climb back to (null = the user's own choice, nothing to restore)              // average time of one hand detection (ms)
 let lastDet = 0, detGap = 0;
 const detCv = document.createElement('canvas'); detCv.width = 384; detCv.height = 216;
-const dctx = detCv.getContext('2d');
+const dctx = detCv.getContext('2d', {willReadFrequently:true});     // this picture is read back every time (sent to the hand model): keep it in normal memory, not on the graphics chip, so reading it does not make the screen wait
 // One-Euro filter: smooth when the hand is slow, responsive when it moves fast
 class OneEuro{
   constructor(){ this.x = null; this.dx = 0; this.t = 0; }
@@ -1745,7 +1745,9 @@ let handSpd = 0;
 let nhPace = 140;                                                    // shortest time between two pictures sent to the app (ms): follows the screen's fps, shorter while the screen is smooth, longer when it starts to drop
 let nhIn = 0;                                                        // pictures sent to the app and not answered yet (two may be on the way, so the model never sits idle)
 function nativeDetect(now, mode, info, t0){
+  const tj = performance.now();
   const jpg = detCv.toDataURL('image/jpeg', 0.7).slice(23);          // small picture as JPEG text (strip "data:image/jpeg;base64,")
+  pfAdd('jpg', performance.now() - tj);
   nhIn++; if (nhIn < NH_DEPTH) wkBusy = false;
   nativeCall('nh_det', {jpg, ts:Math.round(now), mode}, 6000).then(r => {
     nhIn = Math.max(0, nhIn - 1);
@@ -1816,7 +1818,9 @@ function updateHands(now){
   const bw = DRES[P.dres], dW = box ? Math.round(bw * 0.75) : bw, dH = box ? dW : Math.round(bw * sh / sw);
   if (detCv.width !== dW) detCv.width = dW;
   if (detCv.height !== dH) detCv.height = dH;
+  const tdi = performance.now();
   if (box) dctx.drawImage(src, box.x, box.y, box.w, box.h, 0, 0, dW, dH); else dctx.drawImage(src, 0, 0, dW, dH);
+  pfAdd('dimg', performance.now() - tdi);
   const info = {box, sw, sh};
   if (wkOn){
     wkBusy = true; wkSent = t0; wkInfo = info;
@@ -2505,7 +2509,7 @@ function frameBody(now){
 
   fpsN++; fpsT += dt;
   if (fpsT > 0.5){
-    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? (wkNative ? '+เนทีฟ' : '+เธรดแยก') + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + (wkNative ? ' +ถอดภาพ ' + D.dec.toFixed(0) + ' ส่งทุก ' + nhPace : '') + ')' : '') + 'ms/' + D.hz.toFixed(1) + 'Hz จริง)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nเวลา/เฟรม JS ' + (PF.total || 0).toFixed(1) + 'ms | วาด ' + (PF.render || 0).toFixed(1) + ' | มือ ' + (PF.updateHandViz || 0).toFixed(1) + ' (เส้น ' + (PF.outline || 0).toFixed(1) + ') | ตรวจ ' + (PF.updateHands || 0).toFixed(1) + ' | UI ' + (PF.ui || 0).toFixed(1) + ' | เร็วมือ ' + handSpd.toFixed(2) + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '') + (errN ? '\n⚠ error x' + errN + ' ' + errMsg.slice(0, 70) : '');
+    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? (wkNative ? '+เนทีฟ' : '+เธรดแยก') + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + (wkNative ? ' +ถอดภาพ ' + D.dec.toFixed(0) + ' ส่งทุก ' + nhPace : '') + ')' : '') + 'ms/' + D.hz.toFixed(1) + 'Hz จริง)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nเวลา/เฟรม JS ' + (PF.total || 0).toFixed(1) + 'ms | วาด ' + (PF.render || 0).toFixed(1) + ' | มือ ' + (PF.updateHandViz || 0).toFixed(1) + ' (เส้น ' + (PF.outline || 0).toFixed(1) + ') | ตรวจ ' + (PF.updateHands || 0).toFixed(1) + ' [ต่อครั้ง: ย่อภาพ ' + (PF.dimg || 0).toFixed(1) + ' JPEG ' + (PF.jpg || 0).toFixed(1) + ']' + ' | UI ' + (PF.ui || 0).toFixed(1) + ' | เร็วมือ ' + handSpd.toFixed(2) + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '') + (errN ? '\n⚠ error x' + errN + ' ' + errMsg.slice(0, 70) : '');
     const fpsNow = fpsN/fpsT;
     handSpd = Math.max(HANDS[0].ok ? (VIZ[0].spd || 0) : 0, HANDS[1].ok ? (VIZ[1].spd || 0) : 0);
     if (wkNative){
