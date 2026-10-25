@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.62';
+const VERSION = 'v3.64';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -154,7 +154,7 @@ function loadPrefs(){
     P.pri = Math.min(P.pri, 2);
     P.gaze = Math.min(P.gaze, 2); P.ptr = Math.min(P.ptr, 1); P.smooth = Math.min(P.smooth, 2);
     P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); if (P.sel === 1 || P.sel === 2) P.sel = 3;     // the old poke modes are gone: only pinch (0) and air touch (3) remain
-    P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 1); P.dres = Math.min(P.dres, 2); P.webfps = Math.min(P.webfps, 3); P.camfps = Math.min(P.camfps, 1); P.hv = Math.min(P.hv, 2); P.gs = Math.min(P.gs, 2); P.stab = Math.min(P.stab, 2);
+    P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 2); P.dres = Math.min(P.dres, 2); P.webfps = Math.min(P.webfps, 3); P.camfps = Math.min(P.camfps, 1); P.hv = Math.min(P.hv, 2); P.gs = Math.min(P.gs, 2); P.stab = Math.min(P.stab, 2);
     if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
     if (Number.isInteger(o.nm) && o.nm >= 0) N.mode = Math.min(o.nm, 2);
     if (IPDS.includes(o.ipd)) S.ipd = o.ipd;
@@ -187,6 +187,8 @@ scene.add(new THREE.HemisphereLight(0xffffff, 0x334466, 0.9));
 const sun = new THREE.DirectionalLight(0xffffff, 0.6); sun.position.set(1, 2, 1); scene.add(sun);
 
 const env = new THREE.Group(); scene.add(env);
+renderer.domElement.addEventListener('webglcontextlost', () => { try{ showToast('จอกราฟิกหลุดชั่วคราว กำลังกู้คืน…', 3000); }catch(e){} });
+renderer.domElement.addEventListener('webglcontextrestored', () => { try{ showToast('กู้คืนกราฟิกแล้ว', 2000); invalidateUI(); }catch(e){} });
 const grid = new THREE.GridHelper(30, 30, 0x4f8cff, 0x1c2b4a); grid.position.y = -1.6; grid.renderOrder = -2000; env.add(grid);   // drawn before the camera picture (renderOrder -1000), so the picture simply paints over the grid
 
 const heading = new THREE.Group(); scene.add(heading);
@@ -400,7 +402,7 @@ function cycleCamFps(){ cycleP('camfps', 2); applyCamFps(); showToast('เฟร
 function applyCamFps(){ if (N.track) N.track.applyConstraints({frameRate:{ideal:CAMFPS[P.camfps], min:15}}).catch(() => {}); }
 const DRES = [320, 384, 512], DRES_N = ['ต่ำ (เร็ว)', 'กลาง', 'สูง (เจอมือแม่น ช้าลง)'];
 function cycleDres(){ cycleP('dres', 3); showToast('ความละเอียดตรวจมือ: ' + DRES_N[P.dres] + ' • สูง = เจอมือไกล/สองมือดีขึ้นแต่ความถี่ลดลง', 4500); }
-function cycleWk(){ cycleP('wk', 2); showToast(P.wk ? 'ตรวจมือแยกเธรด: เปิด (ทดลอง) กำลังเริ่มใหม่…' : 'ตรวจมือแยกเธรด: ปิด', 3500); reinitHands(); }
+function cycleWk(){ cycleP('wk', NATIVE.ok ? 3 : 2); nhOff = false; wkOffNow = false; showToast(['ตรวจมือแยกเธรด: ปิด', 'ตรวจมือแยกเธรด: เปิด (ทดลอง) กำลังเริ่มใหม่…', 'ตรวจมือในแอป (เนทีฟ): เปิด (ทดลอง) กำลังเริ่มใหม่…'][P.wk], 3500); reinitHands(); }
 function cycleStab(){ cycleP('stab', 3); showToast('กันจอสั่น: ' + STAB_N[P.stab], 2500); }
 function cyclePokeS(){ cycleP('pokeS', 3); showToast('ความไวการจิ้ม: ' + POKE_N[P.pokeS], 2500); }
 function cycleDev(){ finishSpeedTest(); cycleP('dev', 2); showToast('เปลี่ยนตัวประมวลผลแทร็กมือ…', 2500); reinitHands(); }
@@ -592,7 +594,7 @@ const SETS = [
   {id:'camfps',  t:'เฟรมเรตกล้อง',         v:() => CAMFPS[P.camfps] + ' fps',       on:() => false,      fn:cycleCamFps},
   {id:'dres',    t:'ความละเอียดตรวจมือ',   v:() => DRES_N[P.dres],                  on:() => false,      fn:cycleDres},
   {id:'roi',     t:'ตรวจเฉพาะรอบมือ (ทดลอง)', v:() => P.roi ? 'เปิด' : 'ปิด',        on:() => P.roi > 0,  fn:cycleRoi},
-  {id:'wk',      t:'ตรวจมือแยกเธรด (ทดลอง)',  v:() => P.wk ? 'เปิด' : 'ปิด',         on:() => P.wk > 0,   fn:cycleWk},
+  {id:'wk',      t:'ตรวจมือแยกเธรด/เนทีฟ (ทดลอง)',  v:() => ['ปิด', 'เปิด', 'เนทีฟ'][P.wk] || 'ปิด',         on:() => P.wk > 0,   fn:cycleWk},
   {id:'stab',    t:'กันจอสั่น/ขยับ',      v:() => STAB_N[P.stab],                  on:() => false,      fn:cycleStab},
   {id:'sel',     t:'เลือกด้วย',            v:() => SEL_N[P.sel],                    on:() => false,      fn:cycleSel},
   {id:'pokes',   t:'ความไวสัมผัสอากาศ',        v:() => POKE_N[P.pokeS],                 on:() => false,      fn:cyclePokeS},
@@ -1626,7 +1628,13 @@ async function initHandsRun(){
   delegate = '-'; initErr = '';
   try{
     await loadMediaPipe();
-    if (P.wk){                                       // experimental: run the hand model in its own thread so drawing is never blocked
+    if (P.wk === 2 && NATIVE.ok && !nhOff && !wkOffNow){          // experimental: the model inside the app
+      for (const d of (P.dev === 1 ? ['CPU'] : ['GPU','CPU'])){
+        try{ await nativeStart(d); delegate = d; wkOn = true; return; }catch(e){ initErr = String(e && e.message || e); wkNative = false; }
+      }
+      showToast('ตัวตรวจเนทีฟเริ่มไม่ได้: ' + initErr.slice(0, 60) + ' ใช้แบบเดิมแทน', 5000);
+    }
+    if (P.wk && !wkOffNow){                          // experimental: run the hand model in its own thread so drawing is never blocked
       for (const d of (P.dev === 1 ? ['CPU'] : ['GPU','CPU'])){
         try{ await wkStart(d); delegate = d; wkOn = true; return; }catch(e){ initErr = 'worker ' + d + ': ' + (e && e.message || e); wkStop(); }
       }
@@ -1713,14 +1721,39 @@ self.onmessage = async (e) => {
     postMessage({t:'res', ts:m.ts, inf, mode:(m.mode === 'B' && lm2) ? 'B' : 'A', lms:(r.landmarks || [])});
   }
 };`;
+let wkFirst = true, wkStall = 0, wkOffNow = false, wkUrl = null;
 let wk = null, wkOn = false, wkBusy = false, wkSent = 0, wkInfo = null, wkTwo = false, wkProbeN = 0, wkTwoAt = 0, wkHas2 = false, wkMode = 'A';
-function wkStop(){ wkOn = false; wkBusy = false; wkTwo = false; wkProbeN = 0; if (wk){ try{ wk.terminate(); }catch(e){} wk = null; } }
+function wkStop(){ wkNative = false; wkFirst = true; if (wkUrl){ try{ URL.revokeObjectURL(wkUrl); }catch(e){} wkUrl = null; } wkOn = false; wkBusy = false; wkTwo = false; wkProbeN = 0; if (wk){ try{ wk.terminate(); }catch(e){} wk = null; } }
+function wkOnRes(m){                                                  // a detection result from the worker thread or from the app's own hand model
+  wkBusy = false; wkFirst = false; wkStall = 0; D.ms += ((performance.now() - wkSent) - D.ms) * 0.2; if (m.inf !== undefined) D.inf += (m.inf - D.inf) * 0.2;
+  const tn = performance.now();
+  if (P.two && wkHas2 && m.mode === 'B'){                             // two hands present: stay on the two-hand model; otherwise fall back to the fast one-hand model
+    if ((m.lms || []).length >= 2){ wkTwo = true; wkTwoAt = tn; }
+    else if (wkTwo && tn - wkTwoAt > 1200) wkTwo = false;
+  }
+  if (wkInfo) applyDetect(m.lms || [], tn, wkInfo);
+}
+// ----- experimental: the hand model runs inside the APK itself (MediaPipe's Android library); the page only sends small pictures -----
+let wkNative = false, nhFail = 0, nhOff = false;
+async function nativeStart(d){
+  const r = await nativeCall('nh_init', {delegate:d, hands:P.two ? 2 : 1}, 40000);
+  if (!r.ok) throw new Error('native ' + d + ': ' + (typeof r.data === 'string' ? r.data : 'ไม่ตอบ'));
+  wkHas2 = !!(r.data && r.data.two); wkNative = true; nhFail = 0;
+}
+function nativeDetect(now, mode){
+  const jpg = detCv.toDataURL('image/jpeg', 0.8).slice(23);          // small picture as JPEG text (strip "data:image/jpeg;base64,")
+  nativeCall('nh_det', {jpg, ts:Math.round(now), mode}, 6000).then(r => {
+    if (!wkNative) return;
+    if (r.ok && r.data && r.data.lms){ nhFail = 0; wkOnRes(r.data); }
+    else { wkBusy = false; if (++nhFail >= 6){ nhOff = true; showToast('ตัวตรวจเนทีฟใช้ไม่ได้ (' + String(r.data || '').slice(0, 50) + ') กลับไปใช้แบบเดิม', 5000); reinitHands(); } }
+  });
+}
 function wkStart(d){
   return new Promise((res, rej) => {
     let done = false;
     const fail = m => { if (!done){ done = true; rej(new Error(m)); } };
     try{
-      wk = new Worker(URL.createObjectURL(new Blob([WK_SRC], {type:'text/javascript'})));        // a classic worker: the model's loader needs importScripts
+      wkUrl = URL.createObjectURL(new Blob([WK_SRC], {type:'text/javascript'})); wk = new Worker(wkUrl);        // a classic worker: the model's loader needs importScripts
     }catch(e){ fail('no worker'); return; }
     const base = new URL(mpLocal ? 'mp/' : MP_CDN + '/', location.href).href.replace(/\/$/, '');
     wk.onerror = e => fail('worker error ' + (e && e.message || ''));
@@ -1728,15 +1761,7 @@ function wkStart(d){
       const m = e.data;
       if (m.t === 'ready'){ wkHas2 = !!m.two; if (!done){ done = true; res(); } }
       else if (m.t === 'fail') fail(m.e);
-      else if (m.t === 'res'){
-        wkBusy = false; D.ms += ((performance.now() - wkSent) - D.ms) * 0.2; if (m.inf !== undefined) D.inf += (m.inf - D.inf) * 0.2;
-        const tn = performance.now();
-        if (P.two && wkHas2 && m.mode === 'B'){                       // two hands present: stay on the two-hand model; otherwise fall back to the fast one-hand model
-          if ((m.lms || []).length >= 2){ wkTwo = true; wkTwoAt = tn; }
-          else if (wkTwo && tn - wkTwoAt > 1200) wkTwo = false;
-        }
-        if (wkInfo) applyDetect(m.lms || [], tn, wkInfo);
-      }
+      else if (m.t === 'res') wkOnRes(m);
     };
     wk.postMessage({t:'init', bundle:base + '/vision_bundle.mjs', wasm:base + '/wasm',
       model:mpLocal ? new URL('mp/hand_landmarker.task', location.href).href : MP_MODEL_CDN, delegate:d, hands:P.two ? 2 : 1});
@@ -1761,8 +1786,17 @@ function roiBox(sw, sh){
   return roiPrev;
 }
 function updateHands(now){
+  if (document.hidden) return;                         // app in the background: no camera work
   if (!(landmarker || wkOn) || !S.cam || video.readyState < 2 || video.currentTime === lastVT) return;
-  if (wkBusy){ if (now - wkSent > 4000){ showToast('เธรดแยกค้าง กลับไปใช้แบบปกติ', 4000); P.wk = 0; savePrefs(); reinitHands(); } return; }
+  if (wkBusy){
+    if (now - wkSent > (wkFirst ? 25000 : 6000)){        // the very first picture takes long (model + graphics start-up): wait much longer before calling it stuck
+      wkStall++; wkStop();
+      if (wkStall <= 2) showToast('เธรดแยกช้า กำลังเริ่มใหม่ (' + wkStall + ')', 3000);
+      else { wkOffNow = true; showToast('เธรดแยกค้างหลายครั้ง ใช้แบบปกติจนกว่าจะเปิดแอปใหม่ (การตั้งค่าไม่ถูกเปลี่ยน)', 5000); }
+      reinitHands();
+    }
+    return;
+  }
   detGap = wkOn ? RATE_MS[P.rate] : Math.max(RATE_MS[P.rate], D.ms * 2.2);   // keep detection under ~45% of the frame budget
   if (HANDS[0].ok || HANDS[1].ok) lastHandSeen = now;
   else if (now - lastHandSeen > 2500) detGap = Math.max(detGap, 120);          // nobody is using the hands: look about 8 times a second to save battery and CPU (a hand is found again within a moment)
@@ -1783,6 +1817,7 @@ function updateHands(now){
     let mode = 'A';
     if (P.two && wkHas2){ if (wkTwo) mode = 'B'; else if (++wkProbeN >= 8){ wkProbeN = 0; mode = 'B'; } }   // every 8th look uses the two-hand model to find a second hand
     wkMode = mode;
+    if (wkNative){ nativeDetect(now, mode); return; }
     createImageBitmap(detCv).then(b => { if (wk) wk.postMessage({t:'frame', bmp:b, ts:now, mode}, [b]); else b.close(); }).catch(() => { wkBusy = false; });
     return;
   }
@@ -2394,8 +2429,13 @@ function render(){
 }
 let last = 0, fpsN = 0, fpsT = 0, lowT = 0, lastRenderT = 0, upT = 0, lastQ = 0, lastRaise = 0, dN = 0;
 const _vf = new THREE.Vector3(), _vw = new THREE.Vector3();
+let errN = 0, errMsg = '';
+function sf(fn, a, b){ try{ fn(a, b); }catch(e){ errN++; errMsg = (fn.name || 'fn') + ': ' + (e && e.message || e); if (errN === 1) showToast('มีข้อผิดพลาดในโปรแกรม: ' + errMsg.slice(0, 60), 4000); } }
 function frame(now){
   requestAnimationFrame(frame);
+  try{ frameBody(now); }catch(e){ errN++; errMsg = 'frame: ' + (e && e.message || e); }
+}
+function frameBody(now){
   const dt = Math.min((now - last)/1000, 0.1); last = now;
   if (N.webOpen && !N.webFloat) return;                 // the browser overlay covers the scene: pause the 3D work
   updateHead(dt);
@@ -2403,11 +2443,11 @@ function frame(now){
   updateVignette(dt);
   updateLight(now);
   if (N.boosting && S.mr && video.currentTime !== N.drawnVT) boostFrame();
-  updateHands(now);
+  sf(updateHands, now);
   easeCursor(dt);
-  interact(now, dt);
+  sf(interact, now, dt);
   syncPanelGeo();
-  updateHandViz(0); updateHandViz(1);
+  sf(updateHandViz, 0); sf(updateHandViz, 1);
   if (toast.mesh.visible){
     if (now > N.msgUntil) toast.mesh.visible = false;
     else toast.mesh.position.set(0, dock.mesh.position.y + 0.24, -DOCK_R + 0.02);
@@ -2446,12 +2486,12 @@ function frame(now){
     galleryItems.forEach(m => { m.rotation.y += dt*m.userData.spd; m.rotation.x += dt*0.3*m.userData.spd; });
   }
   const capF = (P.pri && wkOn && (HANDS[0].ok || HANDS[1].ok)) ? PRI_FPS[P.pri] : 0;     // hands in view: draw fewer pictures so the graphics chip has time left for the hand model
-  if (!capF || now - lastRenderT >= 1000 / capF - 4){ lastRenderT = now; render(); }
+  if (!capF || now - lastRenderT >= 1000 / capF - 4){ lastRenderT = now; sf(render); }
   if (now - winChk > 2000){ winChk = now; saveWins(); }
 
   fpsN++; fpsT += dt;
   if (fpsT > 0.5){
-    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? '+เธรดแยก' + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + ')' : '') + 'ms/' + D.hz.toFixed(1) + 'Hz จริง)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '');
+    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? (wkNative ? '+เนทีฟ' : '+เธรดแยก') + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + ')' : '') + 'ms/' + D.hz.toFixed(1) + 'Hz จริง)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '') + (errN ? '\n⚠ error x' + errN + ' ' + errMsg.slice(0, 70) : '');
     const fpsNow = fpsN/fpsT;
     D.hz = dN / fpsT; dN = 0;                                                      // detections per second that really happened
     const nowMs = performance.now();
