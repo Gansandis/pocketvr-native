@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.67';
+const VERSION = 'v3.68';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1741,6 +1741,7 @@ async function nativeStart(d){
   wkHas2 = !!(r.data && r.data.two); wkNative = true; nhFail = 0; nhIn = 0; nhPace = 140;
 }
 const NH_DEPTH = 2;                                                  // pictures allowed on the way at once: 2 raised detections to 13 Hz but the graphics chip never rested and the screen fell to 31 fps
+let handSpd = 0;
 let nhPace = 140;                                                    // shortest time between two pictures sent to the app (ms): follows the screen's fps, shorter while the screen is smooth, longer when it starts to drop
 let nhIn = 0;                                                        // pictures sent to the app and not answered yet (two may be on the way, so the model never sits idle)
 function nativeDetect(now, mode, info, t0){
@@ -2030,6 +2031,9 @@ const OL_N = 448;
 const GRP_W = [0.130, 0.125, 0.130, 0.125, 0.105];      // finger thickness (fraction of palm length), one value per finger so the edge stays smooth
 const _ol = Array.from({length:21}, () => ({x:0, y:0}));
 function drawOutline(v, hs, D, flat, col, glow, ppu){
+  const tp = performance.now(); drawOutlineIn(v, hs, D, flat, col, glow, ppu); pfAdd('outline', performance.now() - tp);
+}
+function drawOutlineIn(v, hs, D, flat, col, glow, ppu){
   const tn = performance.now(); if (tn - (v.olAt || 0) < 33) return;          // the picture is redrawn at most about 30 times a second (canvas work is costly on a phone)
   for (let k = 0; k < 21; k++){ const q = _ol[k], z = flat ? D : Math.max(0.2, -hs[k].z); q.x = hs[k].x * D / z; q.y = hs[k].y * D / z; }
   const palm = Math.hypot(_ol[0].x - _ol[9].x, _ol[0].y - _ol[9].y) || 0.05;
@@ -2110,6 +2114,7 @@ function updateHandViz(i){
       v.mx[k] = mx; v.my[k] = my;
     }
     v.palmM = Math.hypot(v.mx[0] - v.mx[9], v.my[0] - v.my[9]) || 0.2;
+    v.spd = (v.spd || 0) * 0.6 + (Math.hypot(v.vx[9], v.vy[9]) / v.palmM) * 0.4;      // how fast the palm moves, in palm sizes per second
     v.lastLm = h.lm; v.tMeas = tNow;
   }
   const lead = Math.min(0.30, (tNow - v.tMeas) / 1000 + Math.max(0.05, Math.min(0.2, DET.ms / 1000 * 0.9)));   // the result describes the hand as it was one detection ago: look ahead by about that much          // draw where the hand probably is NOW (detections arrive late), not where it was
@@ -2435,10 +2440,14 @@ function render(){
 let last = 0, fpsN = 0, fpsT = 0, lowT = 0, lastRenderT = 0, upT = 0, lastQ = 0, lastRaise = 0, dN = 0;
 const _vf = new THREE.Vector3(), _vw = new THREE.Vector3();
 let errN = 0, errMsg = '';
-function sf(fn, a, b){ try{ fn(a, b); }catch(e){ errN++; errMsg = (fn.name || 'fn') + ': ' + (e && e.message || e); if (errN === 1) showToast('มีข้อผิดพลาดในโปรแกรม: ' + errMsg.slice(0, 60), 4000); } }
+const PF = {};                                                       // where the time of a frame goes (smoothed, ms) - shown on the HUD
+function pfAdd(k, t){ PF[k] = (PF[k] || 0) * 0.92 + t * 0.08; }
+function sf(fn, a, b){ const t0 = performance.now(); try{ fn(a, b); pfAdd(fn.name || 'fn', performance.now() - t0); }catch(e){ errN++; errMsg = (fn.name || 'fn') + ': ' + (e && e.message || e); if (errN === 1) showToast('มีข้อผิดพลาดในโปรแกรม: ' + errMsg.slice(0, 60), 4000); } }
 function frame(now){
   requestAnimationFrame(frame);
+  const t0 = performance.now();
   try{ frameBody(now); }catch(e){ errN++; errMsg = 'frame: ' + (e && e.message || e); }
+  pfAdd('total', performance.now() - t0);
 }
 function frameBody(now){
   const dt = Math.min((now - last)/1000, 0.1); last = now;
@@ -2481,7 +2490,7 @@ function frameBody(now){
   }
   for (let i = -3; i < wins.length; i++){
     const u = i === -3 ? panel : (i === -2 ? dock : (i === -1 ? toast : wins[i].ui));
-    if (u.dirty && u.mesh.visible && (!u.win || u.win.inView !== false) && now - (u.lastDraw || 0) > 90){ u.lastDraw = now; u.redraw(); }
+    if (u.dirty && u.mesh.visible && (!u.win || u.win.inView !== false) && now - (u.lastDraw || 0) > 90){ u.lastDraw = now; const tu = performance.now(); u.redraw(); pfAdd('ui', performance.now() - tu); }
   }
 
   if (S.mode === 'shoot'){
@@ -2496,9 +2505,15 @@ function frameBody(now){
 
   fpsN++; fpsT += dt;
   if (fpsT > 0.5){
-    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? (wkNative ? '+เนทีฟ' : '+เธรดแยก') + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + (wkNative ? ' +ถอดภาพ ' + D.dec.toFixed(0) + ' ส่งทุก ' + nhPace : '') + ')' : '') + 'ms/' + D.hz.toFixed(1) + 'Hz จริง)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '') + (errN ? '\n⚠ error x' + errN + ' ' + errMsg.slice(0, 70) : '');
+    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? (wkNative ? '+เนทีฟ' : '+เธรดแยก') + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + (wkNative ? ' +ถอดภาพ ' + D.dec.toFixed(0) + ' ส่งทุก ' + nhPace : '') + ')' : '') + 'ms/' + D.hz.toFixed(1) + 'Hz จริง)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nเวลา/เฟรม JS ' + (PF.total || 0).toFixed(1) + 'ms | วาด ' + (PF.render || 0).toFixed(1) + ' | มือ ' + (PF.updateHandViz || 0).toFixed(1) + ' (เส้น ' + (PF.outline || 0).toFixed(1) + ') | ตรวจ ' + (PF.updateHands || 0).toFixed(1) + ' | UI ' + (PF.ui || 0).toFixed(1) + ' | เร็วมือ ' + handSpd.toFixed(2) + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '') + (errN ? '\n⚠ error x' + errN + ' ' + errMsg.slice(0, 70) : '');
     const fpsNow = fpsN/fpsT;
-    if (wkNative){ if (fpsNow < 48) nhPace = Math.min(150, nhPace + 15); else if (fpsNow >= 55) nhPace = Math.max(70, nhPace - 4); }
+    handSpd = Math.max(HANDS[0].ok ? (VIZ[0].spd || 0) : 0, HANDS[1].ok ? (VIZ[1].spd || 0) : 0);
+    if (wkNative){
+      const lo = handSpd < 0.15 ? 170 : (handSpd < 0.5 ? 100 : 70);               // a still hand needs fewer looks; a fast hand needs many
+      if (fpsNow < 48) nhPace = Math.min(200, nhPace + 15);
+      else if (fpsNow >= 55) nhPace = Math.max(lo, nhPace - (handSpd >= 0.5 ? 12 : 4));
+      if (nhPace < lo) nhPace = lo;
+    }
     D.hz = dN / fpsT; dN = 0;                                                      // detections per second that really happened
     const nowMs = performance.now();
     if (fpsNow < 20 && S.qi > (S.stereo ? 1 : 0) && S.cam !== undefined){
