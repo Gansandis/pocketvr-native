@@ -7,5 +7,6 @@ public class NativeHands {
     public interface Cb { void done(boolean ok, Object data); }
     public void init(Context ctx, String delegate, int hands, Cb cb) { cb.done(false, "ไม่มีตัวตรวจเนทีฟในแอปนี้"); }
     public void detect(String jpgBase64, long ts, String mode, Cb cb) { cb.done(false, "ไม่มีตัวตรวจเนทีฟในแอปนี้"); }
+    public org.json.JSONObject thermal(Context ctx) { return new org.json.JSONObject(); }
     public void close() { }
 }
