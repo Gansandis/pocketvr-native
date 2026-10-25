@@ -206,7 +206,7 @@ public class MainActivity extends Activity {
         } else if ("nh_init".equals(op)) {
             nh.init(getApplicationContext(), req.optString("delegate"), req.optInt("hands"), (ok, data) -> respond(reply, id, ok, data));
         } else if ("nh_therm".equals(op)) {
-            respond(reply, id, true, nh.thermal(getApplicationContext()));
+            respond(reply, id, true, thermalInfo());
         } else if ("nh_det".equals(op)) {
             nh.detect(req.optString("jpg"), req.optLong("ts"), req.optString("mode"), (ok, data) -> respond(reply, id, ok, data));
         } else if (op.startsWith("nb_")) {
@@ -223,6 +223,21 @@ public class MainActivity extends Activity {
         } else {
             respond(reply, id, false, null);
         }
+    }
+
+    /** Phone heat: battery temperature (deg C) and, on Android 10+, the system's heat level (0 none ... 6 shutdown). */
+    private JSONObject thermalInfo() {
+        JSONObject o = new JSONObject();
+        try {
+            Intent i = registerReceiver(null, new android.content.IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            if (i != null) o.put("bat", i.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) / 10.0);
+            if (Build.VERSION.SDK_INT >= 29) {
+                android.os.PowerManager pm = (android.os.PowerManager) getSystemService(POWER_SERVICE);
+                if (pm != null) o.put("st", pm.getCurrentThermalStatus());
+            }
+        } catch (Throwable ignored) {
+        }
+        return o;
     }
 
     private void respond(final JavaScriptReplyProxy reply, int id, boolean ok, Object data) {
