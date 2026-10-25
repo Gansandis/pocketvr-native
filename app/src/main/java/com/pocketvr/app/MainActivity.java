@@ -205,6 +205,8 @@ public class MainActivity extends Activity {
             respond(reply, id, true, txt);
         } else if ("nh_init".equals(op)) {
             nh.init(getApplicationContext(), req.optString("delegate"), req.optInt("hands"), (ok, data) -> respond(reply, id, ok, data));
+        } else if ("nh_therm".equals(op)) {
+            respond(reply, id, true, nh.thermal(getApplicationContext()));
         } else if ("nh_det".equals(op)) {
             nh.detect(req.optString("jpg"), req.optLong("ts"), req.optString("mode"), (ok, data) -> respond(reply, id, ok, data));
         } else if (op.startsWith("nb_")) {
