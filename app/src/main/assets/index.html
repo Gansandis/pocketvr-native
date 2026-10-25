@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.64';
+const VERSION = 'v3.65';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1554,7 +1554,7 @@ function recenterHeading(){
 let videoTex = null, landmarker = null, lastVT = -1, frameN = 0, delegate = '-';
 function newHand(){ return {ok:false, x:0, y:0, tx:0, ty:0, px:0, py:0, ptx:0, pty:0, pinch:false, pinchRaw:false, pk:null, fist:false, lastSeen:0, lm:null, a:null, pp:null, n:0, F:null}; }
 let H = null, F = null, HANDS = [], ZM = null, ZC = null;   // H / F always point at the hand currently being processed
-const D = {ms:0, inf:0, hz:0};
+const D = {ms:0, inf:0, hz:0, dec:0};
 const DET = D;                  // the detection timings (a local variable named D elsewhere is a distance, so this name is used where both are needed)
 let qiCap = null;               // picture quality the auto scaler may climb back to (null = the user's own choice, nothing to restore)              // average time of one hand detection (ms)
 let lastDet = 0, detGap = 0;
@@ -1738,13 +1738,16 @@ let wkNative = false, nhFail = 0, nhOff = false;
 async function nativeStart(d){
   const r = await nativeCall('nh_init', {delegate:d, hands:P.two ? 2 : 1}, 40000);
   if (!r.ok) throw new Error('native ' + d + ': ' + (typeof r.data === 'string' ? r.data : 'ไม่ตอบ'));
-  wkHas2 = !!(r.data && r.data.two); wkNative = true; nhFail = 0;
+  wkHas2 = !!(r.data && r.data.two); wkNative = true; nhFail = 0; nhIn = 0;
 }
-function nativeDetect(now, mode){
-  const jpg = detCv.toDataURL('image/jpeg', 0.8).slice(23);          // small picture as JPEG text (strip "data:image/jpeg;base64,")
+let nhIn = 0;                                                        // pictures sent to the app and not answered yet (two may be on the way, so the model never sits idle)
+function nativeDetect(now, mode, info, t0){
+  const jpg = detCv.toDataURL('image/jpeg', 0.7).slice(23);          // small picture as JPEG text (strip "data:image/jpeg;base64,")
+  nhIn++; if (nhIn < 2) wkBusy = false;
   nativeCall('nh_det', {jpg, ts:Math.round(now), mode}, 6000).then(r => {
+    nhIn = Math.max(0, nhIn - 1);
     if (!wkNative) return;
-    if (r.ok && r.data && r.data.lms){ nhFail = 0; wkOnRes(r.data); }
+    if (r.ok && r.data && r.data.lms){ nhFail = 0; wkSent = t0; wkInfo = info; if (r.data.dec !== undefined) D.dec += (r.data.dec - D.dec) * 0.2; wkOnRes(r.data); }
     else { wkBusy = false; if (++nhFail >= 6){ nhOff = true; showToast('ตัวตรวจเนทีฟใช้ไม่ได้ (' + String(r.data || '').slice(0, 50) + ') กลับไปใช้แบบเดิม', 5000); reinitHands(); } }
   });
 }
@@ -1817,7 +1820,7 @@ function updateHands(now){
     let mode = 'A';
     if (P.two && wkHas2){ if (wkTwo) mode = 'B'; else if (++wkProbeN >= 8){ wkProbeN = 0; mode = 'B'; } }   // every 8th look uses the two-hand model to find a second hand
     wkMode = mode;
-    if (wkNative){ nativeDetect(now, mode); return; }
+    if (wkNative){ nativeDetect(now, mode, info, t0); return; }
     createImageBitmap(detCv).then(b => { if (wk) wk.postMessage({t:'frame', bmp:b, ts:now, mode}, [b]); else b.close(); }).catch(() => { wkBusy = false; });
     return;
   }
@@ -2491,7 +2494,7 @@ function frameBody(now){
 
   fpsN++; fpsT += dt;
   if (fpsT > 0.5){
-    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? (wkNative ? '+เนทีฟ' : '+เธรดแยก') + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + ')' : '') + 'ms/' + D.hz.toFixed(1) + 'Hz จริง)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '') + (errN ? '\n⚠ error x' + errN + ' ' + errMsg.slice(0, 70) : '');
+    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? (wkNative ? '+เนทีฟ' : '+เธรดแยก') + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + (wkNative ? ' +ถอดภาพ ' + D.dec.toFixed(0) : '') + ')' : '') + 'ms/' + D.hz.toFixed(1) + 'Hz จริง)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '') + (errN ? '\n⚠ error x' + errN + ' ' + errMsg.slice(0, 70) : '');
     const fpsNow = fpsN/fpsT;
     D.hz = dN / fpsT; dN = 0;                                                      // detections per second that really happened
     const nowMs = performance.now();
