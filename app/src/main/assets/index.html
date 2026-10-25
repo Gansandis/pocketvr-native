@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.66';
+const VERSION = 'v3.67';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1738,9 +1738,10 @@ let wkNative = false, nhFail = 0, nhOff = false;
 async function nativeStart(d){
   const r = await nativeCall('nh_init', {delegate:d, hands:P.two ? 2 : 1}, 40000);
   if (!r.ok) throw new Error('native ' + d + ': ' + (typeof r.data === 'string' ? r.data : 'ไม่ตอบ'));
-  wkHas2 = !!(r.data && r.data.two); wkNative = true; nhFail = 0; nhIn = 0;
+  wkHas2 = !!(r.data && r.data.two); wkNative = true; nhFail = 0; nhIn = 0; nhPace = 140;
 }
-const NH_DEPTH = 1;                                                  // pictures allowed on the way at once: 2 raised detections to 13 Hz but the graphics chip never rested and the screen fell to 31 fps
+const NH_DEPTH = 2;                                                  // pictures allowed on the way at once: 2 raised detections to 13 Hz but the graphics chip never rested and the screen fell to 31 fps
+let nhPace = 140;                                                    // shortest time between two pictures sent to the app (ms): follows the screen's fps, shorter while the screen is smooth, longer when it starts to drop
 let nhIn = 0;                                                        // pictures sent to the app and not answered yet (two may be on the way, so the model never sits idle)
 function nativeDetect(now, mode, info, t0){
   const jpg = detCv.toDataURL('image/jpeg', 0.7).slice(23);          // small picture as JPEG text (strip "data:image/jpeg;base64,")
@@ -1801,7 +1802,7 @@ function updateHands(now){
     }
     return;
   }
-  detGap = wkOn ? RATE_MS[P.rate] : Math.max(RATE_MS[P.rate], D.ms * 2.2);   // keep detection under ~45% of the frame budget
+  detGap = wkOn ? (wkNative ? Math.max(RATE_MS[P.rate], nhPace) : RATE_MS[P.rate]) : Math.max(RATE_MS[P.rate], D.ms * 2.2);   // keep detection under ~45% of the frame budget
   if (HANDS[0].ok || HANDS[1].ok) lastHandSeen = now;
   else if (now - lastHandSeen > 2500) detGap = Math.max(detGap, 120);          // nobody is using the hands: look about 8 times a second to save battery and CPU (a hand is found again within a moment)
   if (now - lastDet < detGap) return;
@@ -2495,8 +2496,9 @@ function frameBody(now){
 
   fpsN++; fpsT += dt;
   if (fpsT > 0.5){
-    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? (wkNative ? '+เนทีฟ' : '+เธรดแยก') + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + (wkNative ? ' +ถอดภาพ ' + D.dec.toFixed(0) : '') + ')' : '') + 'ms/' + D.hz.toFixed(1) + 'Hz จริง)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '') + (errN ? '\n⚠ error x' + errN + ' ' + errMsg.slice(0, 70) : '');
+    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? (wkNative ? '+เนทีฟ' : '+เธรดแยก') + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + (wkNative ? ' +ถอดภาพ ' + D.dec.toFixed(0) + ' ส่งทุก ' + nhPace : '') + ')' : '') + 'ms/' + D.hz.toFixed(1) + 'Hz จริง)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '') + (errN ? '\n⚠ error x' + errN + ' ' + errMsg.slice(0, 70) : '');
     const fpsNow = fpsN/fpsT;
+    if (wkNative){ if (fpsNow < 48) nhPace = Math.min(150, nhPace + 15); else if (fpsNow >= 55) nhPace = Math.max(70, nhPace - 4); }
     D.hz = dN / fpsT; dN = 0;                                                      // detections per second that really happened
     const nowMs = performance.now();
     if (fpsNow < 20 && S.qi > (S.stereo ? 1 : 0) && S.cam !== undefined){
