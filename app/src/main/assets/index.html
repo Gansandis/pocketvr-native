@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.69';
+const VERSION = 'v3.70';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1559,7 +1559,7 @@ const DET = D;                  // the detection timings (a local variable named
 let qiCap = null;               // picture quality the auto scaler may climb back to (null = the user's own choice, nothing to restore)              // average time of one hand detection (ms)
 let lastDet = 0, detGap = 0;
 const detCv = document.createElement('canvas'); detCv.width = 384; detCv.height = 216;
-const dctx = detCv.getContext('2d', {willReadFrequently:true});     // this picture is read back every time (sent to the hand model): keep it in normal memory, not on the graphics chip, so reading it does not make the screen wait
+const dctx = detCv.getContext('2d');                          // (tried keeping this picture in normal memory: copying the camera picture into it then took 50 ms, so it stays on the graphics chip)
 // One-Euro filter: smooth when the hand is slow, responsive when it moves fast
 class OneEuro{
   constructor(){ this.x = null; this.dx = 0; this.t = 0; }
