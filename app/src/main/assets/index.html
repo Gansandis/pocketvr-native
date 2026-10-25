@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.56';
+const VERSION = 'v3.57';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -275,7 +275,7 @@ function cycleCQ(){
 function cycleCF(){ S.cfI = (S.cfI + 1) % CAMFOVS.length; savePrefs(); invalidateUI(); showToast('มุมกล้องจริง ' + CAMFOVS[S.cfI] + '° (ปรับจนภาพจริงขนาดตรงกับตาเห็น)', 4000); }
 function cycleVF(){ S.vfI = (S.vfI + 1) % VFOVS.length; savePrefs(); resize(); refreshBackground(); invalidateUI(); showToast('มุมมอง VR ' + VFOVS[S.vfI] + '°', 3000); }
 function cycleIPD(){ S.ipd = IPDS[(IPDS.indexOf(S.ipd)+1) % IPDS.length]; savePrefs(); invalidateUI(); }
-function cycleQuality(){ S.qi = (S.qi + 1) % QUAL.length; applyQuality(); savePrefs(); invalidateUI(); }
+function cycleQuality(){ qiCap = null; S.qi = (S.qi + 1) % QUAL.length; applyQuality(); savePrefs(); invalidateUI(); }
 function zoomPanel(f){ S.pscale = clamp(S.pscale*f, PS_MIN, PS_MAX); }
 function showToast(msg, ms){
   N.msg = msg; N.msgUntil = performance.now() + (ms || 3500);
@@ -414,7 +414,13 @@ function speedTest(ms){
     finishSpeedTest();
   } else finishSpeedTest();
 }
-async function reinitHands(){
+let hRun = false, hAgain = false;
+async function reinitHands(){                            // changes made while it is running are applied once after it, never two startups at once
+  if (hRun){ hAgain = true; return; }
+  hRun = true;
+  try{ do{ hAgain = false; await reinitHandsRun(); }while(hAgain); } finally{ hRun = false; }
+}
+async function reinitHandsRun(){
   wkStop();
   try{ if (landmarker){ landmarker.close(); landmarker = null; } }catch(e){ landmarker = null; }
   HANDS.forEach(h => { h.ok = false; h.lm = null; h.pinch = false; h.pinchRaw = false; h.fist = false; h.pp = null; }); ZM = null; ZC = null;
@@ -422,7 +428,7 @@ async function reinitHands(){
   invalidateUI();
 }
 function resetSettings(){
-  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1});
+  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1, pri:1});
   S.qi = 1; N.mode = 1; S.ipd = 0.063; S.sep = 0.08; S.ptI = 3; S.cfI = 2; S.vfI = 2; N.lastProbe = 0;
   applyQuality(); savePrefs(); invalidateUI(); showToast('รีเซ็ตการตั้งค่าแล้ว', 2500);
   reinitHands();
@@ -907,8 +913,9 @@ async function pollNweb(now){
     NB.err = r.ok ? '' : 'HTTP ' + r.status;
     if (r.ok){
       const bmp = await createImageBitmap(await r.blob());
-      if (NB.cv.width !== bmp.width || NB.cv.height !== bmp.height){ NB.cv.width = bmp.width; NB.cv.height = bmp.height; }
-      NB.ctx.drawImage(bmp, 0, 0); if (bmp.close) bmp.close();
+      // a smaller picture (the page is out of sight) is stretched onto the same canvas: the texture keeps its size, nothing is reallocated
+      if (bmp.width > NB.cv.width || Math.abs(bmp.width / bmp.height - NB.cv.width / NB.cv.height) > 0.02){ NB.cv.width = bmp.width; NB.cv.height = bmp.height; }
+      NB.ctx.drawImage(bmp, 0, 0, NB.cv.width, NB.cv.height); if (bmp.close) bmp.close();
       NB.tex.needsUpdate = true;
       if (!NB.have){ NB.have = true; wins.forEach(w => { if (w.type === 'nweb') w.ui.dirty = true; }); }
     }
@@ -1088,6 +1095,31 @@ function createWin(type){
   win.ui.mesh.visible = winVisible(win);
   invalidateUI();
   return win;
+}
+const RESTORE_T = ['cam', 'clock', 'calc'];            // simple windows come back after the app is reopened (the browser / keyboard need a fresh start)
+let winSig = '', winChk = 0, winRestored = false;
+function saveWins(){
+  if (!winRestored) return;
+  try{
+    const l = wins.filter(w => RESTORE_T.includes(w.type)).map(w => ({t:w.type, yaw:+w.pivot.rotation.y.toFixed(3), y:+w.ui.mesh.position.y.toFixed(3), s:+w.s.toFixed(2), slot:w.slot}));
+    const j = JSON.stringify(l); if (j !== winSig){ winSig = j; localStorage.setItem('pvr_wins', j); }
+  }catch(e){}
+}
+function restoreWins(){
+  try{
+    const l = JSON.parse(localStorage.getItem('pvr_wins') || '[]'); let n = 0;
+    for (const o of l){
+      if (!o || !RESTORE_T.includes(o.t) || winOpen(o.t)) continue;
+      const w = createWin(o.t); if (!w) continue;
+      if (isFinite(o.yaw)) w.pivot.rotation.y = o.yaw;
+      if (isFinite(o.y)) w.ui.mesh.position.y = o.y;
+      if (o.s > 0.3 && o.s < 3){ w.s = o.s; w.ui.mesh.scale.setScalar(o.s); }
+      if (isFinite(o.slot)) w.slot = o.slot;
+      n++;
+    }
+    if (n) showToast('กู้หน้าต่างเดิม ' + n + ' อัน', 2500);
+  }catch(e){}
+  winRestored = true;
 }
 function closeWin(win){
   if (win.type === 'kb'){ KB.cb = null; KB.text = ''; }
@@ -1465,7 +1497,8 @@ function recenterHeading(){
 let videoTex = null, landmarker = null, lastVT = -1, frameN = 0, delegate = '-';
 function newHand(){ return {ok:false, x:0, y:0, tx:0, ty:0, px:0, py:0, ptx:0, pty:0, pinch:false, pinchRaw:false, pk:null, fist:false, lastSeen:0, lm:null, a:null, pp:null, n:0, F:null}; }
 let H = null, F = null, HANDS = [], ZM = null, ZC = null;   // H / F always point at the hand currently being processed
-const D = {ms:0, inf:0};              // average time of one hand detection (ms)
+const D = {ms:0, inf:0, hz:0};
+let qiCap = null;               // picture quality the auto scaler may climb back to (null = the user's own choice, nothing to restore)              // average time of one hand detection (ms)
 let lastDet = 0, detGap = 0;
 const detCv = document.createElement('canvas'); detCv.width = 384; detCv.height = 216;
 const dctx = detCv.getContext('2d');
@@ -1494,12 +1527,17 @@ function easeCursor(dt){
     h.px += (h.ptx - h.px)*k; h.py += (h.pty - h.py)*k;
   });
 }
+let camBusy = false;
 async function initCamera(){
+  if (camBusy) return;                                   // never two camera starts at the same time
+  camBusy = true;
   let caps0 = null;
   try{
+    try{ if (video.srcObject) video.srcObject.getTracks().forEach(t => t.stop()); }catch(e){}   // release the old stream first: no leftover cameras running
     const stream = await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'}, width:{ideal:CQS[S.cqI][0]}, height:{ideal:CQS[S.cqI][1]}, frameRate:{ideal:CAMFPS[P.camfps], min:15}}, audio:false});
     video.srcObject = stream; await video.play();
     N.track = stream.getVideoTracks()[0];
+    N.track.onended = () => { if (S.cam) showToast('กล้องหยุดทำงาน (ถูกแอปอื่นใช้อยู่?) กลับมาที่แอปเพื่อเปิดใหม่', 6000); };
     try{
       const caps = N.track.getCapabilities ? N.track.getCapabilities() : {}; caps0 = caps;
       N.torchOK = !!caps.torch;
@@ -1518,10 +1556,17 @@ async function initCamera(){
     try{ if (caps0 && caps0.focusMode && caps0.focusMode.includes('continuous')) await N.track.applyConstraints({advanced:[{focusMode:'continuous'}]}); }catch(e){}   // keep the picture sharp as things move
     S.cam = true;
     N.torchOn = false; applyTorch();
-  }catch(e){ const m = $('msg'); if (m) m.textContent = 'เปิดกล้องไม่ได้: ' + e.message; }
+  }catch(e){ const m = $('msg'); if (m) m.textContent = 'เปิดกล้องไม่ได้: ' + e.message; showToast('เปิดกล้องไม่ได้: ' + String(e && e.message || e).slice(0, 60), 6000); }
+  finally{ camBusy = false; }
 }
 let initErr = '';
 async function initHands(){
+  showToast('กำลังโหลดโมเดลตามมือ…', 2500);
+  await initHandsRun();
+  if (delegate === 'fail') showToast('โหลดโมเดลตามมือไม่ได้ — ใช้แตะหน้าจอหรือมองค้างแทน', 7000);
+  else showToast('พร้อมตามมือ (' + delegate + (wkOn ? ' แยกเธรด' : '') + ')', 2500);
+}
+async function initHandsRun(){
   delegate = '-'; initErr = '';
   try{
     await loadMediaPipe();
@@ -1691,6 +1736,8 @@ function updateHands(now){
   applyDetect(r.landmarks || [], now, info);
 }
 function applyDetect(lmsRaw, now, info){
+  dN++;
+  if (lmsRaw.length && !N.handSeen){ N.handSeen = true; showToast('เจอมือแล้ว', 1500); }
   let lms = lmsRaw;
   if (info.box){                                       // landmarks are relative to the crop: map them back to the whole picture
     const b = info.box, sw = info.sw, sh = info.sh;
@@ -2283,7 +2330,7 @@ function render(){
     renderer.setViewport(0, 0, w, h); renderer.render(scene, camera);
   }
 }
-let last = 0, fpsN = 0, fpsT = 0, lowT = 0, lastRenderT = 0;
+let last = 0, fpsN = 0, fpsT = 0, lowT = 0, lastRenderT = 0, upT = 0, lastQ = 0, lastRaise = 0, dN = 0;
 const _vf = new THREE.Vector3(), _vw = new THREE.Vector3();
 function frame(now){
   requestAnimationFrame(frame);
@@ -2338,12 +2385,28 @@ function frame(now){
   }
   const capF = (P.pri && wkOn && (HANDS[0].ok || HANDS[1].ok)) ? PRI_FPS[P.pri] : 0;     // hands in view: draw fewer pictures so the graphics chip has time left for the hand model
   if (!capF || now - lastRenderT >= 1000 / capF - 4){ lastRenderT = now; render(); }
+  if (now - winChk > 2000){ winChk = now; saveWins(); }
 
   fpsN++; fpsT += dt;
   if (fpsT > 0.5){
-    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? '+เธรดแยก' + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + ')' : '') + 'ms/' + (detGap ? Math.round(1000/Math.max(detGap,1)) : 0) + 'Hz)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '');
+    hud.textContent = VERSION + (NATIVE.ok ? '-apk' : '') + ' | ' + Math.round(fpsN/fpsT) + ' fps | hand: ' + (H.ok ? (H.fist ? 'fist' : (H.pinch ? 'pinch' : 'ok')) : 'none') + ' (' + delegate + (wkOn ? '+เธรดแยก' + (P.two && wkHas2 ? (wkTwo ? ' 2มือ' : ' 1มือ') : '') : '') + (P.roi ? '+roi' : '') + ', det ' + D.ms.toFixed(0) + (wkOn ? ' (โมเดล ' + D.inf.toFixed(0) + ')' : '') + 'ms/' + D.hz.toFixed(1) + 'Hz จริง)\nmode: ' + S.mode + ' | q: ' + QNAMES[S.qi] + ' | ui x' + S.pscale.toFixed(2) + '\nlight ' + Math.round(N.lum) + ' x' + N.gain.toFixed(1) + (N.torchOn ? ' | torch' : '') + (gotOrient ? '' : ' | no gyro') + (ZM ? ' | ซูม' : '') + (HANDS[1].ok ? ' | 2 มือ' : '') + '\nสองมือ: ' + (P.two ? 'เปิด' : 'ปิด') + ' | เจอมือ ' + (H.ok ? (H.n || 0) : 0) + (delegate === '-' ? '\nกำลังโหลดโมเดลมือ…' : '') + (delegate === 'fail' ? '\nโหลดโมเดลมือไม่ได้: ' + initErr.slice(0, 90) : '');
     const fpsNow = fpsN/fpsT;
-    if (fpsNow < 20 && S.qi > (S.stereo ? 1 : 0) && S.cam !== undefined){ lowT += 0.5; if (lowT >= 2.5){ S.qi--; applyQuality(); savePrefs(); invalidateUI(); lowT = 0; } } else lowT = 0;
+    D.hz = dN / fpsT; dN = 0;                                                      // detections per second that really happened
+    const nowMs = performance.now();
+    if (fpsNow < 20 && S.qi > (S.stereo ? 1 : 0) && S.cam !== undefined){
+      lowT += 0.5; upT = 0;
+      if (lowT >= 2.5){
+        const recent = nowMs - lastRaise < 60000;                                   // we raised the quality a moment ago and it was too much: stay one step lower from now on
+        const before = S.qi; S.qi--; if (recent) qiCap = S.qi; else if (qiCap === null) qiCap = before;
+        applyQuality(); savePrefs(); invalidateUI(); lowT = 0; lastQ = nowMs;
+      }
+    } else {
+      lowT = 0;
+      if (qiCap !== null && S.qi < qiCap && fpsNow >= 55 && nowMs - lastQ > 10000){      // smooth for a long time: climb one step back up
+        upT += 0.5;
+        if (upT >= 10){ S.qi++; upT = 0; lastQ = lastRaise = nowMs; if (S.qi >= qiCap) qiCap = null; applyQuality(); savePrefs(); invalidateUI(); }
+      } else upT = 0;
+    }
     fpsN = 0; fpsT = 0;
   }
 }
@@ -2377,6 +2440,7 @@ document.addEventListener('pointerdown', () => {
 
 // coming back from another app: restart the camera and screen lock
 document.addEventListener('visibilitychange', async () => {
+  if (document.visibilityState === 'hidden') saveWins();
   if (document.visibilityState !== 'visible' || !S.cam) return;
   try{ if (N.track && N.track.readyState === 'ended') await initCamera(); else await video.play(); }catch(e){}
   try{ if (navigator.wakeLock) await navigator.wakeLock.request('screen'); }catch(e){}
@@ -2395,6 +2459,7 @@ $('go').onclick = async () => {
   $('start').remove();
   groups.shoot.visible = false; groups.gallery.visible = false; panel.mesh.visible = true;
   applyQuality(); recenterHeading(); drawScore(); invalidateUI();
+  restoreWins();
   requestAnimationFrame(frame);
 };
 </script>
