@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.57';
+const VERSION = 'v3.58';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -202,6 +202,16 @@ function applyQuality(){
 function roundRect(x, a, b, w, h, r){
   x.beginPath(); x.moveTo(a+r,b); x.arcTo(a+w,b,a+w,b+h,r); x.arcTo(a+w,b+h,a,b+h,r);
   x.arcTo(a,b+h,a,b,r); x.arcTo(a,b,a+w,b,r); x.closePath();
+}
+// Quest-style "glass" background: soft vertical gradient, thin light edge, faint highlight along the top
+function glassBg(x, w, h, r, alpha, hot){
+  const g = x.createLinearGradient(0, 0, 0, h);
+  g.addColorStop(0, 'rgba(' + (hot ? '44,46,54' : '36,38,46') + ',' + alpha + ')'); g.addColorStop(1, 'rgba(' + (hot ? '30,32,38' : '22,23,29') + ',' + alpha + ')');
+  x.fillStyle = g; roundRect(x, 0, 0, w, h, r); x.fill();
+  x.strokeStyle = 'rgba(255,255,255,.10)'; x.lineWidth = 2; roundRect(x, 1, 1, w - 2, h - 2, r - 1); x.stroke();
+  const t = x.createLinearGradient(0, 0, 0, Math.min(90, h * 0.4));
+  t.addColorStop(0, 'rgba(255,255,255,.07)'); t.addColorStop(1, 'rgba(255,255,255,0)');
+  x.fillStyle = t; roundRect(x, 2, 2, w - 4, Math.min(90, h * 0.4), r - 2); x.fill();
 }
 // W,H = logical size used by the drawing code; k = texture sharpness multiplier
 const UITEX = [];
@@ -636,7 +646,8 @@ function drawPanel(x, ui){
   roundRect(x, 442, PBODY + 8, 140, 12, 6); x.fill();
 
   // body
-  x.fillStyle = 'rgba(30,30,33,.95)'; roundRect(x, 0, 0, PW, PBODY, 40); x.fill();
+  glassBg(x, PW, PBODY, 44, 0.95);
+  x.fillStyle = 'rgba(255,255,255,.08)'; x.fillRect(250, 120, 2, PBODY - 200);          // thin divider between the menu and the apps
 
   // sidebar
   x.textAlign = 'left'; x.fillStyle = '#fff'; x.font = 'bold 34px sans-serif';
@@ -644,8 +655,9 @@ function drawPanel(x, ui){
   const nav = (id, icon, label, y, active, fn, h) => {
     ui.reg(id, 24, y, 212, h, fn);
     if (active || hv === id){
-      x.fillStyle = pr === id ? 'rgba(255,255,255,.26)' : (active ? 'rgba(255,255,255,.16)' : 'rgba(255,255,255,.09)');
+      x.fillStyle = pr === id ? 'rgba(255,255,255,.30)' : (active ? 'rgba(255,255,255,.20)' : 'rgba(255,255,255,.09)');
       roundRect(x, 24, y, 212, h, h/2); x.fill();
+      if (active){ x.fillStyle = '#7fb2ff'; roundRect(x, 24, y + h/2 - 11, 5, 22, 3); x.fill(); }
     }
     x.fillStyle = '#fff'; x.font = '22px sans-serif'; x.fillText(icon, 46, y + h/2 + 8);
     x.font = '21px sans-serif'; x.fillText(label, 84, y + h/2 + 8);
@@ -672,17 +684,21 @@ function drawPanel(x, ui){
     const cx = 262 + col*254, cy = 118 + row*218, cw = 226, ch = 196;
     ui.reg('card:' + c.id, cx, cy, cw, ch, c.fn);
     const isH = hv === 'card:' + c.id, isP = pr === 'card:' + c.id;
-    x.fillStyle = isP ? '#5c5c64' : (isH ? '#4a4a50' : '#3a3a3f');
-    roundRect(x, cx, cy, cw, ch, 24); x.fill();
-    const g = x.createLinearGradient(0, cy+8, 0, cy+126);
     const on = c.on && c.on();
+    const gr = isP ? -4 : (isH ? 5 : 0), tx = cx + 14 - gr, ty = cy + 4 - gr, tw = cw - 28 + gr*2, th = 128 + gr*2;      // the tile grows a little under the cursor
+    x.fillStyle = 'rgba(0,0,0,.30)'; roundRect(x, tx + 2, ty + 7, tw - 4, th, 28); x.fill();                 // soft drop shadow (no blur: blur is slow on phones)
+    const g = x.createLinearGradient(0, ty, 0, ty + th);
     g.addColorStop(0, on ? '#3ecf8e' : c.g[0]); g.addColorStop(1, on ? '#1f8f5f' : c.g[1]);
-    x.fillStyle = g; roundRect(x, cx+8, cy+8, cw-16, 116, 18); x.fill();
+    x.fillStyle = g; roundRect(x, tx, ty, tw, th, 28); x.fill();
+    const gl = x.createLinearGradient(0, ty, 0, ty + th * 0.55);                     // glossy highlight on the top half
+    gl.addColorStop(0, 'rgba(255,255,255,.22)'); gl.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = gl; roundRect(x, tx, ty, tw, th * 0.55, 28); x.fill();
+    if (isP){ x.fillStyle = 'rgba(0,0,0,.22)'; roundRect(x, tx, ty, tw, th, 28); x.fill(); }
     x.fillStyle = '#fff'; x.font = '58px sans-serif'; x.textAlign = 'center';
-    if (c.img) x.drawImage(c.img, cx + cw/2 - 44, cy + 20, 88, 88); else x.fillText(c.icon, cx + cw/2, cy + 86);
-    x.textAlign = 'left'; x.font = 'bold 24px sans-serif'; x.fillText(c.t, cx+16, cy+156, cw-28);
-    x.font = '18px sans-serif'; x.fillStyle = on ? '#6ee7b0' : '#b8b8c0'; x.fillText(c.sub(), cx+16, cy+181, cw-28);
-    if (isH){ x.strokeStyle = '#fff'; x.lineWidth = 3; roundRect(x, cx+1.5, cy+1.5, cw-3, ch-3, 23); x.stroke(); }
+    if (c.img) x.drawImage(c.img, cx + cw/2 - 44, ty + th/2 - 44, 88, 88); else x.fillText(c.icon, cx + cw/2, ty + th/2 + 20);
+    x.font = 'bold 23px sans-serif'; x.fillStyle = isH ? '#fff' : '#e8e8ee'; x.fillText(c.t, cx + cw/2, cy + 166, cw - 16);
+    x.font = '18px sans-serif'; x.fillStyle = on ? '#6ee7b0' : '#9a9aa6'; x.fillText(c.sub(), cx + cw/2, cy + 190, cw - 16);
+    if (isH){ x.strokeStyle = '#fff'; x.lineWidth = 3.5; roundRect(x, tx, ty, tw, th, 28); x.stroke(); }
   });
 
   if (isSet) drawSettings(x, ui, hv, pr);
@@ -745,7 +761,7 @@ function drawDock(x, ui){
   x.clearRect(0, 0, DW, DH);
   x.textBaseline = 'alphabetic';
   ui.reg('dockbg', 0, 0, DW, DH, null);     // registered first = lowest priority; grabbing it drags the dock
-  x.fillStyle = (hv === 'dockbg') ? 'rgba(48,48,53,.97)' : 'rgba(30,30,33,.95)'; roundRect(x, 0, 0, DW, DH, 56); x.fill();
+  glassBg(x, DW, DH, 56, 0.95, hv === 'dockbg');
   // clock
   x.fillStyle = 'rgba(255,255,255,.14)'; x.beginPath(); x.arc(62, 56, 30, 0, Math.PI*2); x.fill();
   x.textAlign = 'center'; x.font = '30px sans-serif'; x.fillStyle = '#fff'; x.fillText('👤', 62, 67);
@@ -757,8 +773,10 @@ function drawDock(x, ui){
     const s = 64, y = 22, isH = hv === 'dock:' + id, isP = pr === 'dock:' + id;
     ui.reg('dock:' + id, px, y, s, s, fn);
     const grow = isP ? -2 : (isH ? 4 : 0);
-    x.fillStyle = color; roundRect(x, px-grow, y-grow, s+grow*2, s+grow*2, 18); x.fill();
-    if (isH){ x.strokeStyle = '#fff'; x.lineWidth = 3; roundRect(x, px-grow, y-grow, s+grow*2, s+grow*2, 18); x.stroke(); }
+    x.fillStyle = color; roundRect(x, px-grow, y-grow, s+grow*2, s+grow*2, 22); x.fill();
+    const ig = x.createLinearGradient(0, y-grow, 0, y+s/2); ig.addColorStop(0, 'rgba(255,255,255,.25)'); ig.addColorStop(1, 'rgba(255,255,255,0)');
+    x.fillStyle = ig; roundRect(x, px-grow, y-grow, s+grow*2, s/2+grow, 22); x.fill();
+    if (isH){ x.strokeStyle = '#fff'; x.lineWidth = 3; roundRect(x, px-grow, y-grow, s+grow*2, s+grow*2, 22); x.stroke(); }
     x.textAlign = 'center'; x.fillStyle = '#fff'; x.font = '36px sans-serif'; x.fillText(ch, px + s/2, y + 47);
     if (on){ x.fillStyle = '#fff'; x.beginPath(); x.arc(px + s/2, 102, 4, 0, Math.PI*2); x.fill(); }
   };
@@ -822,8 +840,8 @@ function drawWin(win, x, ui){
   ui.reg('grab', Math.max(0, W/2 - 320), Hh - 22, Math.min(W, 640), WGRAB + 22, null);     // drag bar under the window
   x.fillStyle = hv === 'grab' ? 'rgba(255,255,255,.95)' : 'rgba(255,255,255,.5)'; roundRect(x, W/2 - 90, Hh + 12, 180, 14, 7); x.fill();
   const clear = win.type === 'cam' || win.type === 'nweb';
-  if (!clear){ x.fillStyle = 'rgba(30,30,33,.96)'; roundRect(x, 0, 0, W, Hh, 28); x.fill(); }
-  x.fillStyle = '#2a2a2e'; roundRect(x, 0, 0, W, 52, 26); x.fill();
+  if (!clear) glassBg(x, W, Hh, 30, 0.96);
+  x.fillStyle = 'rgba(255,255,255,.07)'; roundRect(x, 0, 0, W, 52, 26); x.fill();
   if (clear) x.fillRect(0, 26, W, 26);
   x.fillStyle = '#fff'; x.font = 'bold 24px sans-serif'; x.textAlign = 'left'; x.textBaseline = 'middle';
   x.fillText(d.title, 22, 28, W - 100); x.textBaseline = 'alphabetic';
