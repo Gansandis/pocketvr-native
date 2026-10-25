@@ -203,8 +203,11 @@ public class VirtualBrowser {
             if (bmp == null || bmp.getWidth() != bw || bmp.getHeight() != ih) bmp = Bitmap.createBitmap(bw, ih, Bitmap.Config.ARGB_8888);
             bmp.copyPixelsFromBuffer(buf);
             Bitmap src = bw == iw ? bmp : Bitmap.createBitmap(bmp, 0, 0, iw, ih);
-            ByteArrayOutputStream out = new ByteArrayOutputStream(90000);
-            src.compress(Bitmap.CompressFormat.JPEG, 72, out);
+            // the page is out of sight (the web side asks for a slow picture rate): a smaller, lighter picture is enough and costs far less CPU
+            boolean far = gapMs >= 400;
+            if (far) src = Bitmap.createScaledBitmap(src, Math.max(2, iw * 6 / 10), Math.max(2, ih * 6 / 10), true);
+            ByteArrayOutputStream out = new ByteArrayOutputStream(far ? 40000 : 90000);
+            src.compress(Bitmap.CompressFormat.JPEG, far ? 55 : 72, out);
             jpeg = out.toByteArray();
             seq++;
         } catch (Throwable ignored) {
