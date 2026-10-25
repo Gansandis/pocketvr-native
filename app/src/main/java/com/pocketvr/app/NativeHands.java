@@ -105,6 +105,20 @@ public class NativeHands {
         });
     }
 
+    /** Phone heat: battery temperature (deg C) and, on Android 10+, the system's own heat level (0 none ... 6 shutdown). */
+    public JSONObject thermal(Context ctx) {
+        JSONObject o = new JSONObject();
+        try {
+            android.content.Intent i = ctx.registerReceiver(null, new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED));
+            if (i != null) o.put("bat", i.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) / 10.0);
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                android.os.PowerManager pm = (android.os.PowerManager) ctx.getSystemService(Context.POWER_SERVICE);
+                if (pm != null) o.put("st", pm.getCurrentThermalStatus());
+            }
+        } catch (Throwable ignored) { }
+        return o;
+    }
+
     public void close() {
         try { if (one != null) one.close(); } catch (Throwable ignored) { }
         try { if (two != null) two.close(); } catch (Throwable ignored) { }
