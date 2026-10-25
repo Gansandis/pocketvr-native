@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.61';
+const VERSION = 'v3.62';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1553,6 +1553,7 @@ let videoTex = null, landmarker = null, lastVT = -1, frameN = 0, delegate = '-';
 function newHand(){ return {ok:false, x:0, y:0, tx:0, ty:0, px:0, py:0, ptx:0, pty:0, pinch:false, pinchRaw:false, pk:null, fist:false, lastSeen:0, lm:null, a:null, pp:null, n:0, F:null}; }
 let H = null, F = null, HANDS = [], ZM = null, ZC = null;   // H / F always point at the hand currently being processed
 const D = {ms:0, inf:0, hz:0};
+const DET = D;                  // the detection timings (a local variable named D elsewhere is a distance, so this name is used where both are needed)
 let qiCap = null;               // picture quality the auto scaler may climb back to (null = the user's own choice, nothing to restore)              // average time of one hand detection (ms)
 let lastDet = 0, detGap = 0;
 const detCv = document.createElement('canvas'); detCv.width = 384; detCv.height = 216;
@@ -2071,7 +2072,7 @@ function updateHandViz(i){
     v.palmM = Math.hypot(v.mx[0] - v.mx[9], v.my[0] - v.my[9]) || 0.2;
     v.lastLm = h.lm; v.tMeas = tNow;
   }
-  const lead = Math.min(0.30, (tNow - v.tMeas) / 1000 + Math.max(0.05, Math.min(0.2, D.ms / 1000 * 0.9)));   // the result describes the hand as it was one detection ago: look ahead by about that much          // draw where the hand probably is NOW (detections arrive late), not where it was
+  const lead = Math.min(0.30, (tNow - v.tMeas) / 1000 + Math.max(0.05, Math.min(0.2, DET.ms / 1000 * 0.9)));   // the result describes the hand as it was one detection ago: look ahead by about that much          // draw where the hand probably is NOW (detections arrive late), not where it was
   for (let k = 0; k < 21; k++){
     const l = h.lm[k];
     const depth = flat ? D : Math.min(2, Math.max(0.5, HAND_D + l.z*2.5));
