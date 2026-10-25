@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.58';
+const VERSION = 'v3.61';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -153,7 +153,8 @@ function loadPrefs(){
     if (o.airV !== 3) P.sel = 3;                                  // v3.29: air touch becomes the default once
     P.pri = Math.min(P.pri, 2);
     P.gaze = Math.min(P.gaze, 2); P.ptr = Math.min(P.ptr, 1); P.smooth = Math.min(P.smooth, 2);
-    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 1); P.dres = Math.min(P.dres, 2); P.webfps = Math.min(P.webfps, 3); P.camfps = Math.min(P.camfps, 1); P.hv = Math.min(P.hv, 2); P.gs = Math.min(P.gs, 2); P.stab = Math.min(P.stab, 2);
+    P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); if (P.sel === 1 || P.sel === 2) P.sel = 3;     // the old poke modes are gone: only pinch (0) and air touch (3) remain
+    P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 1); P.dres = Math.min(P.dres, 2); P.webfps = Math.min(P.webfps, 3); P.camfps = Math.min(P.camfps, 1); P.hv = Math.min(P.hv, 2); P.gs = Math.min(P.gs, 2); P.stab = Math.min(P.stab, 2);
     if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
     if (Number.isInteger(o.nm) && o.nm >= 0) N.mode = Math.min(o.nm, 2);
     if (IPDS.includes(o.ipd)) S.ipd = o.ipd;
@@ -381,7 +382,7 @@ function cyclePtr(){ cycleP('ptr', 2); }
 function cycleSmooth(){ cycleP('smooth', 3); }
 function cycleRate(){ cycleP('rate', 3); }
 function cyclePinch(){ cycleP('pinch', 3); }
-function cycleSel(){ cycleP('sel', 4); showToast('เลือกด้วย: ' + SEL_N[P.sel] + (P.sel === 1 ? ' (ชี้นิ้วชี้ ที่เหลือพับ แล้วจิ้มไปทางกล้อง)' : (P.sel === 3 ? ' (ยื่นนิ้วชี้เอื้อมไปข้างหน้าเหมือนแตะจอ ค้างไว้เพื่อลาก ดึงมือกลับเข้าหาตัวเพื่อปล่อย)' : '')), 4500); }
+function cycleSel(){ P.sel = P.sel === 3 ? 0 : 3; savePrefs(); invalidateUI(); showToast('เลือกด้วย: ' + SEL_N[P.sel] + (P.sel === 0 ? ' (จีบนิ้วโป้งกับนิ้วชี้เพื่อกดหรือลาก)' : (P.sel === 3 ? ' (ยื่นนิ้วชี้เอื้อมไปข้างหน้าเหมือนแตะจอ ค้างไว้เพื่อลาก ดึงมือกลับเข้าหาตัวเพื่อปล่อย • หรือจีบนิ้วที่แถบลากแล้วลากได้เลย)' : '')), 4500); }
 function cycleAirD(){ cycleP('airD', 2); showToast(P.airD === 0 ? 'ทิศสัมผัส: เอื้อมมือไปข้างหน้า (ห่างจากกล้อง) = กด' : 'ทิศสัมผัส: ดึงมือเข้าหากล้อง = กด', 4000); }
 const DOF_N = ['3DoF (หมุนหัว)', '6DoF (ทดลอง: โน้ม/ก้าว)'], STAB_N = ['ปิด', 'กลาง', 'แรง'];
 function cycleDof(){ cycleP('dof', 2); headPos.set(0,0,0); headVel.set(0,0,0); showToast(P.dof === 0 ? '3DoF: หมุนหัวอย่างเดียว (นิ่งที่สุด)' : '6DoF ทดลอง: ใช้เซนเซอร์เร่งความเร็วจับการก้าว/โน้มตัวระยะสั้นๆ แล้วค่อยๆ ดึงกลับ (มือถือไม่มีเซนเซอร์ตำแหน่งจริง)', 5500); }
@@ -438,7 +439,7 @@ async function reinitHandsRun(){
   invalidateUI();
 }
 function resetSettings(){
-  Object.assign(P, {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1, pri:1});
+  Object.assign(P, {sel:3, gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1, pri:1});
   S.qi = 1; N.mode = 1; S.ipd = 0.063; S.sep = 0.08; S.ptI = 3; S.cfI = 2; S.vfI = 2; N.lastProbe = 0;
   applyQuality(); savePrefs(); invalidateUI(); showToast('รีเซ็ตการตั้งค่าแล้ว', 2500);
   reinitHands();
@@ -533,7 +534,7 @@ window.pvrBack = () => {                 // Android back button: close the brows
 
 /* ---------- app panel (Quest Home style) ---------- */
 const PW = 1024, PH = 589, PBODY = 563;   // PBODY = height of the panel body; the strip below it holds the drag bar
-const NAV = [['all','▦','ทั้งหมด','แอปและเครื่องมือ'], ['apps','🎮','แอปและเกม','แอปและเกม'], ['phone','📱','แอปในเครื่อง','แอปในเครื่อง'], ['web','🌐','เว็บ','เว็บไซต์'], ['settings','⚙','ตั้งค่า','ตั้งค่า']];
+const NAV = [['all','🏠','หน้าแรก','หน้าแรก'], ['media','🎬','บันเทิง','บันเทิงและเกม'], ['tools','🧰','เครื่องมือ','เครื่องมือและหน้าต่าง'], ['phone','📱','แอปในเครื่อง','แอปในเครื่อง'], ['web','🌐','เว็บ','เว็บไซต์'], ['settings','⚙','ตั้งค่า','ตั้งค่า']];
 const GRAY = ['#56565e','#38383e'];
 const CARDS = {
   shoot:   {icon:'🎯', t:'ยิงเป้า',      sub:() => 'เกม',  g:['#ff7a6b','#b8372a'], fn:() => setMode('shoot')},
@@ -553,8 +554,17 @@ const CARDS = {
   wkb:     {icon:'⌨', t:'คีย์บอร์ด', sub:() => winOpen('kb') ? 'เปิดอยู่' : 'พิมพ์ใน VR', on:() => winOpen('kb'), g:['#6c8cff','#33449e'], fn:() => toggleKb()},
   wcalc:   {icon:'🧮', t:'เครื่องคิดเลข', sub:() => winOpen('calc') ? 'เปิดอยู่' : 'หน้าต่างลอย', on:() => winOpen('calc'), g:['#5fd0c4','#1c7a70'], fn:() => toggleWin('calc')}
 };
-const TABS = {all:['shoot','gallery','cinema','v360','wcam','wkb','wweb','wclock','wcalc','mr','split','night','torch'], apps:['shoot','gallery','cinema','v360','wcam','wkb','wweb','wclock','wcalc'], tools:['mr','split','ipd','quality','night','torch']};
+const TABS = {all:['wweb','cinema','v360','mr','wcam','wkb'], media:['cinema','v360','gallery','shoot'], tools:['wweb','wcam','wkb','wclock','wcalc','mr','split','night','torch','ipd','quality','center']};
 
+const SET_CATS = [
+  ['view', 'ภาพและกล้อง', ['mr','pt','quality','night','torch','camq','cf','camfps']],
+  ['vr',   'VR Box',      ['split','ipd','sep','vf','comfort','lens','dof','stab']],
+  ['hand', 'มือและการควบคุม', ['sel','pinch','pokes','airD','ptr','smooth','hv','gs','two','gaze']],
+  ['sys',  'ระบบ',        ['pri','dev','wk','roi','dres','rate','webfps','reset']]
+];
+const SET_PER = 14;
+let setCat = 'view';
+const setItems = () => { const c = SET_CATS.find(q => q[0] === setCat) || SET_CATS[0]; return c[2].map(id => SETS.find(q => q.id === id)).filter(Boolean); };
 const SETS = [
   {id:'mr',      t:'ภาพจริง (MR)',        v:() => S.mr ? 'เปิด' : 'ปิด',          on:() => S.mr,       fn:toggleMR},
   {id:'split',   t:'แบ่งจอ VR',           v:() => S.stereo ? 'เปิด' : 'ปิด',      on:() => S.stereo,   fn:toggleSplit},
@@ -585,7 +595,7 @@ const SETS = [
   {id:'wk',      t:'ตรวจมือแยกเธรด (ทดลอง)',  v:() => P.wk ? 'เปิด' : 'ปิด',         on:() => P.wk > 0,   fn:cycleWk},
   {id:'stab',    t:'กันจอสั่น/ขยับ',      v:() => STAB_N[P.stab],                  on:() => false,      fn:cycleStab},
   {id:'sel',     t:'เลือกด้วย',            v:() => SEL_N[P.sel],                    on:() => false,      fn:cycleSel},
-  {id:'pokes',   t:'ความไวการจิ้ม',        v:() => POKE_N[P.pokeS],                 on:() => false,      fn:cyclePokeS},
+  {id:'pokes',   t:'ความไวสัมผัสอากาศ',        v:() => POKE_N[P.pokeS],                 on:() => false,      fn:cyclePokeS},
   {id:'pinch',   t:'ความไวการจีบ',        v:() => PINCH_SETS[P.pinch][2],         on:() => false,      fn:cyclePinch},
   {id:'dev',     t:'ตัวประมวลผลแทร็ก',    v:() => DEV_N[P.dev] + (delegate === 'GPU' || delegate === 'CPU' ? ' (' + delegate + ')' : ''), on:() => false, fn:cycleDev},
   {id:'two',     t:'ซูมสองมือ',           v:() => P.two ? 'เปิด' : 'ปิด',          on:() => P.two > 0, fn:cycleTwo},
@@ -593,20 +603,33 @@ const SETS = [
 ];
 function drawSettings(x, ui, hv, pr){
   x.textBaseline = 'alphabetic';
-  SETS.slice(S.page*16, S.page*16 + 16).forEach((s, i) => {
-    const col = i < 8 ? 0 : 1, row = i % 8;
-    const rx = 262 + col*374, ry = 104 + row*56, rw = 360, rh = 50;
+  // category chips
+  let cx0 = 262;
+  SET_CATS.forEach(c => {
+    const act = c[0] === setCat, id = 'scat:' + c[0];
+    x.font = (act ? 'bold ' : '') + '19px sans-serif';
+    const w = Math.max(96, Math.ceil(x.measureText(c[1]).width) + 36);
+    ui.reg(id, cx0, 100, w, 40, () => { setCat = c[0]; S.page = 0; invalidateUI(); });
+    x.fillStyle = act ? '#eef1ff' : (pr === id ? 'rgba(255,255,255,.28)' : (hv === id ? 'rgba(255,255,255,.18)' : 'rgba(255,255,255,.08)'));
+    roundRect(x, cx0, 100, w, 40, 20); x.fill();
+    x.fillStyle = act ? '#1b1d27' : '#d8d8e0'; x.textAlign = 'center'; x.fillText(c[1], cx0 + w/2, 127, w - 12);
+    cx0 += w + 10;
+  });
+  const items = setItems();
+  items.slice(S.page*SET_PER, S.page*SET_PER + SET_PER).forEach((s, i) => {
+    const col = i < 7 ? 0 : 1, row = i % 7;
+    const rx = 262 + col*374, ry = 158 + row*56, rw = 360, rh = 50;
     ui.reg('set:' + s.id, rx, ry, rw, rh, s.fn);
     const isH = hv === 'set:' + s.id, isP = pr === 'set:' + s.id;
-    x.fillStyle = isP ? '#5c5c64' : (isH ? '#4a4a50' : '#3a3a3f');
+    x.fillStyle = isP ? 'rgba(255,255,255,.22)' : (isH ? 'rgba(255,255,255,.15)' : 'rgba(255,255,255,.07)');
     roundRect(x, rx, ry, rw, rh, 18); x.fill();
     x.fillStyle = '#fff'; x.font = '20px sans-serif'; x.textAlign = 'left';
-    x.fillText(s.t, rx + 16, ry + 32, 172);
-    const on = s.on(), pw = 152, px = rx + rw - pw - 10;
-    x.fillStyle = on ? '#2e9e6b' : '#55555e'; roundRect(x, px, ry + 7, pw, 36, 18); x.fill();
+    x.fillText(s.t, rx + 16, ry + 32, 176);
+    const on = s.on(), pw = 148, px = rx + rw - pw - 8;
+    x.fillStyle = on ? '#2e9e6b' : 'rgba(255,255,255,.13)'; roundRect(x, px, ry + 7, pw, 36, 18); x.fill();
     x.fillStyle = '#fff'; x.font = '18px sans-serif'; x.textAlign = 'center';
     x.fillText(s.v(), px + pw/2, ry + 31, pw - 14);
-    if (isH){ x.strokeStyle = '#fff'; x.lineWidth = 3; roundRect(x, rx+1.5, ry+1.5, rw-3, rh-3, 17); x.stroke(); }
+    if (isH){ x.strokeStyle = '#fff'; x.lineWidth = 2.5; roundRect(x, rx+1.5, ry+1.5, rw-3, rh-3, 17); x.stroke(); }
   });
 }
 const G_PHONE = ['#4a6cf7','#2a3f9e'], G_WEB = ['#2bb3a3','#146d63'];
@@ -662,7 +685,7 @@ function drawPanel(x, ui){
     x.fillStyle = '#fff'; x.font = '22px sans-serif'; x.fillText(icon, 46, y + h/2 + 8);
     x.font = '21px sans-serif'; x.fillText(label, 84, y + h/2 + 8);
   };
-  NAV.forEach((n, i) => nav('nav:' + n[0], n[1], n[2], 128 + i*56, S.tab === n[0], () => { S.tab = n[0]; S.page = 0; invalidateUI(); }, 48));
+  NAV.forEach((n, i) => nav('nav:' + n[0], n[1], n[2], 128 + i*50, S.tab === n[0], () => { S.tab = n[0]; S.page = 0; invalidateUI(); }, 44));
   x.fillStyle = 'rgba(255,255,255,.12)'; x.fillRect(32, 440, 196, 2);
   nav('side:ctr', '⌖', 'จัดกลางใหม่', 462, false, resetPanel, 44);
 
@@ -677,7 +700,7 @@ function drawPanel(x, ui){
 
   // cards
   const isSet = S.tab === 'settings';
-  const allCards = isSet ? [] : getCards(S.tab), pages = isSet ? Math.max(1, Math.ceil(SETS.length / 16)) : Math.max(1, Math.ceil(allCards.length / 6));
+  const allCards = isSet ? [] : getCards(S.tab), pages = isSet ? Math.max(1, Math.ceil(setItems().length / SET_PER)) : Math.max(1, Math.ceil(allCards.length / 6));
   S.page = clamp(S.page, 0, pages - 1);
   allCards.slice(S.page*6, S.page*6 + 6).forEach((c, i) => {
     const col = i % 3, row = Math.floor(i/3);
@@ -1079,6 +1102,11 @@ function drawKbWin(x, ui, win){
   winBtn(x, ui, 'kgo', 'ไป', bx, y, wg, kh, () => kbEnter(win), {font:'28px', on:true});
 }
 const MAX_WINS = 6;
+function gazeLocal(R){                        // where you are looking, in the frame the windows live in (yaw, height at distance R)
+  camera.getWorldDirection(_dir); _dir.applyAxisAngle(Yaxis, -heading.rotation.y);
+  const hl = Math.hypot(_dir.x, _dir.z) || 1e-3;
+  return {yaw:Math.atan2(_dir.x, -_dir.z), y:_dir.y / hl * R};
+}
 function createWin(type){
   const d = WINDEFS[type];
   if (type !== 'kb' && !d.only && wins.filter(v => v.type !== 'kb' && !v.d.only).length >= MAX_WINS){ showToast('เปิดหน้าต่างได้สูงสุด ' + MAX_WINS + ' หน้าต่าง ปิดบางอันก่อน', 3500); return null; }
@@ -1103,11 +1131,20 @@ function createWin(type){
     startNweb(win);
   }
   if (S.stereo){ win.s = WBOOST; win.ui.mesh.scale.setScalar(WBOOST); }
-  if (d.center){ win.slot = 0; win.pivot.rotation.y = 0; }
-  else if (!d.only){
-    const used = wins.map(w => w.slot);
-    win.slot = WIN_SLOTS.find(s => !used.includes(s)); if (win.slot === undefined) win.slot = 0;
-    win.pivot.rotation.y = win.slot;
+  // a new window opens straight ahead of where you are looking now (and beside any window already there), not off to one side
+  {
+    const gz = gazeLocal(WIN_R), aw = w => (w.d.w / 520 * w.s) / WIN_R;
+    const used = wins.filter(w => !w.d.only);
+    const angd = (p, q) => Math.abs(Math.atan2(Math.sin(p - q), Math.cos(p - q)));
+    let pick = 0;
+    if (!d.only){
+      const offs = [0, 0.3, -0.3, 0.6, -0.6, 0.9, -0.9, 1.2, -1.2, 1.5, -1.5];
+      const ok = o => used.every(u => angd(-u.pivot.rotation.y, gz.yaw + o) > (aw(win) + aw(u)) / 2 + 0.05);
+      const f = offs.find(ok); pick = f === undefined ? 0 : f;
+    }
+    win.slot = pick;
+    win.pivot.rotation.y = d.only ? 0 : -(gz.yaw + pick);
+    if (d.y === undefined && !d.only) win.ui.mesh.position.y = clamp(gz.y, -0.15, 0.3);
   }
   heading.add(win.pivot); wins.push(win);
   win.ui.mesh.visible = winVisible(win);
@@ -1854,7 +1891,8 @@ function processHand(h, lm, now){
   const idxOut = !H.fist && !raw && dist2(lm[8], lm[0]) > dist2(lm[6], lm[0]) * 1.1;      // air touch: just an extended index finger, other fingers may be relaxed
   const pokeOn = updatePoke(H, lm, now, P.sel !== 0 && (air ? idxOut : pointing));
   const was = H.pinch;
-  const pinch = ((P.sel === 0 || P.sel === 2) && raw) || (P.sel !== 0 && pokeOn);
+  // air touch: a real thumb-index pinch also works, but only to drag a bar / resize grip (so a stray pinch never presses buttons)
+  const pinch = ((P.sel === 0 || P.sel === 2) && raw) || (P.sel !== 0 && pokeOn) || (P.sel === 3 && raw && (H.onBar || H.pinch));
   const arming = air && H.pk && H.pk.prog > 0.4;                // fingertip is nearly at the surface: freeze the cursor so the push does not shift it
 
   if (pinch && !was && !(air && H.arm)) H.a = {nx, ny, cx:H.tx, cy:H.ty};          // remember where the cursor was when the pinch began
@@ -1977,9 +2015,9 @@ function drawOutline(v, hs, D, flat, col, glow, ppu){
   const pass = (extra, comp, colr, blur) => {
     c.globalCompositeOperation = comp; c.strokeStyle = c.fillStyle = colr; c.shadowColor = glow; c.shadowBlur = blur;
     c.beginPath(); c.moveTo(X(_ol[0]), Y(_ol[0])); for (const i of [1, 5, 9, 13, 17]) c.lineTo(X(_ol[i]), Y(_ol[i])); c.closePath();
-    c.lineWidth = Math.max(1, extra); c.fill(); c.stroke();
+    c.lineWidth = Math.max(1, palm * 0.17 * K + extra); c.fill(); c.stroke();   // the palm outline is pushed outward a bit: the skin extends beyond the joint points
     for (let k = 0; k < CONN.length; k++){
-      const a = CONN[k][0], b = CONN[k][1], w = palm * GRP_W[Math.floor((Math.max(a, b) - 1) / 4)] * 0.62 * 2 * K;
+      const a = CONN[k][0], b = CONN[k][1], w = palm * GRP_W[Math.floor((Math.max(a, b) - 1) / 4)] * 0.80 * 2 * K;
       c.lineWidth = Math.max(1, w + extra); c.beginPath(); c.moveTo(X(_ol[a]), Y(_ol[a])); c.lineTo(X(_ol[b]), Y(_ol[b])); c.stroke();
     }
   };
@@ -2019,7 +2057,7 @@ function updateHandViz(i){
   v.g.visible = true;
   const tNow = performance.now(), vdt = Math.min(0.1, (tNow - (v.t || tNow)) / 1000 || 0.016); v.t = tNow;
   const flat = camOn();                                                   // with the camera picture on: draw the hand flat ON the picture so it lies over the real hand in both eyes
-  const kxy = 1 - Math.exp(-vdt / (flat ? 0.018 : 0.05)), kz = 1 - Math.exp(-vdt / 0.14);
+  const kxy = 1 - Math.exp(-vdt / (flat ? 0.012 : 0.05)), kz = 1 - Math.exp(-vdt / 0.14);
   const hs = v.hs, tH = Math.tan(THREE.MathUtils.degToRad(camera.fov/2)), asp = camera.aspect, D = PANEL_R * 0.97;
   if (!v.mx){ v.mx = new Float32Array(21); v.my = new Float32Array(21); v.vx = new Float32Array(21); v.vy = new Float32Array(21); v.tMeas = 0; v.lastLm = null; }
   if (h.lm !== v.lastLm){                                                // a new detection arrived: measure it and how fast each point is moving
@@ -2027,16 +2065,19 @@ function updateHandViz(i){
     for (let k = 0; k < 21; k++){
       const l = h.lm[k], dep = flat ? D : Math.min(2, Math.max(0.5, HAND_D + l.z*2.5));
       const mx = (l.x*2-1) * tH * asp * dep * PT.fx, my = -(l.y*2-1) * tH * dep * PT.fy;
-      if (okv){ v.vx[k] = v.vx[k]*0.5 + ((mx - v.mx[k]) / dtm)*0.5; v.vy[k] = v.vy[k]*0.5 + ((my - v.my[k]) / dtm)*0.5; } else { v.vx[k] = 0; v.vy[k] = 0; }
+      if (okv){ v.vx[k] = v.vx[k]*0.4 + ((mx - v.mx[k]) / dtm)*0.6; v.vy[k] = v.vy[k]*0.4 + ((my - v.my[k]) / dtm)*0.6; } else { v.vx[k] = 0; v.vy[k] = 0; }
       v.mx[k] = mx; v.my[k] = my;
     }
+    v.palmM = Math.hypot(v.mx[0] - v.mx[9], v.my[0] - v.my[9]) || 0.2;
     v.lastLm = h.lm; v.tMeas = tNow;
   }
-  const lead = Math.min(0.11, (tNow - v.tMeas) / 1000 + 0.04);          // draw where the hand probably is NOW (detections arrive late), not where it was
+  const lead = Math.min(0.30, (tNow - v.tMeas) / 1000 + Math.max(0.05, Math.min(0.2, D.ms / 1000 * 0.9)));   // the result describes the hand as it was one detection ago: look ahead by about that much          // draw where the hand probably is NOW (detections arrive late), not where it was
   for (let k = 0; k < 21; k++){
     const l = h.lm[k];
     const depth = flat ? D : Math.min(2, Math.max(0.5, HAND_D + l.z*2.5));
-    const tx = v.mx[k] + v.vx[k] * lead, ty = v.my[k] + v.vy[k] * lead, tz = -depth;
+    let ex = v.vx[k] * lead, ey = v.vy[k] * lead; const em = Math.hypot(ex, ey), el = (v.palmM || 0.2) * 1.1;
+    if (em > el){ ex *= el / em; ey *= el / em; }                           // never run further ahead than about one palm (no overshoot on a sudden stop)
+    const tx = v.mx[k] + ex, ty = v.my[k] + ey, tz = -depth;
     if (!v.init) hs[k].set(tx, ty, tz);
     else { hs[k].x += (tx - hs[k].x)*kxy; hs[k].y += (ty - hs[k].y)*kxy; hs[k].z += (tz - hs[k].z)*(flat ? 1 : kz); }
   }
@@ -2111,7 +2152,7 @@ function interactOne(now, dt, hi){
 
   if (!p){                      // nothing is pointing (no hand, centre cursor off): hide the cursor and clear hover
     if (sw && sw.kind === 'touch') sw.reg.touch.up(sw.cx, sw.cy);
-    grab = null; sw = null; cursor.visible = false; hoverKey = null; hoverT = 0;
+    grab = null; sw = null; cursor.visible = false; hoverKey = null; hoverT = 0; H.onBar = false;
     return;
   }
   cursor.visible = true;
@@ -2154,6 +2195,7 @@ function interactOne(now, dt, hi){
         dock.mesh.position.y = sm('y', clamp(grab.y0 + (r.y - grab.rayY), -1.1, 0.5), grab.y0);
       }
       const hid = grab.type === 'resize' ? 'resize' : (grab.target === 'dock' ? 'dockbg' : 'grab');
+      H.onBar = true;
       hoverReqs.push({ui:gu, h:hid, pr:hid});
       ray.ray.at(grab.R, cursor.position);
       cursor.material.color.set(0x39e08a); cursor.scale.setScalar(1);
@@ -2185,6 +2227,7 @@ function interactOne(now, dt, hi){
   const obj = hit ? hit.object : null;
   const ui = obj && obj.userData.ui ? obj.userData.ui : null;
   const reg = ui ? ui.at(hit.uv) : null;
+  H.onBar = !!(reg && (reg.id === 'grab' || reg.id === 'resize' || reg.id === 'dockbg'));
 
   if (ui && reg) hoverReqs.push({ui, h:reg.id, pr:pinching ? reg.id : null});
   if (obj && !ui) hovObjs.push(obj);
