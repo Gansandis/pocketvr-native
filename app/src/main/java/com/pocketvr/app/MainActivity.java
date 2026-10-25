@@ -60,6 +60,7 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> fileCallback;
     private PermissionRequest pendingCameraRequest;
     private VirtualBrowser vb;
+    private final NativeHands nh = new NativeHands();
     private final ExecutorService worker = Executors.newSingleThreadExecutor();
 
     @Override
@@ -202,6 +203,10 @@ public class MainActivity extends Activity {
             } catch (Throwable ignored) {
             }
             respond(reply, id, true, txt);
+        } else if ("nh_init".equals(op)) {
+            nh.init(getApplicationContext(), req.optString("delegate"), req.optInt("hands"), (ok, data) -> respond(reply, id, ok, data));
+        } else if ("nh_det".equals(op)) {
+            nh.detect(req.optString("jpg"), req.optLong("ts"), req.optString("mode"), (ok, data) -> respond(reply, id, ok, data));
         } else if (op.startsWith("nb_")) {
             handleBrowser(op, req, reply, id);
         } else if ("url".equals(op)) {
