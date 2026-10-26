@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.71';
+const VERSION = 'v3.72';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1723,7 +1723,7 @@ self.onmessage = async (e) => {
 };`;
 let wkFirst = true, wkStall = 0, wkOffNow = false, wkUrl = null;
 let wk = null, wkOn = false, wkBusy = false, wkSent = 0, wkInfo = null, wkTwo = false, wkProbeN = 0, wkTwoAt = 0, wkHas2 = false, wkMode = 'A';
-function wkStop(){ wkNative = false; wkFirst = true; if (wkUrl){ try{ URL.revokeObjectURL(wkUrl); }catch(e){} wkUrl = null; } wkOn = false; wkBusy = false; wkTwo = false; wkProbeN = 0; if (wk){ try{ wk.terminate(); }catch(e){} wk = null; } }
+function wkStop(){ nhConvPend = {}; wkNative = false; wkFirst = true; if (wkUrl){ try{ URL.revokeObjectURL(wkUrl); }catch(e){} wkUrl = null; } wkOn = false; wkBusy = false; wkTwo = false; wkProbeN = 0; if (wk){ try{ wk.terminate(); }catch(e){} wk = null; } }
 function wkOnRes(m){                                                  // a detection result from the worker thread or from the app's own hand model
   wkBusy = false; wkFirst = false; wkStall = 0; D.ms += ((performance.now() - wkSent) - D.ms) * 0.2; if (m.inf !== undefined) D.inf += (m.inf - D.inf) * 0.2;
   const tn = performance.now();
@@ -1744,10 +1744,58 @@ const NH_DEPTH = 2;                                                  // pictures
 let handSpd = 0, thermSt = 0, batT = 0, thermAt = 0;
 let nhPace = 140;                                                    // shortest time between two pictures sent to the app (ms): follows the screen's fps, shorter while the screen is smooth, longer when it starts to drop
 let nhIn = 0;                                                        // pictures sent to the app and not answered yet (two may be on the way, so the model never sits idle)
+// ----- shrinking the camera picture and turning it into JPEG text is done in a helper thread, so the screen thread is not held up (about 35 ms per look otherwise) -----
+const CONV_SRC = `
+let cv = null, cx = null;
+onmessage = async (e) => {
+  const m = e.data, t0 = performance.now();
+  try{
+    if (!cv || cv.width !== m.w || cv.height !== m.h){ cv = new OffscreenCanvas(m.w, m.h); cx = cv.getContext('2d'); }
+    cx.drawImage(m.bmp, 0, 0, m.w, m.h); try{ m.bmp.close(); }catch(err){}
+    const b = await cv.convertToBlob({type:'image/jpeg', quality:0.7});
+    const u = new Uint8Array(await b.arrayBuffer()); let bin = '';
+    for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
+    postMessage({id:m.id, jpg:btoa(bin), ms:performance.now() - t0});
+  }catch(err){ postMessage({id:m.id, err:String(err && err.message || err)}); }
+};`;
+let nhConv = null, nhConvUrl = null, nhConvId = 0, nhConvPend = {}, nhConvOk = true, nhConvFail = 0;
+function convStart(){
+  try{
+    nhConvUrl = URL.createObjectURL(new Blob([CONV_SRC], {type:'text/javascript'}));
+    nhConv = new Worker(nhConvUrl);
+    nhConv.onmessage = e => { const f = nhConvPend[e.data.id]; delete nhConvPend[e.data.id]; if (f) f(e.data); };
+    nhConv.onerror = () => { nhConvOk = false; };
+  }catch(err){ nhConv = null; nhConvOk = false; }
+}
+function convGiveUp(why){ nhConvOk = false; showToast('แปลงภาพนอกเธรดหลักไม่ได้ (' + why + ') ใช้แบบเดิม', 3500); }
+function nativeFrame(src, box, dW, dH, now, info, t0){                // returns false when this way is not possible (the caller then uses the old way)
+  if (!nhConv) convStart();
+  if (!nhConv || typeof OffscreenCanvas === 'undefined') return false;
+  wkBusy = true; wkSent = t0; wkInfo = info;
+  let mode = 'A';
+  if (P.two && wkHas2){ if (wkTwo) mode = 'B'; else if (++wkProbeN >= 8){ wkProbeN = 0; mode = 'B'; } }
+  wkMode = mode;
+  const id = ++nhConvId, tc = performance.now(), opt = {resizeWidth:dW, resizeHeight:dH, resizeQuality:'low'};
+  let pr; try{ pr = box ? createImageBitmap(src, box.x, box.y, box.w, box.h, opt) : createImageBitmap(src, opt); }catch(err){ wkBusy = false; convGiveUp('createImageBitmap'); return true; }
+  pr.then(bmp => {
+    pfAdd('dimg', performance.now() - tc);
+    nhConvPend[id] = m => {
+      if (!wkNative) return;
+      if (m.err || !m.jpg){ wkBusy = false; if (++nhConvFail >= 3) convGiveUp(String(m.err || '').slice(0, 40)); return; }
+      nhConvFail = 0; pfAdd('jpg', m.ms);
+      nativeSend(m.jpg, now, mode, info, t0);
+    };
+    nhConv.postMessage({id, bmp, w:dW, h:dH}, [bmp]);
+  }).catch(() => { wkBusy = false; if (++nhConvFail >= 3) convGiveUp('bitmap'); });
+  return true;
+}
 function nativeDetect(now, mode, info, t0){
   const tj = performance.now();
   const jpg = detCv.toDataURL('image/jpeg', 0.7).slice(23);          // small picture as JPEG text (strip "data:image/jpeg;base64,")
   pfAdd('jpg', performance.now() - tj);
+  nativeSend(jpg, now, mode, info, t0);
+}
+function nativeSend(jpg, now, mode, info, t0){
   nhIn++; if (nhIn < NH_DEPTH) wkBusy = false;
   nativeCall('nh_det', {jpg, ts:Math.round(now), mode}, 6000).then(r => {
     nhIn = Math.max(0, nhIn - 1);
@@ -1816,6 +1864,7 @@ function updateHands(now){
   const sw = src.videoWidth || src.width || 640, sh = src.videoHeight || src.height || 360;
   const box = P.roi ? roiBox(sw, sh) : null;
   const bw = DRES[P.dres], dW = box ? Math.round(bw * 0.75) : bw, dH = box ? dW : Math.round(bw * sh / sw);
+  if (wkNative && nhConvOk && nativeFrame(src, box, dW, dH, now, {box, sw, sh}, t0)) return;       // picture shrunk and encoded in a helper thread
   if (detCv.width !== dW) detCv.width = dW;
   if (detCv.height !== dH) detCv.height = dH;
   const tdi = performance.now();
