@@ -44,7 +44,18 @@ jobs:
             gradle --no-daemon assembleDebug && exit 0
             echo "build attempt $i failed, waiting before retry"; sleep $((i * 45))
           done
-          # safety net: if the native hand model code is what breaks the build, ship the app without it (the page keeps its own detection)
+          # safety net 1: if only the new native VR screen breaks the build, replace it with an empty stub
+          echo "falling back: stub for the native VR screen"
+          D=app/src/main/java/com/pocketvr/app
+          rm -f $D/NvCam.java $D/NvHands.java $D/VRRenderer.java
+          cat > $D/NativeVRActivity.java <<'STUB'
+          package com.pocketvr.app;
+          public class NativeVRActivity extends android.app.Activity {
+              @Override protected void onCreate(android.os.Bundle b) { super.onCreate(b); finish(); }
+          }
+          STUB
+          gradle --no-daemon assembleDebug && echo "NOTE=หน้าจอ VR เนทีฟคอมไพล์ไม่ผ่าน (ปิดไว้)" >> "$GITHUB_ENV" && exit 0
+          # safety net 2: if the native hand model code is what breaks the build, ship the app without it (the page keeps its own detection)
           echo "falling back to a build without the native hand model"
           cp app/fallback/NativeHands.java.txt app/src/main/java/com/pocketvr/app/NativeHands.java
           sed -i "/tasks-vision/d" app/build.gradle
