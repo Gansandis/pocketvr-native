@@ -68,8 +68,21 @@ public class NativeHands {
         ex.execute(() -> {
             try {
                 long t0 = System.nanoTime();
-                byte[] raw = Base64.decode(jpgBase64, Base64.DEFAULT);
-                Bitmap bmp = BitmapFactory.decodeByteArray(raw, 0, raw.length);
+                Bitmap bmp;
+                if (jpgBase64.startsWith("R:")) {            // plain pixels: "R:width:height:" + base64 of RGB bytes (no JPEG step at all)
+                    int c1 = jpgBase64.indexOf(':', 2), c2 = jpgBase64.indexOf(':', c1 + 1);
+                    int w = Integer.parseInt(jpgBase64.substring(2, c1)), h = Integer.parseInt(jpgBase64.substring(c1 + 1, c2));
+                    byte[] rgb = Base64.decode(jpgBase64.substring(c2 + 1), Base64.DEFAULT);
+                    if (rgb.length < w * h * 3) { cb.done(false, "raw size"); return; }
+                    int[] px = new int[w * h];
+                    for (int i = 0, j = 0; i < px.length; i++, j += 3) {
+                        px[i] = 0xFF000000 | ((rgb[j] & 255) << 16) | ((rgb[j + 1] & 255) << 8) | (rgb[j + 2] & 255);
+                    }
+                    bmp = Bitmap.createBitmap(px, w, h, Bitmap.Config.ARGB_8888);
+                } else {
+                    byte[] raw = Base64.decode(jpgBase64, Base64.DEFAULT);
+                    bmp = BitmapFactory.decodeByteArray(raw, 0, raw.length);
+                }
                 if (bmp == null) { cb.done(false, "decode"); return; }
                 boolean useTwo = "B".equals(mode) && two != null;
                 HandLandmarker m = useTwo ? two : one;
