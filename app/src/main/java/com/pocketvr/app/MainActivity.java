@@ -205,6 +205,9 @@ public class MainActivity extends Activity {
             respond(reply, id, true, txt);
         } else if ("nh_init".equals(op)) {
             nh.init(getApplicationContext(), req.optString("delegate"), req.optInt("hands"), (ok, data) -> respond(reply, id, ok, data));
+        } else if ("nv_open".equals(op)) {
+            runOnUiThread(() -> startActivity(new Intent(this, NativeVRActivity.class)));
+            respond(reply, id, true, null);
         } else if ("nh_therm".equals(op)) {
             respond(reply, id, true, thermalInfo());
         } else if ("nh_det".equals(op)) {
