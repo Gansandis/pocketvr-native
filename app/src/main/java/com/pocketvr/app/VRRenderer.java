@@ -64,7 +64,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     @Override public void onSurfaceCreated(GL10 gl, EGLConfig cfg) {
         progCam = prog(
             "attribute vec2 p; uniform mat4 stm; uniform float rf; varying vec2 uv;" +
-            "void main(){ gl_Position=vec4(p,0.,1.); vec2 t=p*0.5+0.5; t=mix(t,1.-t,rf); uv=(stm*vec4(t,0.,1.)).xy; }",
+            "void main(){ gl_Position=vec4(p,0.,1.); vec2 t=p*0.5+0.5; t=mix(t,1.-t,rf); uv=vec2(t.x,1.-t.y); }",
             "#extension GL_OES_EGL_image_external : require\nprecision mediump float; uniform samplerExternalOES tex; varying vec2 uv;" +
             "void main(){ gl_FragColor=texture2D(tex,uv); }");
         progCol = prog(
