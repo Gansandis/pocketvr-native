@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.73';
+const VERSION = 'v3.74';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -145,7 +145,7 @@ const PS_MIN = 0.6, PS_MAX = 2.0;
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 
 /* --- saved preferences --- */
-const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1, pri:1};
+const P = {gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:1, sel:3, pokeS:1, airV:3, airD:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1, pri:1, nconv:0};
 function loadPrefs(){
   try{
     const o = JSON.parse(localStorage.getItem('pvr_prefs') || '{}');
@@ -154,7 +154,7 @@ function loadPrefs(){
     P.pri = Math.min(P.pri, 2);
     P.gaze = Math.min(P.gaze, 2); P.ptr = Math.min(P.ptr, 1); P.smooth = Math.min(P.smooth, 2);
     P.rate = Math.min(P.rate, 2); P.pinch = Math.min(P.pinch, 2); P.dev = Math.min(P.dev, 1); P.two = Math.min(P.two, 1); P.sel = Math.min(P.sel, 3); if (P.sel === 1 || P.sel === 2) P.sel = 3;     // the old poke modes are gone: only pinch (0) and air touch (3) remain
-    P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 2); P.dres = Math.min(P.dres, 2); P.webfps = Math.min(P.webfps, 3); P.camfps = Math.min(P.camfps, 1); P.hv = Math.min(P.hv, 2); P.gs = Math.min(P.gs, 2); P.stab = Math.min(P.stab, 2);
+    P.pokeS = Math.min(P.pokeS, 2); P.airD = Math.min(P.airD, 1); P.dof = Math.min(P.dof, 1); P.lens = Math.min(P.lens, 3); P.roi = Math.min(P.roi, 1); P.wk = Math.min(P.wk, 2); P.nconv = Math.min(P.nconv || 0, 1); P.dres = Math.min(P.dres, 2); P.webfps = Math.min(P.webfps, 3); P.camfps = Math.min(P.camfps, 1); P.hv = Math.min(P.hv, 2); P.gs = Math.min(P.gs, 2); P.stab = Math.min(P.stab, 2);
     if (Number.isInteger(o.qi) && o.qi >= 0) S.qi = Math.min(o.qi, 2);
     if (Number.isInteger(o.nm) && o.nm >= 0) N.mode = Math.min(o.nm, 2);
     if (IPDS.includes(o.ipd)) S.ipd = o.ipd;
@@ -402,6 +402,7 @@ function cycleCamFps(){ cycleP('camfps', 2); applyCamFps(); showToast('เฟร
 function applyCamFps(){ if (N.track) N.track.applyConstraints({frameRate:{ideal:CAMFPS[P.camfps], min:15}}).catch(() => {}); }
 const DRES = [320, 384, 512], DRES_N = ['ต่ำ (เร็ว)', 'กลาง', 'สูง (เจอมือแม่น ช้าลง)'];
 function cycleDres(){ cycleP('dres', 3); showToast('ความละเอียดตรวจมือ: ' + DRES_N[P.dres] + ' • สูง = เจอมือไกล/สองมือดีขึ้นแต่ความถี่ลดลง', 4500); }
+function cycleNconv(){ cycleP('nconv', 2); showToast(P.nconv ? 'แปลงภาพส่งตัวตรวจ: เธรดช่วย (เธรดหลักเบา แต่หน่วงขึ้น)' : 'แปลงภาพส่งตัวตรวจ: เธรดหลัก (หน่วงน้อยกว่า)', 4000); }
 function cycleWk(){ cycleP('wk', NATIVE.ok ? 3 : 2); nhOff = false; wkOffNow = false; showToast(['ตรวจมือแยกเธรด: ปิด', 'ตรวจมือแยกเธรด: เปิด (ทดลอง) กำลังเริ่มใหม่…', 'ตรวจมือในแอป (เนทีฟ): เปิด (ทดลอง) กำลังเริ่มใหม่…'][P.wk], 3500); reinitHands(); }
 function cycleStab(){ cycleP('stab', 3); showToast('กันจอสั่น: ' + STAB_N[P.stab], 2500); }
 function cyclePokeS(){ cycleP('pokeS', 3); showToast('ความไวการจิ้ม: ' + POKE_N[P.pokeS], 2500); }
@@ -441,7 +442,7 @@ async function reinitHandsRun(){
   invalidateUI();
 }
 function resetSettings(){
-  Object.assign(P, {sel:3, gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1, pri:1});
+  Object.assign(P, {sel:3, gaze:0, ptr:0, smooth:1, rate:1, pinch:1, dev:0, two:0, dof:0, stab:1, lens:0, roi:0, wk:0, dres:1, webfps:1, camfps:1, hv:1, gs:1, pri:1, nconv:0});
   S.qi = 1; N.mode = 1; S.ipd = 0.063; S.sep = 0.08; S.ptI = 3; S.cfI = 2; S.vfI = 2; N.lastProbe = 0;
   applyQuality(); savePrefs(); invalidateUI(); showToast('รีเซ็ตการตั้งค่าแล้ว', 2500);
   reinitHands();
@@ -562,7 +563,7 @@ const SET_CATS = [
   ['view', 'ภาพและกล้อง', ['mr','pt','quality','night','torch','camq','cf','camfps']],
   ['vr',   'VR Box',      ['split','ipd','sep','vf','comfort','lens','dof','stab']],
   ['hand', 'มือและการควบคุม', ['sel','pinch','pokes','airD','ptr','smooth','hv','gs','two','gaze']],
-  ['sys',  'ระบบ',        ['pri','dev','wk','roi','dres','rate','webfps','reset']]
+  ['sys',  'ระบบ',        ['pri','dev','wk','nconv','roi','dres','rate','webfps','reset']]
 ];
 const SET_PER = 14;
 let setCat = 'view';
@@ -594,6 +595,7 @@ const SETS = [
   {id:'camfps',  t:'เฟรมเรตกล้อง',         v:() => CAMFPS[P.camfps] + ' fps',       on:() => false,      fn:cycleCamFps},
   {id:'dres',    t:'ความละเอียดตรวจมือ',   v:() => DRES_N[P.dres],                  on:() => false,      fn:cycleDres},
   {id:'roi',     t:'ตรวจเฉพาะรอบมือ (ทดลอง)', v:() => P.roi ? 'เปิด' : 'ปิด',        on:() => P.roi > 0,  fn:cycleRoi},
+  {id:'nconv',   t:'แปลงภาพส่งตัวตรวจ (เนทีฟ)', v:() => P.nconv ? 'เธรดช่วย' : 'เธรดหลัก', on:() => P.nconv > 0, fn:cycleNconv},
   {id:'wk',      t:'ตรวจมือแยกเธรด/เนทีฟ (ทดลอง)',  v:() => ['ปิด', 'เปิด', 'เนทีฟ'][P.wk] || 'ปิด',         on:() => P.wk > 0,   fn:cycleWk},
   {id:'stab',    t:'กันจอสั่น/ขยับ',      v:() => STAB_N[P.stab],                  on:() => false,      fn:cycleStab},
   {id:'sel',     t:'เลือกด้วย',            v:() => SEL_N[P.sel],                    on:() => false,      fn:cycleSel},
@@ -1872,7 +1874,7 @@ function updateHands(now){
   const sw = src.videoWidth || src.width || 640, sh = src.videoHeight || src.height || 360;
   const box = P.roi ? roiBox(sw, sh) : null;
   const bw = DRES[P.dres], dW = box ? Math.round(bw * 0.75) : bw, dH = box ? dW : Math.round(bw * sh / sw);
-  if (wkNative && nhConvOk && nativeFrame(src, box, dW, dH, now, {box, sw, sh}, t0)) return;       // picture shrunk and encoded in a helper thread
+  if (wkNative && P.nconv && nhConvOk && nativeFrame(src, box, dW, dH, now, {box, sw, sh}, t0)) return;       // picture shrunk and encoded in a helper thread
   if (detCv.width !== dW) detCv.width = dW;
   if (detCv.height !== dH) detCv.height = dH;
   const tdi = performance.now();
