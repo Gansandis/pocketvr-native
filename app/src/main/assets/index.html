@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.72';
+const VERSION = 'v3.73';
 const $ = id => document.getElementById(id);
 const hud = $('hud'), video = $('cam');
 const BG = 0x0b1220;
@@ -1752,12 +1752,20 @@ onmessage = async (e) => {
   try{
     if (!cv || cv.width !== m.w || cv.height !== m.h){ cv = new OffscreenCanvas(m.w, m.h); cx = cv.getContext('2d'); }
     cx.drawImage(m.bmp, 0, 0, m.w, m.h); try{ m.bmp.close(); }catch(err){}
-    const b = await cv.convertToBlob({type:'image/jpeg', quality:0.7});
-    const u = new Uint8Array(await b.arrayBuffer()); let bin = '';
+    let u, head = '';
+    if (m.raw){                                            // plain pixels (RGB): no JPEG step, which took 30-65 ms
+      const d = cx.getImageData(0, 0, m.w, m.h).data, n = m.w * m.h; u = new Uint8Array(n * 3);
+      for (let i = 0, j = 0, k = 0; i < n; i++, j += 4){ u[k++] = d[j]; u[k++] = d[j + 1]; u[k++] = d[j + 2]; }
+      head = 'R:' + m.w + ':' + m.h + ':';
+    } else {
+      const b = await cv.convertToBlob({type:'image/jpeg', quality:0.7}); u = new Uint8Array(await b.arrayBuffer());
+    }
+    let bin = '';
     for (let i = 0; i < u.length; i += 0x8000) bin += String.fromCharCode.apply(null, u.subarray(i, i + 0x8000));
-    postMessage({id:m.id, jpg:btoa(bin), ms:performance.now() - t0});
+    postMessage({id:m.id, jpg:head + btoa(bin), ms:performance.now() - t0});
   }catch(err){ postMessage({id:m.id, err:String(err && err.message || err)}); }
 };`;
+let nhRaw = true;                                                    // send plain pixels to the app instead of JPEG (the app falls back by itself if it cannot read them)
 let nhConv = null, nhConvUrl = null, nhConvId = 0, nhConvPend = {}, nhConvOk = true, nhConvFail = 0;
 function convStart(){
   try{
@@ -1785,7 +1793,7 @@ function nativeFrame(src, box, dW, dH, now, info, t0){                // returns
       nhConvFail = 0; pfAdd('jpg', m.ms);
       nativeSend(m.jpg, now, mode, info, t0);
     };
-    nhConv.postMessage({id, bmp, w:dW, h:dH}, [bmp]);
+    nhConv.postMessage({id, bmp, w:dW, h:dH, raw:nhRaw}, [bmp]);
   }).catch(() => { wkBusy = false; if (++nhConvFail >= 3) convGiveUp('bitmap'); });
   return true;
 }
@@ -1801,7 +1809,7 @@ function nativeSend(jpg, now, mode, info, t0){
     nhIn = Math.max(0, nhIn - 1);
     if (!wkNative) return;
     if (r.ok && r.data && r.data.lms){ nhFail = 0; wkSent = t0; wkInfo = info; if (r.data.dec !== undefined) D.dec += (r.data.dec - D.dec) * 0.2; wkOnRes(r.data); }
-    else { wkBusy = false; if (++nhFail >= 6){ nhOff = true; showToast('ตัวตรวจเนทีฟใช้ไม่ได้ (' + String(r.data || '').slice(0, 50) + ') กลับไปใช้แบบเดิม', 5000); reinitHands(); } }
+    else { wkBusy = false; if (nhRaw && ++nhFail >= 2){ nhRaw = false; nhFail = 0; showToast('ส่งภาพดิบไม่ได้ กลับไปใช้ JPEG', 3000); } else if (++nhFail >= 6){ nhOff = true; showToast('ตัวตรวจเนทีฟใช้ไม่ได้ (' + String(r.data || '').slice(0, 50) + ') กลับไปใช้แบบเดิม', 5000); reinitHands(); } }
   });
 }
 function wkStart(d){
