@@ -30,7 +30,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             if (cam != null && rend != null) {
                 float f = rend.fps;
                 long p = cam.detPaceMs;
-                if (f >= 50) p = Math.max(60, p - 10); else if (f > 0 && f < 44) p = Math.min(200, p + 20);
+                if (f >= 42) p = Math.max(0, p - 20); else if (f > 0 && f < 34) p = Math.min(160, p + 20);
                 cam.detPaceMs = p;
                 if (hudOn) {
                     hud.setText(String.format("native v3.77 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms%s",
@@ -46,7 +46,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
         hands = new NvHands();
         cam = new NvCam(this, hands, this);
-        cam.detPaceMs = 100;
+        cam.detPaceMs = 0;
         rend = new VRRenderer(this, cam);
         gl = new GLSurfaceView(this);
         gl.setEGLContextClientVersion(2);
