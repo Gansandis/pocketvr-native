@@ -102,6 +102,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             " v=s(d); mx=max(mx,v); mn=min(mn,v); v=s(-d); mx=max(mx,v); mn=min(mn,v);" +
             " v=s(vec2(d.x,-d.y)); mx=max(mx,v); mn=min(mn,v); v=s(vec2(-d.x,d.y)); mx=max(mx,v); mn=min(mn,v);" +
             " float e=smoothstep(0.1,0.9,mx-mn); gl_FragColor=vec4(vec3(0.78,0.9,1.0)*e, e); }");
+        progAA = prog(
+            "attribute vec2 p; attribute vec4 q; varying vec4 vq; void main(){ gl_Position=vec4(p,0.,1.); vq=q; }",
+            "precision mediump float; uniform vec3 col; varying vec4 vq;" +
+            "void main(){ float t=clamp(vq.x,0.,vq.z); float d=length(vec2(vq.x-t,vq.y)); float al=clamp((1.-d)*vq.w/1.5,0.,1.); gl_FragColor=vec4(col*al,al); }");
+        aaBuf = fb(6 * 6 * 60);
         triBuf = fb(4096);
         maskW = 0; maskFbo[0] = 0; maskTex[0] = 0;
         quad = fb(8);
@@ -125,7 +130,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     @Override public void onSurfaceChanged(GL10 gl, int w, int h) { vw = w; vh = h; }
 
     private void makeScene(int iw, int ih) {
-        int w = Math.min(iw, 960);
+        int w = Math.min(iw, 1280);
         int h = Math.max(2, Math.round(w * (float) ih / iw));
         if (sceneTex[0] != 0) { GLES20.glDeleteTextures(1, sceneTex, 0); GLES20.glDeleteFramebuffers(1, fbo, 0); }
         GLES20.glGenTextures(1, sceneTex, 0);
@@ -228,22 +233,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     private void drawCursor() {
         if (!curOk || ui == null || ui.bmp == null) return;
-        GLES20.glUseProgram(progCol);
-        int a = GLES20.glGetAttribLocation(progCol, "p");
-        GLES20.glEnableVertexAttribArray(a);
-        ptBuf.position(0);
-        ptBuf.put(curX / ui.bmp.getWidth() * 2f - 1f);
-        ptBuf.put(1f - curY / ui.bmp.getHeight() * 2f);
-        ptBuf.position(0);
-        GLES20.glVertexAttribPointer(a, 2, GLES20.GL_FLOAT, false, 0, ptBuf);
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(progCol, "rnd"), 1f);
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(progCol, "ps"), pinching ? 26f : 34f);
-        GLES20.glUniform4f(GLES20.glGetUniformLocation(progCol, "col"), pinching ? 1f : 0.2f, pinching ? 0.55f : 0.9f, pinching ? 0f : 1f, 1f);
-        GLES20.glDrawArrays(GLES20.GL_POINTS, 0, 1);
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(progCol, "ps"), 12f);
-        GLES20.glUniform4f(GLES20.glGetUniformLocation(progCol, "col"), 1f, 1f, 1f, 1f);
-        GLES20.glDrawArrays(GLES20.GL_POINTS, 0, 1);
-        GLES20.glDisableVertexAttribArray(a);
+        float u = sceneH / 540f;
+        float x = curX - sceneW / 2f, y = sceneH / 2f - curY;
+        aaBegin();
+        aaSeg(x, y, x, y, (pinching ? 15f : 19f) * u);
+        aaFlush(pinching ? 1f : 0.15f, pinching ? 0.55f : 0.85f, pinching ? 0f : 1f);
+        aaBegin();
+        aaSeg(x, y, x, y, 7f * u);
+        aaFlush(1f, 1f, 1f);
     }
 
     private void drawQuad(int prog) {
@@ -255,9 +252,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     private void ensureMask() {
-        if (maskW != 0 && maskW == sceneW / 2) return;
+        if (maskW != 0 && maskW == sceneW * 3 / 4) return;
         if (maskTex[0] != 0) { GLES20.glDeleteTextures(1, maskTex, 0); GLES20.glDeleteFramebuffers(1, maskFbo, 0); }
-        maskW = Math.max(2, sceneW / 2); maskH = Math.max(2, sceneH / 2);
+        maskW = Math.max(2, sceneW * 3 / 4); maskH = Math.max(2, sceneH * 3 / 4);
         GLES20.glGenTextures(1, maskTex, 0);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, maskTex[0]);
         GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, maskW, maskH, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null);
@@ -343,45 +340,78 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glDisable(GLES20.GL_BLEND);
     }
 
+    // ---- soft-edged lines and dots: every stroke is a small quad whose edge fades over ~1.5 px, so nothing looks jagged ----
+    private int progAA;
+    private FloatBuffer aaBuf;
+    private int aaN = 0;
+
+    private void aaBegin() { aaBuf.position(0); aaN = 0; }
+
+    // one rounded stroke from (x0,y0) to (x1,y1), half width hw, all in scene pixels centred on the picture
+    private void aaSeg(float x0, float y0, float x1, float y1, float hw) {
+        float dx = x1 - x0, dy = y1 - y0;
+        float len = (float) Math.hypot(dx, dy);
+        if (len < 1e-3f) { dx = 1f; dy = 0f; len = 0f; } else { dx /= len; dy /= len; }
+        float nx = -dy, ny = dx;
+        float hwS = sceneW / 2f, hhS = sceneH / 2f;
+        float lh = len / hw;
+        float pad = hw + 1.5f;
+        float pa = pad / hw;
+        float[][] c = {
+            {x0 - dx * pad + nx * pad, y0 - dy * pad + ny * pad, -pa, pa},
+            {x0 - dx * pad - nx * pad, y0 - dy * pad - ny * pad, -pa, -pa},
+            {x1 + dx * pad + nx * pad, y1 + dy * pad + ny * pad, lh + pa, pa},
+            {x1 + dx * pad - nx * pad, y1 + dy * pad - ny * pad, lh + pa, -pa}};
+        int[] idx = {0, 1, 2, 1, 3, 2};
+        for (int k : idx) {
+            aaBuf.put(c[k][0] / hwS).put(c[k][1] / hhS).put(c[k][2]).put(c[k][3]).put(lh).put(hw);
+            aaN++;
+        }
+    }
+
+    private void aaFlush(float cr, float cg, float cb) {
+        if (aaN == 0) return;
+        GLES20.glEnable(GLES20.GL_BLEND);
+        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        GLES20.glUseProgram(progAA);
+        int ap = GLES20.glGetAttribLocation(progAA, "p"), aq = GLES20.glGetAttribLocation(progAA, "q");
+        GLES20.glEnableVertexAttribArray(ap);
+        GLES20.glEnableVertexAttribArray(aq);
+        aaBuf.position(0);
+        GLES20.glVertexAttribPointer(ap, 2, GLES20.GL_FLOAT, false, 24, aaBuf);
+        aaBuf.position(2);
+        GLES20.glVertexAttribPointer(aq, 4, GLES20.GL_FLOAT, false, 24, aaBuf);
+        GLES20.glUniform3f(GLES20.glGetUniformLocation(progAA, "col"), cr, cg, cb);
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, aaN);
+        GLES20.glDisableVertexAttribArray(ap);
+        GLES20.glDisableVertexAttribArray(aq);
+        GLES20.glDisable(GLES20.GL_BLEND);
+        aaBuf.position(0);
+        aaN = 0;
+    }
+
     private void drawSkeleton(float[] r) {
         int n = (int) r[0];
         if (n <= 0) return;
-        boolean flip = rot180;
-        GLES20.glUseProgram(progCol);
-        int a = GLES20.glGetAttribLocation(progCol, "p");
-        int uc = GLES20.glGetUniformLocation(progCol, "col");
-        int up = GLES20.glGetUniformLocation(progCol, "ps");
-        int ur = GLES20.glGetUniformLocation(progCol, "rnd");
-        GLES20.glEnableVertexAttribArray(a);
+        float u = sceneH / 540f;
+        float hwS = sceneW / 2f, hhS = sceneH / 2f;
         for (int i = 0; i < n; i++) {
-            float[] x = new float[21], y = new float[21];
+            float[] X = new float[21], Y = new float[21];
             for (int k = 0; k < 21; k++) {
                 float hx = r[1 + i * 63 + k * 3], hy = r[1 + i * 63 + k * 3 + 1];
-                if (flip) { hx = 1f - hx; hy = 1f - hy; }
-                x[k] = hx * 2f - 1f; y[k] = 1f - hy * 2f;
+                if (rot180) { hx = 1f - hx; hy = 1f - hy; }
+                X[k] = (hx * 2f - 1f) * hwS; Y[k] = (1f - hy * 2f) * hhS;
             }
-            lineBuf.position(0);
-            for (int b = 0; b < BONES.length; b++) { lineBuf.put(x[BONES[b]]); lineBuf.put(y[BONES[b]]); }
-            lineBuf.position(0);
-            GLES20.glVertexAttribPointer(a, 2, GLES20.GL_FLOAT, false, 0, lineBuf);
-            GLES20.glUniform1f(up, 1f);
-            GLES20.glUniform1f(ur, 0f);
-            GLES20.glLineWidth(7f);
-            GLES20.glUniform4f(uc, 0f, 0.5f, 0.7f, 1f);
-            GLES20.glDrawArrays(GLES20.GL_LINES, 0, BONES.length);
-            GLES20.glLineWidth(3f);
-            GLES20.glUniform4f(uc, 0.4f, 1f, 1f, 1f);
-            GLES20.glDrawArrays(GLES20.GL_LINES, 0, BONES.length);
-            ptBuf.position(0);
-            for (int k = 0; k < 21; k++) { ptBuf.put(x[k]); ptBuf.put(y[k]); }
-            ptBuf.position(0);
-            GLES20.glVertexAttribPointer(a, 2, GLES20.GL_FLOAT, false, 0, ptBuf);
-            GLES20.glUniform1f(up, 10f);
-            GLES20.glUniform1f(ur, 1f);
-            GLES20.glUniform4f(uc, 1f, 1f, 1f, 1f);
-            GLES20.glDrawArrays(GLES20.GL_POINTS, 0, 21);
+            aaBegin();
+            for (int b = 0; b < BONES.length; b += 2) aaSeg(X[BONES[b]], Y[BONES[b]], X[BONES[b + 1]], Y[BONES[b + 1]], 5f * u);
+            aaFlush(0.0f, 0.45f, 0.62f);
+            aaBegin();
+            for (int b = 0; b < BONES.length; b += 2) aaSeg(X[BONES[b]], Y[BONES[b]], X[BONES[b + 1]], Y[BONES[b + 1]], 2.4f * u);
+            aaFlush(0.45f, 1f, 1f);
+            aaBegin();
+            for (int k = 0; k < 21; k++) aaSeg(X[k], Y[k], X[k], Y[k], 5.5f * u);
+            aaFlush(1f, 1f, 1f);
         }
-        GLES20.glDisableVertexAttribArray(a);
     }
 
     @Override public void onDrawFrame(GL10 gl) {
