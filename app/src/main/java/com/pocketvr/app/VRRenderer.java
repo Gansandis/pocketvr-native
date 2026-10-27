@@ -29,6 +29,55 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile float predMs = 0;
     public NvUi ui;
     private int progUi, uiTex = 0;
+    private volatile float[] rotNow = new float[]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
+    private float[] rotRef = null;
+    public volatile boolean recenter = true;
+    private final float[] mP = new float[16], mM = new float[16], mMV = new float[16], mMVP = new float[16], mInv = new float[16], mR0 = new float[16];
+    private float tanH = 0.65f, tanV = 0.37f;
+    private static final float PANEL_W = 0.95f, PANEL_D = 1.5f;
+    private int progPanel;
+    private float cnx = 0, cny = 0;
+    public void setRotation(float[] m) { rotNow = m.clone(); }
+
+    // the menu is a flat panel fixed in the room: the phone's turn sensor decides where it shows on the screen
+    private void computePanel() {
+        float[] rn = rotNow;
+        if (recenter || rotRef == null) {
+            android.opengl.Matrix.transposeM(mR0, 0, rn, 0);
+            rotRef = mR0.clone();
+            recenter = false;
+        }
+        float aspect = (float) sceneW / Math.max(1, sceneH);
+        float hf = Math.max(0.8f, Math.min(1.9f, cam.hFov));
+        tanH = (float) Math.tan(hf / 2f);
+        tanV = tanH / aspect;
+        float fovy = (float) Math.toDegrees(2.0 * Math.atan(tanV));
+        android.opengl.Matrix.perspectiveM(mP, 0, fovy, aspect, 0.05f, 20f);
+        android.opengl.Matrix.translateM(mM, 0, rotRef, 0, 0f, 0f, -PANEL_D);
+        android.opengl.Matrix.multiplyMM(mMV, 0, rn, 0, mM, 0);
+        android.opengl.Matrix.multiplyMM(mMVP, 0, mP, 0, mMV, 0);
+        android.opengl.Matrix.invertM(mInv, 0, mMV, 0);
+    }
+
+    // where the pointing finger meets the panel, in the panel picture's pixels
+    private boolean hitPanel(float nx, float ny, float[] out) {
+        if (ui == null || ui.bmp == null) return false;
+        float dx = nx * tanH, dy = ny * tanV, dz = -1f;
+        float ox = mInv[12], oy = mInv[13], oz = mInv[14];
+        float Dz = mInv[2] * dx + mInv[6] * dy + mInv[10] * dz;
+        float Dx = mInv[0] * dx + mInv[4] * dy + mInv[8] * dz;
+        float Dy = mInv[1] * dx + mInv[5] * dy + mInv[9] * dz;
+        if (Math.abs(Dz) < 1e-5f) return false;
+        float t = -oz / Dz;
+        if (t <= 0) return false;
+        float lx = ox + t * Dx, ly = oy + t * Dy;
+        float ph = PANEL_W * ui.bmp.getHeight() / ui.bmp.getWidth();
+        float u = lx / PANEL_W + 0.5f, v = 0.5f - ly / ph;
+        if (u < -0.05f || u > 1.05f || v < -0.05f || v > 1.05f) return false;
+        out[0] = u * ui.bmp.getWidth();
+        out[1] = v * ui.bmp.getHeight();
+        return true;
+    }
     private float[] lastRes, vel = new float[1];
     private long tLast = 0;
     private float[] disp = new float[]{0};
@@ -95,20 +144,24 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progRing = prog(
             "attribute vec2 p; varying vec2 uv; void main(){ gl_Position=vec4(p,0.,1.); uv=p*0.5+0.5; }",
             "precision mediump float; uniform sampler2D tex; uniform vec2 px; uniform float rad; varying vec2 uv;" +
-            "float s(vec2 o){ return texture2D(tex,uv+o).r; }" +
-            "void main(){ vec2 d=px*rad; float c=texture2D(tex,uv).r; float mx=c, mn=c; float v;" +
-            " v=s(vec2(d.x,0.)); mx=max(mx,v); mn=min(mn,v); v=s(vec2(-d.x,0.)); mx=max(mx,v); mn=min(mn,v);" +
-            " v=s(vec2(0.,d.y)); mx=max(mx,v); mn=min(mn,v); v=s(vec2(0.,-d.y)); mx=max(mx,v); mn=min(mn,v);" +
-            " v=s(d); mx=max(mx,v); mn=min(mn,v); v=s(-d); mx=max(mx,v); mn=min(mn,v);" +
-            " v=s(vec2(d.x,-d.y)); mx=max(mx,v); mn=min(mn,v); v=s(vec2(-d.x,d.y)); mx=max(mx,v); mn=min(mn,v);" +
-            " float e=smoothstep(0.1,0.9,mx-mn); gl_FragColor=vec4(vec3(0.78,0.9,1.0)*e, e); }");
+            "float s(float x, float y){ return texture2D(tex,uv+vec2(x,y)*px*rad).r; }" +
+            "void main(){" +
+            " float m = s(0.,0.)*0.25 + (s(1.,0.)+s(-1.,0.)+s(0.,1.)+s(0.,-1.))*0.125 + (s(1.,1.)+s(-1.,1.)+s(1.,-1.)+s(-1.,-1.))*0.0625;" +
+            " float w = (s(3.,0.)+s(-3.,0.)+s(0.,3.)+s(0.,-3.))*0.25;" +
+            " float line = 1.0 - smoothstep(0.0, 0.17, abs(m-0.5));" +
+            " float glow = 0.32*smoothstep(0.0,0.6,w)*(1.0-smoothstep(0.30,0.50,m));" +
+            " float e = max(line, glow);" +
+            " gl_FragColor = vec4(vec3(0.86,0.94,1.0)*e, e); }");
         progAA = prog(
             "attribute vec2 p; attribute vec4 q; varying vec4 vq; void main(){ gl_Position=vec4(p,0.,1.); vq=q; }",
-            "precision mediump float; uniform vec3 col; varying vec4 vq;" +
-            "void main(){ float t=clamp(vq.x,0.,vq.z); float d=length(vec2(vq.x-t,vq.y)); float al=clamp((1.-d)*vq.w/1.5,0.,1.); gl_FragColor=vec4(col*al,al); }");
+            "precision mediump float; uniform vec3 col; uniform float sf; varying vec4 vq;" +
+            "void main(){ float t=clamp(vq.x,0.,vq.z); float d=length(vec2(vq.x-t,vq.y)); float al=clamp((1.-d)*vq.w/sf,0.,1.); gl_FragColor=vec4(col*al,al); }");
         aaBuf = fb(6 * 6 * 60);
         triBuf = fb(4096);
         maskW = 0; maskFbo[0] = 0; maskTex[0] = 0;
+        progPanel = prog(
+            "attribute vec2 p; uniform mat4 mvp; uniform vec2 hs; varying vec2 uv; void main(){ gl_Position=mvp*vec4(p*hs,0.,1.); uv=vec2(p.x*0.5+0.5, 0.5-p.y*0.5); }",
+            "precision mediump float; uniform sampler2D tex; varying vec2 uv; void main(){ gl_FragColor=texture2D(tex,uv); }");
         quad = fb(8);
         quad.put(new float[]{-1,-1, 1,-1, -1,1, 1,1}).position(0);
         lineBuf = fb(BONES.length * 2 * 2 * 2);
@@ -145,7 +198,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, sceneTex[0], 0);
         sceneW = w; sceneH = h;
         maskW = 0;
-        if (ui != null) { ui.resize(w, h); ui.markDirty(); }
+        if (ui != null) { ui.resize(1024, 576); ui.markDirty(); }
         if (uiTex != 0) { GLES20.glDeleteTextures(1, new int[]{uiTex}, 0); uiTex = 0; }
     }
 
@@ -201,11 +254,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         GLES20.glEnable(GLES20.GL_BLEND);
         GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
-        GLES20.glUseProgram(progUi);
+        GLES20.glUseProgram(progPanel);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, uiTex);
-        GLES20.glUniform1i(GLES20.glGetUniformLocation(progUi, "tex"), 0);
-        drawQuad(progUi);
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(progPanel, "tex"), 0);
+        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(progPanel, "mvp"), 1, false, mMVP, 0);
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(progPanel, "hs"), PANEL_W / 2f, PANEL_W * ui.bmp.getHeight() / ui.bmp.getWidth() / 2f);
+        drawQuad(progPanel);
         GLES20.glDisable(GLES20.GL_BLEND);
     }
 
@@ -225,16 +280,18 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (pinching) { if (ratio > 0.5f) pinching = false; } else { if (ratio < 0.3f) pinching = true; }
         float hx = tx, hy = ty;
         if (rot180) { hx = 1f - hx; hy = 1f - hy; }
-        float x = hx * ui.bmp.getWidth(), y = hy * ui.bmp.getHeight();
-        if (!curOk) { curX = x; curY = y; } else { curX += (x - curX) * 0.6f; curY += (y - curY) * 0.6f; }
+        float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
+        if (!curOk) { cnx = nx; cny = ny; } else { cnx += (nx - cnx) * 0.6f; cny += (ny - cny) * 0.6f; }
         curOk = true;
-        ui.update(true, curX, curY, pinching);
+        float[] o = new float[2];
+        boolean hit = hitPanel(cnx, cny, o);
+        ui.update(hit, o[0], o[1], pinching);
     }
 
     private void drawCursor() {
         if (!curOk || ui == null || ui.bmp == null) return;
         float u = sceneH / 540f;
-        float x = curX - sceneW / 2f, y = sceneH / 2f - curY;
+        float x = cnx * sceneW / 2f, y = cny * sceneH / 2f;
         aaBegin();
         aaSeg(x, y, x, y, (pinching ? 15f : 19f) * u);
         aaFlush(pinching ? 1f : 0.15f, pinching ? 0.55f : 0.85f, pinching ? 0f : 1f);
@@ -267,11 +324,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, maskTex[0], 0);
     }
 
-    private void tri(float ax, float ay, float bx, float by, float cx, float cy) {
-        triBuf.put(ax).put(ay).put(bx).put(by).put(cx).put(cy);
-    }
-
-    // fat hand shape (fingers as thick bars, palm filled) drawn to a small mask, then only its edge is painted: a glowing outline
+    // hand shape (fingers as fat soft bars, palm filled) drawn to a small soft mask; the mask is blurred a little and a thin smooth line
+    // is drawn along its middle value, with a faint glow outside: a clean single contour like the web version
     private void drawOutline(float[] r) {
         int n = (int) r[0];
         if (n <= 0) return;
@@ -280,14 +334,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glViewport(0, 0, maskW, maskH);
         GLES20.glClearColor(0, 0, 0, 0);
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-        GLES20.glUseProgram(progCol);
-        int a = GLES20.glGetAttribLocation(progCol, "p");
-        GLES20.glUniform4f(GLES20.glGetUniformLocation(progCol, "col"), 1f, 1f, 1f, 1f);
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(progCol, "rnd"), 0f);
-        GLES20.glEnableVertexAttribArray(a);
         float hwS = sceneW / 2f, hhS = sceneH / 2f;
         for (int i = 0; i < n; i++) {
-            float[] X = new float[21], Y = new float[21];     // in scene pixels, centred
+            float[] X = new float[21], Y = new float[21];
             for (int k = 0; k < 21; k++) {
                 float hx = r[1 + i * 63 + k * 3], hy = r[1 + i * 63 + k * 3 + 1];
                 if (rot180) { hx = 1f - hx; hy = 1f - hy; }
@@ -295,37 +344,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
             float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
             float hw = Math.max(4f, size * 0.17f);
-            triBuf.position(0);
-            for (int b = 0; b < BONES.length; b += 2) {
-                int p0 = BONES[b], p1 = BONES[b + 1];
-                float dx = X[p1] - X[p0], dy = Y[p1] - Y[p0];
-                float len = (float) Math.hypot(dx, dy);
-                if (len < 1e-3f) continue;
-                float nx = -dy / len * hw, ny = dx / len * hw;
-                float ax = X[p0] + nx, ay = Y[p0] + ny, bx = X[p0] - nx, by = Y[p0] - ny;
-                float cx = X[p1] + nx, cy = Y[p1] + ny, dxx = X[p1] - nx, dyy = Y[p1] - ny;
-                tri(ax / hwS, ay / hhS, bx / hwS, by / hhS, cx / hwS, cy / hhS);
-                tri(bx / hwS, by / hhS, dxx / hwS, dyy / hhS, cx / hwS, cy / hhS);
-            }
-            int[] palm = {0, 1, 5, 0, 5, 9, 0, 9, 13, 0, 13, 17};
-            for (int t = 0; t < palm.length; t += 3)
-                tri(X[palm[t]] / hwS, Y[palm[t]] / hhS, X[palm[t + 1]] / hwS, Y[palm[t + 1]] / hhS, X[palm[t + 2]] / hwS, Y[palm[t + 2]] / hhS);
-            int verts = triBuf.position() / 2;
-            triBuf.position(0);
-            GLES20.glVertexAttribPointer(a, 2, GLES20.GL_FLOAT, false, 0, triBuf);
-            GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, verts);
-            // round joints and finger tips
-            ptBuf.position(0);
-            for (int k = 0; k < 21; k++) { ptBuf.put(X[k] / hwS); ptBuf.put(Y[k] / hhS); }
-            ptBuf.position(0);
-            GLES20.glVertexAttribPointer(a, 2, GLES20.GL_FLOAT, false, 0, ptBuf);
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(progCol, "rnd"), 1f);
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(progCol, "ps"), Math.min(60f, hw * 2f * maskH / sceneH));
-            GLES20.glDrawArrays(GLES20.GL_POINTS, 0, 21);
-            GLES20.glUniform1f(GLES20.glGetUniformLocation(progCol, "rnd"), 0f);
+            aaBegin();
+            for (int b = 0; b < BONES.length; b += 2) aaSeg(X[BONES[b]], Y[BONES[b]], X[BONES[b + 1]], Y[BONES[b + 1]], hw);
+            for (int k = 0; k < 21; k++) aaSeg(X[k], Y[k], X[k], Y[k], hw);
+            aaSeg(X[0], Y[0], X[9], Y[9], size * 0.40f);
+            aaSeg(X[5], Y[5], X[17], Y[17], size * 0.20f);
+            aaFlush(1f, 1f, 1f);
         }
-        GLES20.glDisableVertexAttribArray(a);
-        // paint the edge of the mask onto the scene picture
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0]);
         GLES20.glViewport(0, 0, sceneW, sceneH);
         GLES20.glEnable(GLES20.GL_BLEND);
@@ -335,7 +360,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, maskTex[0]);
         GLES20.glUniform1i(GLES20.glGetUniformLocation(progRing, "tex"), 0);
         GLES20.glUniform2f(GLES20.glGetUniformLocation(progRing, "px"), 1f / maskW, 1f / maskH);
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(progRing, "rad"), 2.2f);
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(progRing, "rad"), 2.0f);
         drawQuad(progRing);
         GLES20.glDisable(GLES20.GL_BLEND);
     }
@@ -344,6 +369,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private int progAA;
     private FloatBuffer aaBuf;
     private int aaN = 0;
+    private float aaSoft = 1.5f;
 
     private void aaBegin() { aaBuf.position(0); aaN = 0; }
 
@@ -355,7 +381,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float nx = -dy, ny = dx;
         float hwS = sceneW / 2f, hhS = sceneH / 2f;
         float lh = len / hw;
-        float pad = hw + 1.5f;
+        float pad = hw + aaSoft;
         float pa = pad / hw;
         float[][] c = {
             {x0 - dx * pad + nx * pad, y0 - dy * pad + ny * pad, -pa, pa},
@@ -382,6 +408,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         aaBuf.position(2);
         GLES20.glVertexAttribPointer(aq, 4, GLES20.GL_FLOAT, false, 24, aaBuf);
         GLES20.glUniform3f(GLES20.glGetUniformLocation(progAA, "col"), cr, cg, cb);
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(progAA, "sf"), aaSoft);
         GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, aaN);
         GLES20.glDisableVertexAttribArray(ap);
         GLES20.glDisableVertexAttribArray(aq);
@@ -446,14 +473,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform1f(GLES20.glGetUniformLocation(progCam, "rf"), rot180 ? 1f : 0f);
         drawQuad(progCam);
         predictNow(now);
-        if (skel == 1) drawSkeleton(disp); else if (skel == 2) drawOutline(disp);
-        if (ui != null && sceneH > 0) {
-            int eyesN = stereo ? 2 : 1;
-            float eaN = (float) (vw / eyesN) / Math.max(1, vh), saN = (float) sceneW / sceneH;
-            ui.setSafe(eaN < saN ? eaN / saN : 1f);
-        }
+        computePanel();
         cursor();
         drawUi();
+        if (skel == 1) drawSkeleton(disp); else if (skel == 2) drawOutline(disp);
         drawCursor();
 
         // 2) screen: mono or split, with lens warp
