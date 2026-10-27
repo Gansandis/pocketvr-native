@@ -25,7 +25,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile String err = "";
     private boolean hudOn = true;
-    private final NvUi ui = new NvUi();
+    private final NvUi menu = new NvUi();
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (cam != null && rend != null) {
@@ -50,7 +50,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         cam.detPaceMs = 0;
         rend = new VRRenderer(this, cam);
         buildMenu();
-        rend.ui = ui;
+        rend.ui = menu;
         gl = new GLSurfaceView(this);
         gl.setEGLContextClientVersion(2);
         gl.setPreserveEGLContextOnPause(false);
@@ -81,12 +81,12 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     private void buildMenu() {
-        ui.toggles.add(new NvUi.Btn(() -> "แยกจอ VR: " + (rend.stereo ? "เปิด" : "ปิด"), () -> rend.stereo, () -> rend.stereo = !rend.stereo));
-        ui.toggles.add(new NvUi.Btn(() -> "เลนส์: " + (rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง"), () -> rend.lens > 0, () -> rend.lens = (rend.lens + 1) % 4));
-        ui.toggles.add(new NvUi.Btn(() -> "คาดการณ์มือ: " + (rend.predict ? "เปิด" : "ปิด"), () -> rend.predict, () -> rend.predict = !rend.predict));
-        ui.toggles.add(new NvUi.Btn(() -> "โครงมือ: " + (rend.showSkel ? "เปิด" : "ปิด"), () -> rend.showSkel, () -> rend.showSkel = !rend.showSkel));
-        ui.toggles.add(new NvUi.Btn(() -> "ตัวเลขสถานะ: " + (hudOn ? "เปิด" : "ปิด"), () -> hudOn, () -> hudOn = !hudOn));
-        ui.toggles.add(new NvUi.Btn(() -> "กลับแอปหลัก", null, () -> runOnUiThread(() -> finish())));
+        menu.toggles.add(new NvUi.Btn(() -> "แยกจอ VR: " + (rend.stereo ? "เปิด" : "ปิด"), () -> rend.stereo, () -> rend.stereo = !rend.stereo));
+        menu.toggles.add(new NvUi.Btn(() -> "เลนส์: " + (rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง"), () -> rend.lens > 0, () -> rend.lens = (rend.lens + 1) % 4));
+        menu.toggles.add(new NvUi.Btn(() -> "คาดการณ์มือ: " + (rend.predict ? "เปิด" : "ปิด"), () -> rend.predict, () -> rend.predict = !rend.predict));
+        menu.toggles.add(new NvUi.Btn(() -> "โครงมือ: " + (rend.showSkel ? "เปิด" : "ปิด"), () -> rend.showSkel, () -> rend.showSkel = !rend.showSkel));
+        menu.toggles.add(new NvUi.Btn(() -> "ตัวเลขสถานะ: " + (hudOn ? "เปิด" : "ปิด"), () -> hudOn, () -> hudOn = !hudOn));
+        menu.toggles.add(new NvUi.Btn(() -> "กลับแอปหลัก", null, () -> runOnUiThread(() -> finish())));
         try {
             android.content.pm.PackageManager pm = getPackageManager();
             android.content.Intent q = new android.content.Intent(android.content.Intent.ACTION_MAIN);
@@ -111,11 +111,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                     } catch (Throwable ignored) { }
                 }));
                 b.icon = iconOf(ri.loadIcon(pm));
-                ui.apps.add(b);
+                menu.apps.add(b);
             }
-            if (keep.size() > 6) ui.toggles.add(new NvUi.Btn(() -> "แอปหน้าถัดไป", null, () -> ui.nextPage()));
+            if (keep.size() > 6) menu.toggles.add(new NvUi.Btn(() -> "แอปหน้าถัดไป", null, () -> menu.nextPage()));
         } catch (Throwable t) { err = "apps: " + t; }
-        ui.relayout();
+        menu.relayout();
     }
 
     private static android.graphics.Bitmap iconOf(android.graphics.drawable.Drawable d) {
