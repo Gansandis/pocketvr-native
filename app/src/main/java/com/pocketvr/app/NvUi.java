@@ -33,6 +33,9 @@ public class NvUi {
     public final List<Btn> apps = new ArrayList<>();   // tab 1 cards (installed apps)
     public final List<Btn> dock = new ArrayList<>();   // always-visible round buttons at the bottom
     public volatile boolean open = false;
+    public volatile boolean dragging = false;
+    private final Btn handle = new Btn("", () -> "", null, null, 0, 0, null);
+    public boolean handleHover() { return hover == handle; }
 
     private final List<Btn> tabs = new ArrayList<>();
     private final List<Btn> visible = new ArrayList<>();
@@ -96,7 +99,10 @@ public class NvUi {
         int n = dock.size();
         float d = 50 * u, gap = 10 * u;
         float dw = n * d + (n + 1) * gap, dh = d + 2 * gap * 0.8f;
-        float dx = (W - dw) / 2f, dy = H - 14 * u - dh;
+        float dx = (W - dw) / 2f, dy = H - 38 * u - dh;
+        float hbw = 150 * u;
+        handle.r.set(W / 2f - hbw / 2f, H - 44 * u, W / 2f + hbw / 2f, H - 6 * u);
+        visible.add(handle);
         dockR.set(dx, dy, dx + dw, dy + dh);
         for (int i = 0; i < n; i++) {
             float x = dx + gap + i * (d + gap), y = dy + (dh - d) / 2f;
@@ -169,6 +175,10 @@ public class NvUi {
         cv.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
         float u = H / 540f;
         if (!toast.isEmpty()) text(toast, W / 2f, H * 0.05f, 20 * u, 0xFFFFFFFF, 0);
+        // handle bar (grab it with a pinch and move the whole menu)
+        float hp = 6 * u;
+        RectF hb = new RectF(handle.r.left + hp, handle.r.centerY() - 5 * u, handle.r.right - hp, handle.r.centerY() + 5 * u);
+        round(hb, dragging ? 0xFFFFA24D : (hover == handle ? 0xFF22B8CF : 0xE6FFFFFF), hb.height() / 2);
         // dock
         round(dockR, 0xD0161820, dockR.height() / 2);
         stroke(dockR, 0x33FFFFFF, 1.5f * u, dockR.height() / 2);

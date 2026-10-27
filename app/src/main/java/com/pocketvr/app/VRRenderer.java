@@ -39,13 +39,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private float cnx = 0, cny = 0;
     public void setRotation(float[] m) { rotNow = m.clone(); }
 
-    // the menu is a flat panel fixed in the room: the phone's turn sensor decides where it shows on the screen
+    // the menu is a flat panel fixed in the room: the phone's turn sensor decides where it shows on the screen.
+    // It can (1) slowly come back in front of you after you look far away, (2) float a few millimetres, (3) be grabbed by its bar and moved.
+    public volatile boolean follow = true, floaty = true;
+    private boolean following = false, dragging = false, prevPinch = false;
+    private float yawA = 0, pitchA = 0, rayYaw = 0, rayPitch = 0, dragYawOff = 0, dragPitchOff = 0;
+    private final float[] tA = new float[16], tB = new float[16], tC = new float[16], tD = new float[16];
+
     private void computePanel() {
         float[] rn = rotNow;
         if (recenter || rotRef == null) {
             android.opengl.Matrix.transposeM(mR0, 0, rn, 0);
             rotRef = mR0.clone();
             recenter = false;
+            following = false;
         }
         float aspect = (float) sceneW / Math.max(1, sceneH);
         float hf = Math.max(0.8f, Math.min(1.9f, cam.hFov));
@@ -53,7 +60,44 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         tanV = tanH / aspect;
         float fovy = (float) Math.toDegrees(2.0 * Math.atan(tanV));
         android.opengl.Matrix.perspectiveM(mP, 0, fovy, aspect, 0.05f, 20f);
+
+        // where the panel centre is now, seen from the phone: angle to the right and angle upwards
         android.opengl.Matrix.translateM(mM, 0, rotRef, 0, 0f, 0f, -PANEL_D);
+        android.opengl.Matrix.multiplyMM(mMV, 0, rn, 0, mM, 0);
+        float vx = mMV[12], vy = mMV[13], vz = mMV[14];
+        yawA = (float) Math.toDegrees(Math.atan2(vx, -vz));
+        pitchA = (float) Math.toDegrees(Math.atan2(vy, -vz));
+
+        float th = 0f, ph = 0f;      // turn to apply to the panel, in the phone's own view
+        if (dragging) {
+            th = (yawA - (rayYaw + dragYawOff)) * 0.6f;
+            ph = ((rayPitch + dragPitchOff) - pitchA) * 0.6f;
+        } else if (follow) {
+            if (!following && (Math.abs(yawA) > 40f || Math.abs(pitchA) > 28f)) following = true;
+            if (following) {
+                th = yawA * 0.06f;
+                ph = -pitchA * 0.06f;
+                if (Math.abs(yawA) < 2f && Math.abs(pitchA) < 2f) following = false;
+            }
+        }
+        if (th != 0f || ph != 0f) {
+            android.opengl.Matrix.setRotateM(tA, 0, th, 0f, 1f, 0f);
+            android.opengl.Matrix.setRotateM(tB, 0, ph, 1f, 0f, 0f);
+            android.opengl.Matrix.multiplyMM(tC, 0, tA, 0, tB, 0);            // correction in view space
+            android.opengl.Matrix.multiplyMM(tD, 0, tC, 0, rn, 0);
+            android.opengl.Matrix.transposeM(tA, 0, rn, 0);                    // rn is a pure turn: its transpose is its inverse
+            android.opengl.Matrix.multiplyMM(tB, 0, tA, 0, tD, 0);
+            android.opengl.Matrix.multiplyMM(tC, 0, tB, 0, rotRef, 0);
+            rotRef = tC.clone();
+        }
+        float t = (System.nanoTime() / 1e9f) % 600f;
+        float bx = 0f, by = 0f, bz = 0f;
+        if (floaty && !dragging) {
+            bx = 0.006f * (float) Math.sin(t * 0.6f + 1f);
+            by = 0.008f * (float) Math.sin(t * 0.9f);
+            bz = 0.010f * (float) Math.sin(t * 0.4f + 2f);
+        }
+        android.opengl.Matrix.translateM(mM, 0, rotRef, 0, bx, by, -PANEL_D + bz);
         android.opengl.Matrix.multiplyMM(mMV, 0, rn, 0, mM, 0);
         android.opengl.Matrix.multiplyMM(mMVP, 0, mP, 0, mMV, 0);
         android.opengl.Matrix.invertM(mInv, 0, mMV, 0);
@@ -271,7 +315,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void cursor() {
         float[] r = disp;
         boolean ok = r.length >= 64 && r[0] >= 1 && ui != null && ui.bmp != null;
-        if (!ok) { curOk = false; pinching = false; if (ui != null && ui.bmp != null) ui.update(false, 0, 0, false); return; }
+        if (!ok) { curOk = false; pinching = false; dragging = false; prevPinch = false; if (ui != null) ui.dragging = false; if (ui != null && ui.bmp != null) ui.update(false, 0, 0, false); return; }
         float ar = (float) Math.max(1, imgW) / Math.max(1, imgH);
         float tx = r[1 + 8 * 3], ty = r[1 + 8 * 3 + 1];
         float ax = r[1 + 4 * 3], ay = r[1 + 4 * 3 + 1];
@@ -287,7 +331,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         curOk = true;
         float[] o = new float[2];
         boolean hit = hitPanel(cnx, cny, o);
-        ui.update(hit, o[0], o[1], pinching);
+        rayYaw = (float) Math.toDegrees(Math.atan(cnx * tanH));
+        rayPitch = (float) Math.toDegrees(Math.atan(cny * tanV));
+        if (pinching && !prevPinch && hit && ui.handleHover()) {      // grabbed the bar under the panel
+            dragging = true;
+            dragYawOff = yawA - rayYaw;
+            dragPitchOff = pitchA - rayPitch;
+        }
+        if (!pinching) dragging = false;
+        prevPinch = pinching;
+        ui.dragging = dragging;
+        ui.update(hit && !dragging, o[0], o[1], pinching && !dragging);
     }
 
     private void drawCursor() {
