@@ -25,6 +25,25 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     private final Handler ui = new Handler(Looper.getMainLooper());
     private volatile String err = "";
     private boolean hudOn = true;
+    private android.hardware.SensorManager sm;
+    private android.hardware.Sensor rotSensor;
+    private final android.hardware.SensorEventListener sl = new android.hardware.SensorEventListener() {
+        private final float[] r = new float[16], o = new float[16];
+        @Override public void onSensorChanged(android.hardware.SensorEvent e) {
+            try {
+                android.hardware.SensorManager.getRotationMatrixFromVector(r, e.values);
+                int rot = getWindowManager().getDefaultDisplay().getRotation();
+                if (rot == android.view.Surface.ROTATION_90) {
+                    android.hardware.SensorManager.remapCoordinateSystem(r, android.hardware.SensorManager.AXIS_Y, android.hardware.SensorManager.AXIS_MINUS_X, o);
+                    rend.setRotation(o);
+                } else if (rot == android.view.Surface.ROTATION_270) {
+                    android.hardware.SensorManager.remapCoordinateSystem(r, android.hardware.SensorManager.AXIS_MINUS_Y, android.hardware.SensorManager.AXIS_X, o);
+                    rend.setRotation(o);
+                } else rend.setRotation(r);
+            } catch (Throwable ignored) { }
+        }
+        @Override public void onAccuracyChanged(android.hardware.Sensor s, int acc) { }
+    };
     private final NvUi menu = new NvUi();
     private final Runnable tick = new Runnable() {
         @Override public void run() {
@@ -87,6 +106,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.home.add(new NvUi.Btn("✋", () -> "คาดการณ์มือ", () -> rend.predict ? "เปิดอยู่" : "ปิดอยู่", () -> rend.predict, GA, GB, () -> rend.predict = !rend.predict));
         menu.home.add(new NvUi.Btn("🦴", () -> "โครงมือ", () -> rend.skel == 0 ? "ปิด" : rend.skel == 1 ? "เส้นโครง" : "เส้นขอบเรืองแสง", () -> rend.skel > 0, GA, GB, () -> rend.skel = (rend.skel + 1) % 3));
         menu.home.add(new NvUi.Btn("📊", () -> "ตัวเลขสถานะ", () -> hudOn ? "เปิดอยู่" : "ปิดอยู่", () -> hudOn, GA, GB, () -> hudOn = !hudOn));
+        menu.home.add(new NvUi.Btn("📍", () -> "จัดกลางใหม่", () -> "วางเมนูตรงหน้า", null, GA, GB, () -> rend.recenter = true));
         menu.home.add(new NvUi.Btn("🏠", () -> "กลับแอปหลัก", () -> "ออกจากหน้าจอนี้", null, 0xFF8D6BFF, 0xFF4A2FB8, () -> runOnUiThread(() -> finish())));
         menu.dock.add(new NvUi.Btn("🏠", () -> "เมนู", null, () -> menu.open, 0, 0, () -> menu.toggleOpen()));
         menu.dock.add(new NvUi.Btn("🥽", () -> "แยกจอ", null, () -> rend.stereo, 0, 0, () -> rend.stereo = !rend.stereo));
@@ -144,11 +164,20 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         super.onResume();
         immersive();
         gl.onResume();
+        try {
+            sm = (android.hardware.SensorManager) getSystemService(SENSOR_SERVICE);
+            rotSensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_GAME_ROTATION_VECTOR);
+            if (rotSensor == null) rotSensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR);
+            if (rotSensor != null) sm.registerListener(sl, rotSensor, android.hardware.SensorManager.SENSOR_DELAY_GAME);
+            else err = "no turn sensor";
+        } catch (Throwable t) { err = "sensor: " + t; }
+        rend.recenter = true;
         ui.post(tick);
     }
 
     @Override protected void onPause() {
         ui.removeCallbacks(tick);
+        try { if (sm != null) sm.unregisterListener(sl); } catch (Throwable ignored) { }
         cam.stop();
         gl.onPause();
         super.onPause();

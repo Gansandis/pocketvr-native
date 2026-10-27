@@ -53,6 +53,7 @@ public class NvCam {
 
     public volatile float[] result = new float[]{0};
     public volatile float camFps = 0, detHz = 0, convMs = 0;
+    public volatile float hFov = 1.15f;           // horizontal field of view of the camera, radians
     public volatile long detPaceMs = 0;           // shortest time between two looks for hands
     private long camCount = 0, camT0 = 0, detCount = 0, detT0 = 0, lastDet = 0;
 
@@ -111,6 +112,11 @@ public class NvCam {
                 if (f != null && f == CameraCharacteristics.LENS_FACING_BACK) { id = s; cc = c; break; }
             }
             if (id == null) { lis.onError("no back camera"); return; }
+            try {
+                float[] fl = cc.get(CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS);
+                android.util.SizeF ps = cc.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE);
+                if (fl != null && fl.length > 0 && ps != null && fl[0] > 0) hFov = (float) (2.0 * Math.atan(ps.getWidth() / (2.0 * fl[0])));
+            } catch (Throwable ignored) { }
             StreamConfigurationMap map = cc.get(CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
             Size prev = pick(map.getOutputSizes(SurfaceTexture.class), 1280, 720, 0);
             double asp = (double) prev.getWidth() / prev.getHeight();
