@@ -118,8 +118,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.yawA = (float) Math.toDegrees(Math.atan2(w.mv[12], -w.mv[14]));
         w.pitchA = (float) Math.toDegrees(Math.atan2(w.mv[13], -w.mv[14]));
         if (dragWin == w) {
-            float th = (w.yawA - (rayYaw + w.dragYawOff)) * 0.6f;
-            float ph = ((rayPitch + w.dragPitchOff) - w.pitchA) * 0.6f;
+            float th = (w.yawA - (rayYaw + w.dragYawOff)) * 0.5f;
+            float ph = ((rayPitch + w.dragPitchOff) - w.pitchA) * 0.5f;
+            th = Math.max(-5f, Math.min(5f, th));              // at most a few degrees per frame, so nothing can snap away
+            ph = Math.max(-5f, Math.min(5f, ph));
             if (th != 0f || ph != 0f) turnWin(w, rn, th, ph);
         }
         // keep it upright: undo any tilt that piled up while it was being moved (turn about its own centre, so it does not slide)
@@ -377,6 +379,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // finger pointer: index fingertip; pinch = thumb tip close to index tip (relative to hand size)
     private boolean pinching = false;
     private long lastPinchT = 0, lostT = 0, mpSince = 0;
+    private float sizeEma = 0, dnx = 0, dny = 0;
+    private long dragT0 = 0;
     private boolean mpOn = false, mpLatched = false;
     private float mpProg = 0, mpNx = 0, mpNy = 0;
 
@@ -400,6 +404,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float kx = r[1 + 12 * 3], ky = r[1 + 12 * 3 + 1];
         float wx = r[1], wy = r[2], mx = r[1 + 9 * 3], my = r[1 + 9 * 3 + 1];
         float size = (float) Math.hypot((mx - wx) * ar, my - wy);
+        sizeEma = sizeEma <= 0f ? size : sizeEma + (size - sizeEma) * 0.15f;
+        // while moving a window the pointer is the middle of the knuckles: it stays steady when the fingers pinch
+        float kxn = (r[1 + 5 * 3] + r[1 + 9 * 3] + r[1 + 13 * 3]) / 3f, kyn = (r[1 + 5 * 3 + 1] + r[1 + 9 * 3 + 1] + r[1 + 13 * 3 + 1]) / 3f;
+        if (rot180) { kxn = 1f - kxn; kyn = 1f - kyn; }
+        float tnx = kxn * 2f - 1f, tny = 1f - kyn * 2f;
         float d = (float) Math.hypot((tx - ax) * ar, ty - ay);
         float ratio = size > 1e-4f ? d / size : 9f;
         float dm = (float) Math.hypot((kx - ax) * ar, ky - ay);
@@ -424,8 +433,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
         if (!curOk) { cnx = nx; cny = ny; } else { cnx += (nx - cnx) * 0.6f; cny += (ny - cny) * 0.6f; }
         curOk = true;
-        rayYaw = (float) Math.toDegrees(Math.atan(cnx * tanH));
-        rayPitch = (float) Math.toDegrees(Math.atan(cny * tanV));
+        if (dragWin != null) {
+            float ddx = tnx - dnx, ddy = tny - dny;
+            float dl = (float) Math.hypot(ddx, ddy);
+            float stp = Math.min(dl * 0.35f, 0.05f);                     // smooth, and never a sudden big jump
+            if (dl > 1e-5f) { dnx += ddx / dl * stp; dny += ddy / dl * stp; }
+            rayYaw = (float) Math.toDegrees(Math.atan(dnx * tanH));
+            rayPitch = (float) Math.toDegrees(Math.atan(dny * tanV));
+        } else {
+            rayYaw = (float) Math.toDegrees(Math.atan(cnx * tanH));
+            rayPitch = (float) Math.toDegrees(Math.atan(cny * tanV));
+        }
 
         float[] o = new float[2];
         Win target = null;
@@ -437,18 +455,25 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         if (target != null && pinching && !prevPinch && target.c.handleRecent()) {      // grabbed the bar under a window
             dragWin = target;
-            target.dragYawOff = target.yawA - rayYaw;
-            target.dragPitchOff = target.pitchA - rayPitch;
+            dnx = tnx; dny = tny;
+            float gy = (float) Math.toDegrees(Math.atan(dnx * tanH)), gp = (float) Math.toDegrees(Math.atan(dny * tanV));
+            rayYaw = gy; rayPitch = gp;
+            target.dragYawOff = target.yawA - gy;
+            target.dragPitchOff = target.pitchA - gp;
             target.dragS0 = target.scale;
-            target.dragSize0 = Math.max(1e-3f, size);
+            target.dragSize0 = Math.max(1e-3f, sizeEma);
+            dragT0 = nowMs;
             target.c.setDragging(true);
             wins.remove(target);                                          // bring to the front
             wins.add(target);
         }
-        if (dragWin != null && pinching) {
-            float tg = dragWin.dragS0 * (float) Math.pow(size / dragWin.dragSize0, 1.3);
+        if (dragWin != null && pinching && nowMs - dragT0 > 350) {     // not in the first moment of the grab, while the hand settles
+            // size follows how far the hand moved toward / away from you, but small changes (hand turning, noise) are ignored
+            float rr = sizeEma / dragWin.dragSize0;
+            float zr = rr > 1.15f ? rr / 1.15f : (rr < 0.87f ? rr / 0.87f : 1f);
+            float tg = dragWin.dragS0 * (float) Math.pow(zr, 1.2);
             tg = Math.max(0.5f, Math.min(2.2f, tg));
-            dragWin.scale += (tg - dragWin.scale) * 0.3f;
+            dragWin.scale += (tg - dragWin.scale) * 0.15f;
         }
         // let go only when the pinch has been open for a moment (one bad detection must not drop the window)
         if (dragWin != null && !pinching && nowMs - lastPinchT > 250) endDrag();

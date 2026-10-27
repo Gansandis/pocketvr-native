@@ -37,7 +37,7 @@ public class NvPanel implements NvContent {
         closeB = new NvUi.Btn("✕", () -> "", null, null, 0, 0, () -> { if (onClose != null) onClose.run(); });
         closeB.r.set(W - 52 * u, 10 * u, W - 14 * u, 48 * u);
         handleB = new NvUi.Btn("", () -> "", null, null, 0, 0, null);
-        handleB.r.set(W / 2f - 80 * u, H - 40 * u, W / 2f + 80 * u, H - 4 * u);
+        handleB.r.set(W / 2f - 120 * u, H - 54 * u, W / 2f + 120 * u, H - 4 * u);
     }
 
     public void add(NvUi.Btn b, float x, float y, float w, float h) { b.r.set(x, y, x + w, y + h); btns.add(b); dirty = true; }
