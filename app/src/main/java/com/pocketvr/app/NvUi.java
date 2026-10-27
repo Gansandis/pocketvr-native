@@ -35,7 +35,10 @@ public class NvUi {
     public volatile boolean open = false;
     public volatile boolean dragging = false;
     private final Btn handle = new Btn("", () -> "", null, null, 0, 0, null);
+    private Object lastH = null;
+    private long lastHT = 0;
     public boolean handleHover() { return hover == handle; }
+    public boolean handleRecent() { return hover == handle || (lastH == handle && System.currentTimeMillis() - lastHT < 300); }
 
     private final List<Btn> tabs = new ArrayList<>();
     private final List<Btn> visible = new ArrayList<>();
@@ -255,13 +258,16 @@ public class NvUi {
                 if (!b.r.isEmpty() && b.r.contains(x, y)) { h = b; break; }
             }
         }
+        if (h != null) { lastH = h; lastHT = System.currentTimeMillis(); }
         if (h != hover) { hover = h; dirty = true; }
         boolean edge = pinch && !wasPinch;
         wasPinch = pinch;
         long now = System.currentTimeMillis();
-        if (edge && h != null && now - lastAct > 400) {
+        // the pointer often slips a little just as the fingers close: use what was under it a moment ago
+        Object tgt = h != null ? h : ((lastH != null && now - lastHT < 250) ? lastH : null);
+        if (edge && tgt != null && now - lastAct > 400) {
             lastAct = now;
-            Btn b = (Btn) h;
+            Btn b = (Btn) tgt;
             try { if (b.act != null) b.act.run(); } catch (Throwable ignored) { }
             dirty = true;
         }

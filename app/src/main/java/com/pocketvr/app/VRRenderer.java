@@ -41,10 +41,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     // the menu is a flat panel fixed in the room: the phone's turn sensor decides where it shows on the screen.
     // It can (1) slowly come back in front of you after you look far away, (2) float a few millimetres, (3) be grabbed by its bar and moved.
-    public volatile boolean follow = true, floaty = true;
+    public volatile boolean floaty = true;
     public volatile float pScale = 1f;                      // menu size: pulling it toward you makes it bigger, pushing away makes it smaller
     private float dragS0 = 1f, dragSize0 = 1f;
-    private boolean following = false, dragging = false, prevPinch = false;
+    private boolean dragging = false, prevPinch = false;
     private float yawA = 0, pitchA = 0, rayYaw = 0, rayPitch = 0, dragYawOff = 0, dragPitchOff = 0;
     private final float[] tA = new float[16], tB = new float[16], tC = new float[16], tD = new float[16];
 
@@ -54,7 +54,6 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             android.opengl.Matrix.transposeM(mR0, 0, rn, 0);
             rotRef = mR0.clone();
             recenter = false;
-            following = false;
             pScale = 1f;
         }
         float aspect = (float) sceneW / Math.max(1, sceneH);
@@ -75,13 +74,6 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (dragging) {
             th = (yawA - (rayYaw + dragYawOff)) * 0.6f;
             ph = ((rayPitch + dragPitchOff) - pitchA) * 0.6f;
-        } else if (follow) {
-            if (!following && (Math.abs(yawA) > 40f || Math.abs(pitchA) > 28f)) following = true;
-            if (following) {
-                th = yawA * 0.06f;
-                ph = -pitchA * 0.06f;
-                if (Math.abs(yawA) < 2f && Math.abs(pitchA) < 2f) following = false;
-            }
         }
         if (th != 0f || ph != 0f) {
             android.opengl.Matrix.setRotateM(tA, 0, th, 0f, 1f, 0f);
@@ -324,10 +316,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     // finger pointer: index fingertip; pinch = thumb tip close to index tip (relative to hand size)
     private boolean pinching = false;
+    private long lastPinchT = 0, lostT = 0;
     private void cursor() {
         float[] r = disp;
+        long nowMs = System.currentTimeMillis();
         boolean ok = r.length >= 64 && r[0] >= 1 && ui != null && ui.bmp != null;
-        if (!ok) { curOk = false; pinching = false; dragging = false; prevPinch = false; if (ui != null) ui.dragging = false; if (ui != null && ui.bmp != null) ui.update(false, 0, 0, false); return; }
+        if (!ok) {
+            curOk = false;
+            if (lostT == 0) lostT = nowMs;
+            // a short loss of the hand (detection blink) must not drop a grabbed menu
+            if (!(dragging && nowMs - lostT < 400)) { pinching = false; dragging = false; prevPinch = false; if (ui != null) ui.dragging = false; }
+            if (ui != null && ui.bmp != null) ui.update(false, 0, 0, false);
+            return;
+        }
+        lostT = 0;
         float ar = (float) Math.max(1, imgW) / Math.max(1, imgH);
         float tx = r[1 + 8 * 3], ty = r[1 + 8 * 3 + 1];
         float ax = r[1 + 4 * 3], ay = r[1 + 4 * 3 + 1];
@@ -336,7 +338,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float d = (float) Math.hypot((tx - ax) * ar, ty - ay);
         float ratio = size > 1e-4f ? d / size : 9f;
         if (pinching) { if (ratio > 0.30f) pinching = false; } else { if (ratio < 0.17f) pinching = true; }
-        float hx = tx, hy = ty;
+        if (pinching) lastPinchT = nowMs;
+        // the pointer sits between thumb tip and index tip, so closing the fingers does not push it off the target
+        float hx = (tx + ax) * 0.5f, hy = (ty + ay) * 0.5f;
         if (rot180) { hx = 1f - hx; hy = 1f - hy; }
         float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
         if (!curOk) { cnx = nx; cny = ny; } else { cnx += (nx - cnx) * 0.6f; cny += (ny - cny) * 0.6f; }
@@ -345,7 +349,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         boolean hit = hitPanel(cnx, cny, o);
         rayYaw = (float) Math.toDegrees(Math.atan(cnx * tanH));
         rayPitch = (float) Math.toDegrees(Math.atan(cny * tanV));
-        if (pinching && !prevPinch && hit && ui.handleHover()) {      // grabbed the bar under the panel
+        if (pinching && !prevPinch && !dragging && ui.handleRecent()) {      // grabbed the bar under the panel
             dragging = true;
             dragYawOff = yawA - rayYaw;
             dragPitchOff = pitchA - rayPitch;
@@ -357,7 +361,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             target = Math.max(0.5f, Math.min(2.2f, target));
             pScale += (target - pScale) * 0.3f;
         }
-        if (!pinching) dragging = false;
+        // let go only when the pinch has been open for a moment (one bad detection must not drop the menu)
+        if (dragging && !pinching && nowMs - lastPinchT > 250) dragging = false;
         prevPinch = pinching;
         ui.dragging = dragging;
         ui.update(hit && !dragging, o[0], o[1], pinching && !dragging);
