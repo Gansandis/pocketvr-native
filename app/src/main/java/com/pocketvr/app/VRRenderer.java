@@ -148,10 +148,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "void main(){" +
             " float m = s(0.,0.)*0.25 + (s(1.,0.)+s(-1.,0.)+s(0.,1.)+s(0.,-1.))*0.125 + (s(1.,1.)+s(-1.,1.)+s(1.,-1.)+s(-1.,-1.))*0.0625;" +
             " float w = (s(3.,0.)+s(-3.,0.)+s(0.,3.)+s(0.,-3.))*0.25;" +
-            " float line = 1.0 - smoothstep(0.0, 0.17, abs(m-0.5));" +
-            " float glow = 0.32*smoothstep(0.0,0.6,w)*(1.0-smoothstep(0.30,0.50,m));" +
+            " float line = 1.0 - smoothstep(0.10, 0.30, abs(m-0.5));" +
+            " float glow = 0.45*smoothstep(0.0,0.6,w)*(1.0-smoothstep(0.30,0.50,m));" +
             " float e = max(line, glow);" +
-            " gl_FragColor = vec4(vec3(0.86,0.94,1.0)*e, e); }");
+            " float dk = 0.40*(1.0 - smoothstep(0.0, 0.16, abs(m-0.28)));" +
+            " float a = max(e, dk);" +
+            " gl_FragColor = vec4(vec3(0.92,0.97,1.0)*e, a); }");
         progAA = prog(
             "attribute vec2 p; attribute vec4 q; varying vec4 vq; void main(){ gl_Position=vec4(p,0.,1.); vq=q; }",
             "precision mediump float; uniform vec3 col; uniform float sf; varying vec4 vq;" +
@@ -225,11 +227,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (disp.length != r.length) disp = new float[r.length];
         System.arraycopy(r, 0, disp, 0, r.length);
         if (predict && r[0] >= 1) {
-            float lead = Math.min(now - tLast + 50, 200) / 1000f;
+            float lead = Math.min(now - tLast + 40, 130) / 1000f;
             predMs = lead * 1000f;
             for (int i = 1; i < r.length; i++) {
                 if ((i - 1) % 3 == 2) continue;
-                disp[i] = r[i] + vel[i] * lead;
+                disp[i] = r[i] + vel[i] * lead * 0.8f;
             }
         } else predMs = 0;
     }
@@ -343,12 +345,19 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 X[k] = (hx * 2f - 1f) * hwS; Y[k] = (1f - hy * 2f) * hhS;
             }
             float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
-            float hw = Math.max(4f, size * 0.17f);
+            float hw = Math.max(3f, size * 0.115f);
             aaBegin();
-            for (int b = 0; b < BONES.length; b += 2) aaSeg(X[BONES[b]], Y[BONES[b]], X[BONES[b + 1]], Y[BONES[b + 1]], hw);
-            for (int k = 0; k < 21; k++) aaSeg(X[k], Y[k], X[k], Y[k], hw);
-            aaSeg(X[0], Y[0], X[9], Y[9], size * 0.40f);
-            aaSeg(X[5], Y[5], X[17], Y[17], size * 0.20f);
+            for (int b = 0; b < BONES.length; b += 2) {
+                int p0 = BONES[b], p1 = BONES[b + 1];
+                float x1 = X[p1], y1 = Y[p1];
+                if (p1 == 4 || p1 == 8 || p1 == 12 || p1 == 16 || p1 == 20) {   // the end cap must not stick out beyond the fingertip
+                    float dx = x1 - X[p0], dy = y1 - Y[p0], l = (float) Math.hypot(dx, dy);
+                    if (l > 1e-3f) { x1 -= dx / l * hw * 0.8f; y1 -= dy / l * hw * 0.8f; }
+                }
+                aaSeg(X[p0], Y[p0], x1, y1, hw);
+            }
+            // palm filling: a fat stroke between the wrist and the knuckles (kept inside the real palm)
+            aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * 0.38f);
             aaFlush(1f, 1f, 1f);
         }
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0]);
@@ -360,7 +369,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, maskTex[0]);
         GLES20.glUniform1i(GLES20.glGetUniformLocation(progRing, "tex"), 0);
         GLES20.glUniform2f(GLES20.glGetUniformLocation(progRing, "px"), 1f / maskW, 1f / maskH);
-        GLES20.glUniform1f(GLES20.glGetUniformLocation(progRing, "rad"), 2.0f);
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(progRing, "rad"), 2.4f);
         drawQuad(progRing);
         GLES20.glDisable(GLES20.GL_BLEND);
     }
