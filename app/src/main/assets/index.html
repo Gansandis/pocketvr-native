@@ -71,7 +71,7 @@ async function loadMediaPipe(){
   const m = await import(MP_CDN + '/vision_bundle.mjs'); HandLandmarker = m.HandLandmarker; FilesetResolver = m.FilesetResolver; mpLocal = false;
 }
 
-const VERSION = 'v3.77';
+const VERSION = 'v3.78';
 let SAFE = false, SAFE_ORIG = null, bootT0 = 0, bootPrev = 0;                                    // safe mode: the app did not stay up on its last starts, so risky features start switched off (until the user switches them on)
 // ----- error log: the last 20 problems are kept on the phone and can be looked at in Settings (so a screenshot is enough to find the cause) -----
 const ERRLOG = (() => {
