@@ -42,6 +42,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // the menu is a flat panel fixed in the room: the phone's turn sensor decides where it shows on the screen.
     // It can (1) slowly come back in front of you after you look far away, (2) float a few millimetres, (3) be grabbed by its bar and moved.
     public volatile boolean follow = true, floaty = true;
+    public volatile float pScale = 1f;                      // menu size: pulling it toward you makes it bigger, pushing away makes it smaller
+    private float dragS0 = 1f, dragSize0 = 1f;
     private boolean following = false, dragging = false, prevPinch = false;
     private float yawA = 0, pitchA = 0, rayYaw = 0, rayPitch = 0, dragYawOff = 0, dragPitchOff = 0;
     private final float[] tA = new float[16], tB = new float[16], tC = new float[16], tD = new float[16];
@@ -53,6 +55,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             rotRef = mR0.clone();
             recenter = false;
             following = false;
+            pScale = 1f;
         }
         float aspect = (float) sceneW / Math.max(1, sceneH);
         float hf = Math.max(0.8f, Math.min(1.9f, cam.hFov));
@@ -90,6 +93,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             android.opengl.Matrix.multiplyMM(tC, 0, tB, 0, rotRef, 0);
             rotRef = tC.clone();
         }
+        // keep the panel upright: undo any tilt that piled up while it was being moved (turn about its own centre, so it does not slide)
+        android.opengl.Matrix.multiplyMM(tA, 0, rn, 0, rotRef, 0);
+        float roll = (float) Math.toDegrees(Math.atan2(tA[1], tA[0]));
+        if (Math.abs(roll) > 0.2f) {
+            android.opengl.Matrix.setRotateM(tB, 0, -roll * 0.25f, 0f, 0f, 1f);
+            android.opengl.Matrix.multiplyMM(tC, 0, rotRef, 0, tB, 0);
+            rotRef = tC.clone();
+        }
         float t = (System.nanoTime() / 1e9f) % 600f;
         float bx = 0f, by = 0f, bz = 0f;
         if (floaty && !dragging) {
@@ -115,8 +126,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float t = -oz / Dz;
         if (t <= 0) return false;
         float lx = ox + t * Dx, ly = oy + t * Dy;
-        float ph = PANEL_W * ui.bmp.getHeight() / ui.bmp.getWidth();
-        float u = lx / PANEL_W + 0.5f, v = 0.5f - ly / ph;
+        float pw = PANEL_W * pScale;
+        float ph = pw * ui.bmp.getHeight() / ui.bmp.getWidth();
+        float u = lx / pw + 0.5f, v = 0.5f - ly / ph;
         if (u < -0.05f || u > 1.05f || v < -0.05f || v > 1.05f) return false;
         out[0] = u * ui.bmp.getWidth();
         out[1] = v * ui.bmp.getHeight();
@@ -305,7 +317,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, uiTex);
         GLES20.glUniform1i(GLES20.glGetUniformLocation(progPanel, "tex"), 0);
         GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(progPanel, "mvp"), 1, false, mMVP, 0);
-        GLES20.glUniform2f(GLES20.glGetUniformLocation(progPanel, "hs"), PANEL_W / 2f, PANEL_W * ui.bmp.getHeight() / ui.bmp.getWidth() / 2f);
+        GLES20.glUniform2f(GLES20.glGetUniformLocation(progPanel, "hs"), PANEL_W * pScale / 2f, PANEL_W * pScale * ui.bmp.getHeight() / ui.bmp.getWidth() / 2f);
         drawQuad(progPanel);
         GLES20.glDisable(GLES20.GL_BLEND);
     }
@@ -323,7 +335,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float size = (float) Math.hypot((mx - wx) * ar, my - wy);
         float d = (float) Math.hypot((tx - ax) * ar, ty - ay);
         float ratio = size > 1e-4f ? d / size : 9f;
-        if (pinching) { if (ratio > 0.5f) pinching = false; } else { if (ratio < 0.3f) pinching = true; }
+        if (pinching) { if (ratio > 0.30f) pinching = false; } else { if (ratio < 0.17f) pinching = true; }
         float hx = tx, hy = ty;
         if (rot180) { hx = 1f - hx; hy = 1f - hy; }
         float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
@@ -337,6 +349,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             dragging = true;
             dragYawOff = yawA - rayYaw;
             dragPitchOff = pitchA - rayPitch;
+            dragS0 = pScale;
+            dragSize0 = Math.max(1e-3f, size);
+        }
+        if (dragging && pinching) {
+            float target = dragS0 * (float) Math.pow(size / dragSize0, 1.3);
+            target = Math.max(0.5f, Math.min(2.2f, target));
+            pScale += (target - pScale) * 0.3f;
         }
         if (!pinching) dragging = false;
         prevPinch = pinching;
