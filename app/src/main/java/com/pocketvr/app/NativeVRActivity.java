@@ -81,12 +81,17 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     private void buildMenu() {
-        menu.toggles.add(new NvUi.Btn(() -> "แยกจอ VR: " + (rend.stereo ? "เปิด" : "ปิด"), () -> rend.stereo, () -> rend.stereo = !rend.stereo));
-        menu.toggles.add(new NvUi.Btn(() -> "เลนส์: " + (rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง"), () -> rend.lens > 0, () -> rend.lens = (rend.lens + 1) % 4));
-        menu.toggles.add(new NvUi.Btn(() -> "คาดการณ์มือ: " + (rend.predict ? "เปิด" : "ปิด"), () -> rend.predict, () -> rend.predict = !rend.predict));
-        menu.toggles.add(new NvUi.Btn(() -> "โครงมือ: " + (rend.showSkel ? "เปิด" : "ปิด"), () -> rend.showSkel, () -> rend.showSkel = !rend.showSkel));
-        menu.toggles.add(new NvUi.Btn(() -> "ตัวเลขสถานะ: " + (hudOn ? "เปิด" : "ปิด"), () -> hudOn, () -> hudOn = !hudOn));
-        menu.toggles.add(new NvUi.Btn(() -> "กลับแอปหลัก", null, () -> runOnUiThread(() -> finish())));
+        final int GA = 0xFF5A5A63, GB = 0xFF38383E;
+        menu.home.add(new NvUi.Btn("🥽", () -> "แยกจอ VR", () -> rend.stereo ? "เปิดอยู่" : "ปิดอยู่", () -> rend.stereo, GA, GB, () -> rend.stereo = !rend.stereo));
+        menu.home.add(new NvUi.Btn("👓", () -> "เลนส์", () -> rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง", () -> rend.lens > 0, GA, GB, () -> rend.lens = (rend.lens + 1) % 4));
+        menu.home.add(new NvUi.Btn("✋", () -> "คาดการณ์มือ", () -> rend.predict ? "เปิดอยู่" : "ปิดอยู่", () -> rend.predict, GA, GB, () -> rend.predict = !rend.predict));
+        menu.home.add(new NvUi.Btn("🦴", () -> "โครงมือ", () -> rend.showSkel ? "เปิดอยู่" : "ปิดอยู่", () -> rend.showSkel, GA, GB, () -> rend.showSkel = !rend.showSkel));
+        menu.home.add(new NvUi.Btn("📊", () -> "ตัวเลขสถานะ", () -> hudOn ? "เปิดอยู่" : "ปิดอยู่", () -> hudOn, GA, GB, () -> hudOn = !hudOn));
+        menu.home.add(new NvUi.Btn("🏠", () -> "กลับแอปหลัก", () -> "ออกจากหน้าจอนี้", null, 0xFF8D6BFF, 0xFF4A2FB8, () -> runOnUiThread(() -> finish())));
+        menu.dock.add(new NvUi.Btn("🏠", () -> "เมนู", null, () -> menu.open, 0, 0, () -> menu.toggleOpen()));
+        menu.dock.add(new NvUi.Btn("🥽", () -> "แยกจอ", null, () -> rend.stereo, 0, 0, () -> rend.stereo = !rend.stereo));
+        menu.dock.add(new NvUi.Btn("👓", () -> "เลนส์", null, () -> rend.lens > 0, 0, 0, () -> rend.lens = (rend.lens + 1) % 4));
+        menu.dock.add(new NvUi.Btn("✋", () -> "คาดการณ์", null, () -> rend.predict, 0, 0, () -> rend.predict = !rend.predict));
         try {
             android.content.pm.PackageManager pm = getPackageManager();
             android.content.Intent q = new android.content.Intent(android.content.Intent.ACTION_MAIN);
@@ -104,7 +109,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 final android.content.pm.ResolveInfo ri = keep.get(i);
                 final String label = String.valueOf(ri.loadLabel(pm));
                 final String pkg = ri.activityInfo.packageName;
-                NvUi.Btn b = new NvUi.Btn(() -> label, null, () -> runOnUiThread(() -> {
+                NvUi.Btn b = new NvUi.Btn("", () -> label, null, null, 0xFF3A3F4B, 0xFF262932, () -> runOnUiThread(() -> {
                     try {
                         android.content.Intent li = getPackageManager().getLaunchIntentForPackage(pkg);
                         if (li != null) startActivity(li);
@@ -113,7 +118,6 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 b.icon = iconOf(ri.loadIcon(pm));
                 menu.apps.add(b);
             }
-            if (keep.size() > 6) menu.toggles.add(new NvUi.Btn(() -> "แอปหน้าถัดไป", null, () -> menu.nextPage()));
         } catch (Throwable t) { err = "apps: " + t; }
         menu.relayout();
     }
