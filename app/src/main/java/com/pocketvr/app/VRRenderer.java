@@ -30,86 +30,132 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public NvUi ui;
     private int progUi, uiTex = 0;
     private volatile float[] rotNow = new float[]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
-    private float[] rotRef = null;
-    public volatile boolean recenter = true;
-    private final float[] mP = new float[16], mM = new float[16], mMV = new float[16], mMVP = new float[16], mInv = new float[16], mR0 = new float[16];
+    public volatile boolean recenter = false;
+    private final float[] mP = new float[16], mM = new float[16];
     private float tanH = 0.65f, tanV = 0.37f;
-    private static final float PANEL_W = 0.95f, PANEL_D = 1.5f;
+    private static final float PANEL_D = 1.5f;
     private int progPanel;
     private float cnx = 0, cny = 0;
     public void setRotation(float[] m) { rotNow = m.clone(); }
-
-    // the menu is a flat panel fixed in the room: the phone's turn sensor decides where it shows on the screen.
-    // It can (1) slowly come back in front of you after you look far away, (2) float a few millimetres, (3) be grabbed by its bar and moved.
     public volatile boolean floaty = true;
-    public volatile float pScale = 1f;                      // menu size: pulling it toward you makes it bigger, pushing away makes it smaller
-    private float dragS0 = 1f, dragSize0 = 1f;
-    private boolean dragging = false, prevPinch = false;
-    private float yawA = 0, pitchA = 0, rayYaw = 0, rayPitch = 0, dragYawOff = 0, dragPitchOff = 0;
     private final float[] tA = new float[16], tB = new float[16], tC = new float[16], tD = new float[16];
 
-    private void computePanel() {
-        float[] rn = rotNow;
-        if (recenter || rotRef == null) {
-            android.opengl.Matrix.transposeM(mR0, 0, rn, 0);
-            rotRef = mR0.clone();
-            recenter = false;
-            pScale = 1f;
-        }
+    /** A floating window in the room: it keeps its place when the phone turns, can float a little, be grabbed by its bar, and be pulled bigger or smaller. */
+    public static class Win {
+        public final NvContent c;
+        public final float widthM;
+        public volatile boolean visible = false, placeReq = false;
+        public volatile float offYaw = 0, offPitch = 0;      // where it appears, relative to the view centre (degrees)
+        float[] rot = null;
+        float scale = 1f;
+        int tex = 0;
+        final float[] mv = new float[16], mvp = new float[16], inv = new float[16];
+        float yawA, pitchA, dragYawOff, dragPitchOff, dragS0 = 1f, dragSize0 = 1f;
+        final float phase = (float) (Math.random() * 6.28);
+        Win(NvContent c, float w) { this.c = c; this.widthM = w; }
+    }
+    public final java.util.concurrent.CopyOnWriteArrayList<Win> wins = new java.util.concurrent.CopyOnWriteArrayList<>();
+    private Win menuWin = null, dragWin = null;
+    private float rayYaw = 0, rayPitch = 0;
+    private boolean prevPinch = false;
+
+    public Win addWindow(NvContent c, float widthM) {
+        Win w = new Win(c, widthM);
+        wins.add(w);
+        if (c instanceof NvUi) menuWin = w;
+        return w;
+    }
+
+    /** show / hide a window (it appears in front of you, shifted by the given angles) */
+    public void setVisible(Win w, boolean v, float offYaw, float offPitch) {
+        w.offYaw = offYaw; w.offPitch = offPitch;
+        if (v && !w.visible) w.placeReq = true;
+        w.visible = v;
+    }
+    public void toggle(Win w, float offYaw, float offPitch) { setVisible(w, !w.visible, offYaw, offPitch); }
+    public void hideMenu() { if (menuWin != null) menuWin.visible = false; }
+
+    private void toggleMenuGL() {
+        if (menuWin == null) return;
+        if (menuWin.visible) { menuWin.visible = false; if (dragWin == menuWin) endDrag(); }
+        else { menuWin.offYaw = 0; menuWin.offPitch = 0; menuWin.placeReq = true; menuWin.visible = true; if (ui != null) ui.setOpen(true); }
+    }
+
+    private boolean anyVisible() { for (Win w : wins) if (w.visible) return true; return false; }
+
+    private void computeProj() {
         float aspect = (float) sceneW / Math.max(1, sceneH);
         float hf = Math.max(0.8f, Math.min(1.9f, cam.hFov));
         tanH = (float) Math.tan(hf / 2f);
         tanV = tanH / aspect;
         float fovy = (float) Math.toDegrees(2.0 * Math.atan(tanV));
         android.opengl.Matrix.perspectiveM(mP, 0, fovy, aspect, 0.05f, 20f);
+    }
 
-        // where the panel centre is now, seen from the phone: angle to the right and angle upwards
-        android.opengl.Matrix.translateM(mM, 0, rotRef, 0, 0f, 0f, -PANEL_D);
-        android.opengl.Matrix.multiplyMM(mMV, 0, rn, 0, mM, 0);
-        float vx = mMV[12], vy = mMV[13], vz = mMV[14];
-        yawA = (float) Math.toDegrees(Math.atan2(vx, -vz));
-        pitchA = (float) Math.toDegrees(Math.atan2(vy, -vz));
+    // turn a window about the phone's own view axes (yaw about the vertical view axis, pitch about the horizontal one)
+    private void turnWin(Win w, float[] rn, float th, float ph) {
+        android.opengl.Matrix.setRotateM(tA, 0, th, 0f, 1f, 0f);
+        android.opengl.Matrix.setRotateM(tB, 0, ph, 1f, 0f, 0f);
+        android.opengl.Matrix.multiplyMM(tC, 0, tA, 0, tB, 0);
+        android.opengl.Matrix.multiplyMM(tD, 0, tC, 0, rn, 0);
+        android.opengl.Matrix.transposeM(tA, 0, rn, 0);                    // rn is a pure turn: its transpose is its inverse
+        android.opengl.Matrix.multiplyMM(tB, 0, tA, 0, tD, 0);
+        android.opengl.Matrix.multiplyMM(tC, 0, tB, 0, w.rot, 0);
+        w.rot = tC.clone();
+    }
 
-        float th = 0f, ph = 0f;      // turn to apply to the panel, in the phone's own view
-        if (dragging) {
-            th = (yawA - (rayYaw + dragYawOff)) * 0.6f;
-            ph = ((rayPitch + dragPitchOff) - pitchA) * 0.6f;
+    private void updateWin(Win w, float[] rn, float t) {
+        if (w.placeReq || w.rot == null) {
+            android.opengl.Matrix.transposeM(tA, 0, rn, 0);
+            w.rot = tA.clone();
+            if (w.offYaw != 0f || w.offPitch != 0f) turnWin(w, rn, -w.offYaw, w.offPitch);
+            w.scale = 1f;
+            w.placeReq = false;
         }
-        if (th != 0f || ph != 0f) {
-            android.opengl.Matrix.setRotateM(tA, 0, th, 0f, 1f, 0f);
-            android.opengl.Matrix.setRotateM(tB, 0, ph, 1f, 0f, 0f);
-            android.opengl.Matrix.multiplyMM(tC, 0, tA, 0, tB, 0);            // correction in view space
-            android.opengl.Matrix.multiplyMM(tD, 0, tC, 0, rn, 0);
-            android.opengl.Matrix.transposeM(tA, 0, rn, 0);                    // rn is a pure turn: its transpose is its inverse
-            android.opengl.Matrix.multiplyMM(tB, 0, tA, 0, tD, 0);
-            android.opengl.Matrix.multiplyMM(tC, 0, tB, 0, rotRef, 0);
-            rotRef = tC.clone();
+        // where the window centre is now, seen from the phone: angle to the right and angle upwards
+        android.opengl.Matrix.translateM(mM, 0, w.rot, 0, 0f, 0f, -PANEL_D);
+        android.opengl.Matrix.multiplyMM(w.mv, 0, rn, 0, mM, 0);
+        w.yawA = (float) Math.toDegrees(Math.atan2(w.mv[12], -w.mv[14]));
+        w.pitchA = (float) Math.toDegrees(Math.atan2(w.mv[13], -w.mv[14]));
+        if (dragWin == w) {
+            float th = (w.yawA - (rayYaw + w.dragYawOff)) * 0.6f;
+            float ph = ((rayPitch + w.dragPitchOff) - w.pitchA) * 0.6f;
+            if (th != 0f || ph != 0f) turnWin(w, rn, th, ph);
         }
-        // keep the panel upright: undo any tilt that piled up while it was being moved (turn about its own centre, so it does not slide)
-        android.opengl.Matrix.multiplyMM(tA, 0, rn, 0, rotRef, 0);
+        // keep it upright: undo any tilt that piled up while it was being moved (turn about its own centre, so it does not slide)
+        android.opengl.Matrix.multiplyMM(tA, 0, rn, 0, w.rot, 0);
         float roll = (float) Math.toDegrees(Math.atan2(tA[1], tA[0]));
         if (Math.abs(roll) > 0.2f) {
             android.opengl.Matrix.setRotateM(tB, 0, -roll * 0.25f, 0f, 0f, 1f);
-            android.opengl.Matrix.multiplyMM(tC, 0, rotRef, 0, tB, 0);
-            rotRef = tC.clone();
+            android.opengl.Matrix.multiplyMM(tC, 0, w.rot, 0, tB, 0);
+            w.rot = tC.clone();
         }
-        float t = (System.nanoTime() / 1e9f) % 600f;
         float bx = 0f, by = 0f, bz = 0f;
-        if (floaty && !dragging) {
-            bx = 0.006f * (float) Math.sin(t * 0.6f + 1f);
-            by = 0.008f * (float) Math.sin(t * 0.9f);
-            bz = 0.010f * (float) Math.sin(t * 0.4f + 2f);
+        if (floaty && dragWin != w) {
+            bx = 0.006f * (float) Math.sin(t * 0.6f + 1f + w.phase);
+            by = 0.008f * (float) Math.sin(t * 0.9f + w.phase);
+            bz = 0.010f * (float) Math.sin(t * 0.4f + 2f + w.phase);
         }
-        android.opengl.Matrix.translateM(mM, 0, rotRef, 0, bx, by, -PANEL_D + bz);
-        android.opengl.Matrix.multiplyMM(mMV, 0, rn, 0, mM, 0);
-        android.opengl.Matrix.multiplyMM(mMVP, 0, mP, 0, mMV, 0);
-        android.opengl.Matrix.invertM(mInv, 0, mMV, 0);
+        android.opengl.Matrix.translateM(mM, 0, w.rot, 0, bx, by, -PANEL_D + bz);
+        android.opengl.Matrix.multiplyMM(w.mv, 0, rn, 0, mM, 0);
+        android.opengl.Matrix.multiplyMM(w.mvp, 0, mP, 0, w.mv, 0);
+        android.opengl.Matrix.invertM(w.inv, 0, w.mv, 0);
     }
 
-    // where the pointing finger meets the panel, in the panel picture's pixels
-    private boolean hitPanel(float nx, float ny, float[] out) {
-        if (ui == null || ui.bmp == null) return false;
+    private void computePanel() {
+        float[] rn = rotNow;
+        if (recenter) { recenter = false; if (menuWin != null) menuWin.placeReq = true; }
+        computeProj();
+        float t = (System.nanoTime() / 1e9f) % 600f;
+        for (Win w : wins) if (w.visible) updateWin(w, rn, t);
+    }
+
+    // where the pointing finger meets the window, in that window's picture pixels
+    private boolean hitWin(Win w, float nx, float ny, float[] out) {
+        android.graphics.Bitmap bm = w.c.bitmap();
+        if (bm == null) return false;
         float dx = nx * tanH, dy = ny * tanV, dz = -1f;
+        float[] mInv = w.inv;
         float ox = mInv[12], oy = mInv[13], oz = mInv[14];
         float Dz = mInv[2] * dx + mInv[6] * dy + mInv[10] * dz;
         float Dx = mInv[0] * dx + mInv[4] * dy + mInv[8] * dz;
@@ -118,14 +164,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float t = -oz / Dz;
         if (t <= 0) return false;
         float lx = ox + t * Dx, ly = oy + t * Dy;
-        float pw = PANEL_W * pScale;
-        float ph = pw * ui.bmp.getHeight() / ui.bmp.getWidth();
+        float pw = w.widthM * w.scale;
+        float ph = pw * bm.getHeight() / bm.getWidth();
         float u = lx / pw + 0.5f, v = 0.5f - ly / ph;
         if (u < -0.05f || u > 1.05f || v < -0.05f || v > 1.05f) return false;
-        out[0] = u * ui.bmp.getWidth();
-        out[1] = v * ui.bmp.getHeight();
+        out[0] = u * bm.getWidth();
+        out[1] = v * bm.getHeight();
         return true;
     }
+
+    private void endDrag() {
+        if (dragWin != null) dragWin.c.setDragging(false);
+        dragWin = null;
+    }
+
     private float[] lastRes, vel = new float[1];
     private long tLast = 0;
     private float[] disp = new float[]{0};
@@ -189,6 +241,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "attribute vec2 p; varying vec2 uv; void main(){ gl_Position=vec4(p,0.,1.); uv=vec2(p.x*0.5+0.5, 0.5-p.y*0.5); }",
             "precision mediump float; uniform sampler2D tex; varying vec2 uv; void main(){ gl_FragColor=texture2D(tex,uv); }");
         uiTex = 0;
+        for (Win w : wins) w.tex = 0;
         progRing = prog(
             "attribute vec2 p; varying vec2 uv; void main(){ gl_Position=vec4(p,0.,1.); uv=p*0.5+0.5; }",
             "precision mediump float; uniform sampler2D tex; uniform vec2 px; uniform float rad; varying vec2 uv;" +
@@ -284,94 +337,140 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         } else predMs = 0;
     }
 
-    private void drawUi() {
-        if (ui == null || ui.bmp == null) return;
-        if (ui.takeDirty() || uiTex == 0) {
-            if (uiTex == 0) {
+    private void drawWins() {
+        for (Win w : wins) {
+            if (!w.visible) continue;
+            android.graphics.Bitmap bm = w.c.bitmap();
+            if (bm == null) continue;
+            boolean d = w.c.takeDirty();
+            if (w.tex == 0) {
                 int[] t = new int[1];
                 GLES20.glGenTextures(1, t, 0);
-                uiTex = t[0];
-                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, uiTex);
+                w.tex = t[0];
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, w.tex);
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
                 GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
-                ui.markDirty();
-                ui.takeDirty();
+                w.c.markDirty();
+                w.c.takeDirty();
+                d = true;
             }
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, uiTex);
-            android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, ui.bmp, 0);
+            if (d) {
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, w.tex);
+                android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bm, 0);
+            }
+            GLES20.glEnable(GLES20.GL_BLEND);
+            GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+            GLES20.glUseProgram(progPanel);
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, w.tex);
+            GLES20.glUniform1i(GLES20.glGetUniformLocation(progPanel, "tex"), 0);
+            GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(progPanel, "mvp"), 1, false, w.mvp, 0);
+            float pw = w.widthM * w.scale;
+            GLES20.glUniform2f(GLES20.glGetUniformLocation(progPanel, "hs"), pw / 2f, pw * bm.getHeight() / bm.getWidth() / 2f);
+            drawQuad(progPanel);
+            GLES20.glDisable(GLES20.GL_BLEND);
         }
-        GLES20.glEnable(GLES20.GL_BLEND);
-        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
-        GLES20.glUseProgram(progPanel);
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, uiTex);
-        GLES20.glUniform1i(GLES20.glGetUniformLocation(progPanel, "tex"), 0);
-        GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(progPanel, "mvp"), 1, false, mMVP, 0);
-        GLES20.glUniform2f(GLES20.glGetUniformLocation(progPanel, "hs"), PANEL_W * pScale / 2f, PANEL_W * pScale * ui.bmp.getHeight() / ui.bmp.getWidth() / 2f);
-        drawQuad(progPanel);
-        GLES20.glDisable(GLES20.GL_BLEND);
     }
 
     // finger pointer: index fingertip; pinch = thumb tip close to index tip (relative to hand size)
     private boolean pinching = false;
-    private long lastPinchT = 0, lostT = 0;
+    private long lastPinchT = 0, lostT = 0, mpSince = 0;
+    private boolean mpOn = false, mpLatched = false;
+    private float mpProg = 0, mpNx = 0, mpNy = 0;
+
     private void cursor() {
         float[] r = disp;
         long nowMs = System.currentTimeMillis();
-        boolean ok = r.length >= 64 && r[0] >= 1 && ui != null && ui.bmp != null;
-        if (!ok) {
+        boolean hand = r.length >= 64 && r[0] >= 1;
+        if (!hand) {
             curOk = false;
+            mpOn = false; mpSince = 0; mpProg = 0; mpLatched = false;
             if (lostT == 0) lostT = nowMs;
-            // a short loss of the hand (detection blink) must not drop a grabbed menu
-            if (!(dragging && nowMs - lostT < 400)) { pinching = false; dragging = false; prevPinch = false; if (ui != null) ui.dragging = false; }
-            if (ui != null && ui.bmp != null) ui.update(false, 0, 0, false);
+            // a short loss of the hand (detection blink) must not drop a grabbed window
+            if (!(dragWin != null && nowMs - lostT < 400)) { pinching = false; prevPinch = false; endDrag(); }
+            for (Win w : wins) if (w.visible) w.c.update(false, 0, 0, false);
             return;
         }
         lostT = 0;
         float ar = (float) Math.max(1, imgW) / Math.max(1, imgH);
         float tx = r[1 + 8 * 3], ty = r[1 + 8 * 3 + 1];
         float ax = r[1 + 4 * 3], ay = r[1 + 4 * 3 + 1];
+        float kx = r[1 + 12 * 3], ky = r[1 + 12 * 3 + 1];
         float wx = r[1], wy = r[2], mx = r[1 + 9 * 3], my = r[1 + 9 * 3 + 1];
         float size = (float) Math.hypot((mx - wx) * ar, my - wy);
         float d = (float) Math.hypot((tx - ax) * ar, ty - ay);
         float ratio = size > 1e-4f ? d / size : 9f;
+        float dm = (float) Math.hypot((kx - ax) * ar, ky - ay);
+        float ratioM = size > 1e-4f ? dm / size : 9f;
         if (pinching) { if (ratio > 0.30f) pinching = false; } else { if (ratio < 0.17f) pinching = true; }
         if (pinching) lastPinchT = nowMs;
+
+        // thumb + middle finger held together for a moment: show / hide the menu
+        mpOn = mpOn ? (ratioM < 0.32f) : (ratioM < 0.20f && ratio > 0.35f);
+        if (mpOn && !mpLatched) {
+            if (mpSince == 0) mpSince = nowMs;
+            mpProg = Math.min(1f, (nowMs - mpSince) / 700f);
+            if (mpProg >= 1f) { toggleMenuGL(); mpLatched = true; mpProg = 0; }
+        } else if (!mpOn) { mpSince = 0; mpProg = 0; mpLatched = false; }
+        float mhx = (kx + ax) * 0.5f, mhy = (ky + ay) * 0.5f;
+        if (rot180) { mhx = 1f - mhx; mhy = 1f - mhy; }
+        mpNx = mhx * 2f - 1f; mpNy = 1f - mhy * 2f;
+
         // the pointer sits between thumb tip and index tip, so closing the fingers does not push it off the target
         float hx = (tx + ax) * 0.5f, hy = (ty + ay) * 0.5f;
         if (rot180) { hx = 1f - hx; hy = 1f - hy; }
         float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
         if (!curOk) { cnx = nx; cny = ny; } else { cnx += (nx - cnx) * 0.6f; cny += (ny - cny) * 0.6f; }
         curOk = true;
-        float[] o = new float[2];
-        boolean hit = hitPanel(cnx, cny, o);
         rayYaw = (float) Math.toDegrees(Math.atan(cnx * tanH));
         rayPitch = (float) Math.toDegrees(Math.atan(cny * tanV));
-        if (pinching && !prevPinch && !dragging && ui.handleRecent()) {      // grabbed the bar under the panel
-            dragging = true;
-            dragYawOff = yawA - rayYaw;
-            dragPitchOff = pitchA - rayPitch;
-            dragS0 = pScale;
-            dragSize0 = Math.max(1e-3f, size);
+
+        float[] o = new float[2];
+        Win target = null;
+        if (dragWin == null && !mpOn) {
+            for (int i = wins.size() - 1; i >= 0; i--) {                 // the one drawn last is in front
+                Win w = wins.get(i);
+                if (w.visible && hitWin(w, cnx, cny, o) && w.c.covers(o[0], o[1])) { target = w; break; }
+            }
         }
-        if (dragging && pinching) {
-            float target = dragS0 * (float) Math.pow(size / dragSize0, 1.3);
-            target = Math.max(0.5f, Math.min(2.2f, target));
-            pScale += (target - pScale) * 0.3f;
+        if (target != null && pinching && !prevPinch && target.c.handleRecent()) {      // grabbed the bar under a window
+            dragWin = target;
+            target.dragYawOff = target.yawA - rayYaw;
+            target.dragPitchOff = target.pitchA - rayPitch;
+            target.dragS0 = target.scale;
+            target.dragSize0 = Math.max(1e-3f, size);
+            target.c.setDragging(true);
+            wins.remove(target);                                          // bring to the front
+            wins.add(target);
         }
-        // let go only when the pinch has been open for a moment (one bad detection must not drop the menu)
-        if (dragging && !pinching && nowMs - lastPinchT > 250) dragging = false;
+        if (dragWin != null && pinching) {
+            float tg = dragWin.dragS0 * (float) Math.pow(size / dragWin.dragSize0, 1.3);
+            tg = Math.max(0.5f, Math.min(2.2f, tg));
+            dragWin.scale += (tg - dragWin.scale) * 0.3f;
+        }
+        // let go only when the pinch has been open for a moment (one bad detection must not drop the window)
+        if (dragWin != null && !pinching && nowMs - lastPinchT > 250) endDrag();
         prevPinch = pinching;
-        ui.dragging = dragging;
-        ui.update(hit && !dragging, o[0], o[1], pinching && !dragging);
+        for (Win w : wins) {
+            if (!w.visible) continue;
+            if (w == target && dragWin == null) w.c.update(true, o[0], o[1], pinching);
+            else w.c.update(false, 0, 0, false);
+        }
     }
 
     private void drawCursor() {
-        if (!curOk || ui == null || ui.bmp == null) return;
         float u = sceneH / 540f;
+        if (mpProg > 0f) {                                   // growing dot while the menu gesture is being held
+            float x = mpNx * sceneW / 2f, y = mpNy * sceneH / 2f;
+            aaBegin();
+            aaSeg(x, y, x, y, (8f + 20f * mpProg) * u);
+            aaFlush(1f, 0.7f, 0.15f);
+        }
+        if (!curOk || !anyVisible()) return;
         float x = cnx * sceneW / 2f, y = cny * sceneH / 2f;
+        boolean grab = dragWin != null;
         aaBegin();
         aaSeg(x, y, x, y, (pinching ? 15f : 19f) * u);
         aaFlush(pinching ? 1f : 0.15f, pinching ? 0.55f : 0.85f, pinching ? 0f : 1f);
@@ -562,7 +661,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         predictNow(now);
         computePanel();
         cursor();
-        drawUi();
+        drawWins();
         if (skel == 1) drawSkeleton(disp); else if (skel == 2) drawOutline(disp);
         drawCursor();
 

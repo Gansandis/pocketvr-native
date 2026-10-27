@@ -14,7 +14,7 @@ import java.util.List;
  * Quest-Home-style menu (dark glass panel, side tabs, coloured cards, bottom dock) drawn with the Android Canvas into a transparent picture.
  * The renderer lays that picture over the camera view. Pointing = fingertip, click = pinch. The picture is only rebuilt when something changes.
  */
-public class NvUi {
+public class NvUi implements NvContent {
     public interface Txt { String get(); }
     public interface Flag { boolean get(); }
 
@@ -38,6 +38,12 @@ public class NvUi {
     private Object lastH = null;
     private long lastHT = 0;
     public boolean handleHover() { return hover == handle; }
+    @Override public Bitmap bitmap() { return bmp; }
+    @Override public void setDragging(boolean d) { if (d != dragging) { dragging = d; dirty = true; } }
+    @Override public boolean covers(float x, float y) {
+        if (handle.r.contains(x, y) || dockR.contains(x, y)) return true;
+        return open && pH > 0 && x >= pX && x <= pX + pW && y >= pY && y <= pY + pH;
+    }
     public boolean handleRecent() { return hover == handle || (lastH == handle && System.currentTimeMillis() - lastHT < 300); }
 
     private final List<Btn> tabs = new ArrayList<>();
@@ -70,6 +76,7 @@ public class NvUi {
     public void toggleOpen() { open = !open; layout(); dirty = true; }
     public void toast(String s) { toast = s; toastUntil = System.currentTimeMillis() + 2000; dirty = true; }
     public void markDirty() { dirty = true; }
+    public void setOpen(boolean o) { open = o; if (W > 0) layout(); dirty = true; }
     public void relayout() { if (W > 0) layout(); dirty = true; }
 
     public void resize(int w, int h) {
