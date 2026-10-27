@@ -24,6 +24,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile boolean stereo = true;
     public volatile int lens = 1;
     public volatile float fps = 0;
+    public volatile boolean predict = true, showSkel = true;
+    public volatile float predMs = 0;
+    public NvUi ui;
+    private int progUi, uiTex = 0;
+    private float[] lastRes, vel = new float[1];
+    private long tLast = 0;
+    private float[] disp = new float[]{0};
+    private float curX = 0, curY = 0;
+    private boolean curOk = false;
 
     private volatile int imgW = 0, imgH = 0;
     private volatile boolean rot180 = false;
@@ -75,6 +84,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "precision mediump float; uniform sampler2D tex; uniform vec2 sc; uniform float k; uniform float sh; varying vec2 c;" +
             "void main(){ vec2 q=c; q.x+=sh; float r2=dot(q,q); q*=1.+k*r2; vec2 uv=0.5+0.5*q*sc;" +
             " if(uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.){ gl_FragColor=vec4(0.,0.,0.,1.); } else { gl_FragColor=vec4(texture2D(tex,uv).rgb,1.); } }");
+        progUi = prog(
+            "attribute vec2 p; varying vec2 uv; void main(){ gl_Position=vec4(p,0.,1.); uv=vec2(p.x*0.5+0.5, 0.5-p.y*0.5); }",
+            "precision mediump float; uniform sampler2D tex; varying vec2 uv; void main(){ gl_FragColor=texture2D(tex,uv); }");
+        uiTex = 0;
         quad = fb(8);
         quad.put(new float[]{-1,-1, 1,-1, -1,1, 1,1}).position(0);
         lineBuf = fb(BONES.length * 2 * 2 * 2);
@@ -110,6 +123,109 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0]);
         GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, sceneTex[0], 0);
         sceneW = w; sceneH = h;
+        if (ui != null) { ui.resize(w, h); ui.markDirty(); }
+        if (uiTex != 0) { GLES20.glDeleteTextures(1, new int[]{uiTex}, 0); uiTex = 0; }
+    }
+
+    // the hand model answers about 10 times a second; between answers the points are moved on by their last measured speed
+    private void predictNow(long now) {
+        float[] r = cam.result;
+        if (r != lastRes) {
+            float[] prev = lastRes;
+            long tPrev = tLast;
+            lastRes = r; tLast = now;
+            if (vel.length != r.length) vel = new float[r.length];
+            if (prev != null && prev.length == r.length && r[0] >= 1 && now - tPrev > 10 && now - tPrev < 350) {
+                float dt = (now - tPrev) / 1000f;
+                for (int i = 1; i < r.length; i++) {
+                    if ((i - 1) % 3 == 2) continue;
+                    float v = (r[i] - prev[i]) / dt;
+                    v = Math.max(-3f, Math.min(3f, v));
+                    vel[i] = vel[i] * 0.5f + v * 0.5f;
+                }
+            } else {
+                java.util.Arrays.fill(vel, 0f);
+            }
+        }
+        if (disp.length != r.length) disp = new float[r.length];
+        System.arraycopy(r, 0, disp, 0, r.length);
+        if (predict && r[0] >= 1) {
+            float lead = Math.min(now - tLast + 50, 200) / 1000f;
+            predMs = lead * 1000f;
+            for (int i = 1; i < r.length; i++) {
+                if ((i - 1) % 3 == 2) continue;
+                disp[i] = r[i] + vel[i] * lead;
+            }
+        } else predMs = 0;
+    }
+
+    private void drawUi() {
+        if (ui == null || ui.bmp == null) return;
+        if (ui.takeDirty() || uiTex == 0) {
+            if (uiTex == 0) {
+                int[] t = new int[1];
+                GLES20.glGenTextures(1, t, 0);
+                uiTex = t[0];
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, uiTex);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+                ui.markDirty();
+                ui.takeDirty();
+            }
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, uiTex);
+            android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, ui.bmp, 0);
+        }
+        GLES20.glEnable(GLES20.GL_BLEND);
+        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        GLES20.glUseProgram(progUi);
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, uiTex);
+        GLES20.glUniform1i(GLES20.glGetUniformLocation(progUi, "tex"), 0);
+        drawQuad(progUi);
+        GLES20.glDisable(GLES20.GL_BLEND);
+    }
+
+    // finger pointer: index fingertip; pinch = thumb tip close to index tip (relative to hand size)
+    private boolean pinching = false;
+    private void cursor() {
+        float[] r = disp;
+        boolean ok = r.length >= 64 && r[0] >= 1 && ui != null && ui.bmp != null;
+        if (!ok) { curOk = false; pinching = false; if (ui != null && ui.bmp != null) ui.update(false, 0, 0, false); return; }
+        float ar = (float) Math.max(1, imgW) / Math.max(1, imgH);
+        float tx = r[1 + 8 * 3], ty = r[1 + 8 * 3 + 1];
+        float ax = r[1 + 4 * 3], ay = r[1 + 4 * 3 + 1];
+        float wx = r[1], wy = r[2], mx = r[1 + 9 * 3], my = r[1 + 9 * 3 + 1];
+        float size = (float) Math.hypot((mx - wx) * ar, my - wy);
+        float d = (float) Math.hypot((tx - ax) * ar, ty - ay);
+        float ratio = size > 1e-4f ? d / size : 9f;
+        if (pinching) { if (ratio > 0.5f) pinching = false; } else { if (ratio < 0.3f) pinching = true; }
+        float hx = tx, hy = ty;
+        if (rot180) { hx = 1f - hx; hy = 1f - hy; }
+        float x = hx * ui.bmp.getWidth(), y = hy * ui.bmp.getHeight();
+        if (!curOk) { curX = x; curY = y; } else { curX += (x - curX) * 0.6f; curY += (y - curY) * 0.6f; }
+        curOk = true;
+        ui.update(true, curX, curY, pinching);
+    }
+
+    private void drawCursor() {
+        if (!curOk || ui == null || ui.bmp == null) return;
+        GLES20.glUseProgram(progCol);
+        int a = GLES20.glGetAttribLocation(progCol, "p");
+        GLES20.glEnableVertexAttribArray(a);
+        ptBuf.position(0);
+        ptBuf.put(curX / ui.bmp.getWidth() * 2f - 1f);
+        ptBuf.put(1f - curY / ui.bmp.getHeight() * 2f);
+        ptBuf.position(0);
+        GLES20.glVertexAttribPointer(a, 2, GLES20.GL_FLOAT, false, 0, ptBuf);
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(progCol, "ps"), pinching ? 26f : 34f);
+        GLES20.glUniform4f(GLES20.glGetUniformLocation(progCol, "col"), pinching ? 1f : 0.2f, pinching ? 0.55f : 0.9f, pinching ? 0f : 1f, 1f);
+        GLES20.glDrawArrays(GLES20.GL_POINTS, 0, 1);
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(progCol, "ps"), 12f);
+        GLES20.glUniform4f(GLES20.glGetUniformLocation(progCol, "col"), 1f, 1f, 1f, 1f);
+        GLES20.glDrawArrays(GLES20.GL_POINTS, 0, 1);
+        GLES20.glDisableVertexAttribArray(a);
     }
 
     private void drawQuad(int prog) {
@@ -189,7 +305,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniformMatrix4fv(GLES20.glGetUniformLocation(progCam, "stm"), 1, false, stm, 0);
         GLES20.glUniform1f(GLES20.glGetUniformLocation(progCam, "rf"), rot180 ? 1f : 0f);
         drawQuad(progCam);
-        drawSkeleton(cam.result);
+        predictNow(now);
+        if (showSkel) drawSkeleton(disp);
+        cursor();
+        drawUi();
+        drawCursor();
 
         // 2) screen: mono or split, with lens warp
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
