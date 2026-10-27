@@ -47,7 +47,7 @@ jobs:
           # safety net 1: if only the new native VR screen breaks the build, replace it with an empty stub
           echo "falling back: stub for the native VR screen"
           D=app/src/main/java/com/pocketvr/app
-          rm -f $D/NvCam.java $D/NvHands.java $D/VRRenderer.java $D/NvUi.java
+          rm -f $D/NvCam.java $D/NvHands.java $D/VRRenderer.java $D/NvUi.java $D/NvContent.java $D/NvPanel.java
           cat > $D/NativeVRActivity.java <<'STUB'
           package com.pocketvr.app;
           public class NativeVRActivity extends android.app.Activity {
