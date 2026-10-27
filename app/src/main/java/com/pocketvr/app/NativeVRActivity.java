@@ -85,7 +85,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.home.add(new NvUi.Btn("🥽", () -> "แยกจอ VR", () -> rend.stereo ? "เปิดอยู่" : "ปิดอยู่", () -> rend.stereo, GA, GB, () -> rend.stereo = !rend.stereo));
         menu.home.add(new NvUi.Btn("👓", () -> "เลนส์", () -> rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง", () -> rend.lens > 0, GA, GB, () -> rend.lens = (rend.lens + 1) % 4));
         menu.home.add(new NvUi.Btn("✋", () -> "คาดการณ์มือ", () -> rend.predict ? "เปิดอยู่" : "ปิดอยู่", () -> rend.predict, GA, GB, () -> rend.predict = !rend.predict));
-        menu.home.add(new NvUi.Btn("🦴", () -> "โครงมือ", () -> rend.showSkel ? "เปิดอยู่" : "ปิดอยู่", () -> rend.showSkel, GA, GB, () -> rend.showSkel = !rend.showSkel));
+        menu.home.add(new NvUi.Btn("🦴", () -> "โครงมือ", () -> rend.skel == 0 ? "ปิด" : rend.skel == 1 ? "เส้นโครง" : "เส้นขอบเรืองแสง", () -> rend.skel > 0, GA, GB, () -> rend.skel = (rend.skel + 1) % 3));
         menu.home.add(new NvUi.Btn("📊", () -> "ตัวเลขสถานะ", () -> hudOn ? "เปิดอยู่" : "ปิดอยู่", () -> hudOn, GA, GB, () -> hudOn = !hudOn));
         menu.home.add(new NvUi.Btn("🏠", () -> "กลับแอปหลัก", () -> "ออกจากหน้าจอนี้", null, 0xFF8D6BFF, 0xFF4A2FB8, () -> runOnUiThread(() -> finish())));
         menu.dock.add(new NvUi.Btn("🏠", () -> "เมนู", null, () -> menu.open, 0, 0, () -> menu.toggleOpen()));
