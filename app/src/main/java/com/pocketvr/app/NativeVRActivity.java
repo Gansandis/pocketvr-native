@@ -46,6 +46,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     };
     private final NvUi menu = new NvUi();
     private VRRenderer.Win wMenu, wClock, wStats;
+    private NvMotion motion;
     private final long t0 = System.currentTimeMillis();
     private boolean swRunning = false;
     private long swStart = 0, swAcc = 0;
@@ -72,6 +73,10 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         cam = new NvCam(this, hands, this);
         cam.detPaceMs = 0;
         rend = new VRRenderer(this, cam);
+        motion = new NvMotion();
+        motion.rot = () -> rend.rotCopy();
+        cam.motion = motion;
+        rend.motion = motion;
         rend.ui = menu;
         wMenu = rend.addWindow(menu, 0.95f);      // starts hidden: pinch thumb + middle finger and hold to bring it up
         buildWindows();
@@ -170,6 +175,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.home.add(new NvUi.Btn("🪟", () -> "ความโปร่งของแผง", () -> NvUi.glass >= 0xE0 ? "ทึบ" : NvUi.glass >= 0xA0 ? "กึ่งโปร่ง" : NvUi.glass >= 0x70 ? "โปร่ง" : "โปร่งมาก", () -> NvUi.glass < 0xE0, GA, GB, () -> {
             NvUi.glass = NvUi.glass >= 0xE0 ? 0xB0 : NvUi.glass >= 0xA0 ? 0x80 : NvUi.glass >= 0x70 ? 0x55 : 0xF0;
             menu.markDirty(); if (wClock != null) wClock.c.markDirty(); if (wStats != null) wStats.c.markDirty();
+        }));
+        menu.home.add(new NvUi.Btn("🚶", () -> "เดินรอบได้ (ทดลอง)", () -> motion.enabled ? String.format("เปิด %.1f,%.1f ม. q%.0f%%", motion.px, motion.pz, motion.quality * 100) : "ปิดอยู่", () -> motion.enabled, GA, GB, () -> {
+            motion.enabled = !motion.enabled;
+            motion.reset();
+            for (VRRenderer.Win w : rend.wins) w.placeReq = true;       // put the windows up again in front of you, at the new starting point
         }));
         menu.home.add(new NvUi.Btn("🎈", () -> "ลอยเบาๆ", () -> rend.floaty ? "เปิดอยู่" : "ปิดอยู่", () -> rend.floaty, GA, GB, () -> rend.floaty = !rend.floaty));
         menu.home.add(new NvUi.Btn("🏠", () -> "กลับแอปหลัก", () -> "ออกจากหน้าจอนี้", null, 0xFF8D6BFF, 0xFF4A2FB8, () -> runOnUiThread(() -> finish())));

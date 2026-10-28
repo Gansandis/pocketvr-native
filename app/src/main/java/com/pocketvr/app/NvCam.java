@@ -54,6 +54,7 @@ public class NvCam {
     public volatile float[] result = new float[]{0};
     public volatile float camFps = 0, detHz = 0, convMs = 0;
     public volatile float hFov = 1.15f;           // horizontal field of view of the camera, radians
+    public volatile NvMotion motion;
     public volatile long detPaceMs = 0;           // shortest time between two looks for hands
     private long camCount = 0, camT0 = 0, detCount = 0, detT0 = 0, lastDet = 0;
 
@@ -126,6 +127,7 @@ public class NvCam {
             Integer so = cc.get(CameraCharacteristics.SENSOR_ORIENTATION);
             int disp = act.getWindowManager().getDefaultDisplay().getRotation() * 90;
             boolean rot180 = so != null && ((so - disp + 360) % 360) == 180;
+            NvMotion mo = motion; if (mo != null) mo.rot180 = rot180;
 
             st.setDefaultBufferSize(prev.getWidth(), prev.getHeight());
             previewSurface = new Surface(st);
@@ -180,6 +182,8 @@ public class NvCam {
             camCount++;
             if (camT0 == 0) camT0 = now;
             if (now - camT0 >= 1000) { camFps = camCount * 1000f / (now - camT0); camCount = 0; camT0 = now; }
+            NvMotion mo = motion;
+            if (mo != null && mo.enabled) { try { mo.feed(img, hFov); } catch (Throwable t) { } }
             if (handsFailed || now - lastDet < detPaceMs || !detBusy.compareAndSet(false, true)) return;
             lastDet = now;
             long c0 = System.nanoTime();

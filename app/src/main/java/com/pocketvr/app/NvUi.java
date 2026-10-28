@@ -43,6 +43,11 @@ public class NvUi implements NvContent {
     public boolean handleHover() { return hover == handle; }
     @Override public Bitmap bitmap() { return bmp; }
     @Override public void setDragging(boolean d) { if (d != dragging) { dragging = d; dirty = true; } }
+    @Override public boolean inGrip(float x, float y) {
+        if (!open || pH <= 0) return false;
+        float gx = 0.08f * pW, gy = 0.12f * pH;
+        return y >= pY + pH - gy && y <= pY + pH + 0.05f * H && ((x >= pX - 0.04f * W && x <= pX + gx) || (x <= pX + pW + 0.04f * W && x >= pX + pW - gx));
+    }
     @Override public boolean covers(float x, float y) {
         if (handle.r.contains(x, y) || dockR.contains(x, y)) return true;
         return open && pH > 0 && x >= pX && x <= pX + pW && y >= pY && y <= pY + pH;
@@ -208,6 +213,7 @@ public class NvUi implements NvContent {
         cv.drawRoundRect(pr, 28 * u, 28 * u, p);
         p.setShader(null);
         stroke(pr, 0x40FFFFFF, 1.5f * u, 28 * u);
+        NvPanel.grips(cv, p, pr, 28 * u, u);
         text(tab == 0 ? "หน้าแรก" : "แอปในเครื่อง", pX + sbW + (pW - sbW) / 2f, pY + 28 * u, 22 * u, 0xFFFFFFFF, pW - sbW - 20 * u);
         // sidebar
         for (int i = 0; i < tabs.size(); i++) {

@@ -37,6 +37,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private int progPanel;
     private float cnx = 0, cny = 0;
     public void setRotation(float[] m) { rotNow = m.clone(); }
+    public float[] rotCopy() { return rotNow; }
+    public volatile NvMotion motion;
+    private final float[] tE = new float[16], tF = new float[16];
+    private void shiftBy(Win w, float[] m, float ux, float uy, float uz) {   // the user is at (ux,uy,uz); the window was set up at its base
+        android.opengl.Matrix.setIdentityM(tE, 0);
+        android.opengl.Matrix.translateM(tE, 0, w.wx - ux, w.wy - uy, w.wz - uz);
+        android.opengl.Matrix.multiplyMM(tF, 0, tE, 0, m, 0);
+        System.arraycopy(tF, 0, m, 0, 16);
+    }
     public volatile boolean floaty = true;
     private final float[] tA = new float[16], tB = new float[16], tC = new float[16], tD = new float[16];
 
@@ -50,6 +59,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float scale = 1f;
         int tex = 0;
         final float[] mv = new float[16], mvp = new float[16], inv = new float[16];
+        float wx, wy, wz;                                  // where the user stood when this window was put up (walk-around)
         float yawA, pitchA, dragYawOff, dragPitchOff, dragS0 = 1f, dragSize0 = 1f;
         final float phase = (float) (Math.random() * 6.28);
         Win(NvContent c, float w) { this.c = c; this.widthM = w; }
@@ -105,19 +115,24 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     private void updateWin(Win w, float[] rn, float t) {
+        NvMotion mo = motion;
+        float ux = 0, uy = 0, uz = 0;
+        if (mo != null && mo.enabled) { ux = mo.px; uy = mo.py; uz = mo.pz; }
         if (w.placeReq || w.rot == null) {
             android.opengl.Matrix.transposeM(tA, 0, rn, 0);
             w.rot = tA.clone();
             if (w.offYaw != 0f || w.offPitch != 0f) turnWin(w, rn, -w.offYaw, w.offPitch);
             w.scale = 1f;
+            w.wx = ux; w.wy = uy; w.wz = uz;
             w.placeReq = false;
         }
         // where the window centre is now, seen from the phone: angle to the right and angle upwards
         android.opengl.Matrix.translateM(mM, 0, w.rot, 0, 0f, 0f, -PANEL_D);
+        shiftBy(w, mM, ux, uy, uz);
         android.opengl.Matrix.multiplyMM(w.mv, 0, rn, 0, mM, 0);
         w.yawA = (float) Math.toDegrees(Math.atan2(w.mv[12], -w.mv[14]));
         w.pitchA = (float) Math.toDegrees(Math.atan2(w.mv[13], -w.mv[14]));
-        if (dragWin == w) {
+        if (dragWin == w && !resizing) {
             float th = (w.yawA - (rayYaw + w.dragYawOff)) * 0.5f;
             float ph = ((rayPitch + w.dragPitchOff) - w.pitchA) * 0.5f;
             th = Math.max(-5f, Math.min(5f, th));              // at most a few degrees per frame, so nothing can snap away
@@ -139,6 +154,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             bz = 0.010f * (float) Math.sin(t * 0.4f + 2f + w.phase);
         }
         android.opengl.Matrix.translateM(mM, 0, w.rot, 0, bx, by, -PANEL_D + bz);
+        shiftBy(w, mM, ux, uy, uz);
         android.opengl.Matrix.multiplyMM(w.mv, 0, rn, 0, mM, 0);
         android.opengl.Matrix.multiplyMM(w.mvp, 0, mP, 0, w.mv, 0);
         android.opengl.Matrix.invertM(w.inv, 0, w.mv, 0);
@@ -178,6 +194,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void endDrag() {
         if (dragWin != null) dragWin.c.setDragging(false);
         dragWin = null;
+        resizing = false;
     }
 
     private float[] lastRes, vel = new float[1];
@@ -380,6 +397,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private boolean pinching = false;
     private long lastPinchT = 0, lostT = 0, mpSince = 0;
     private float sizeEma = 0, dnx = 0, dny = 0;
+    private boolean resizing = false, gripHot = false;
+    private float rsD0 = 1f;
     private long dragT0 = 0;
     private boolean mpOn = false, mpLatched = false;
     private float mpProg = 0, mpNx = 0, mpNy = 0;
@@ -446,12 +465,24 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
 
         float[] o = new float[2];
-        Win target = null;
+        Win target = null, gripWin = null;
         if (dragWin == null && !mpOn) {
             for (int i = wins.size() - 1; i >= 0; i--) {                 // the one drawn last is in front
                 Win w = wins.get(i);
-                if (w.visible && hitWin(w, cnx, cny, o) && w.c.covers(o[0], o[1])) { target = w; break; }
+                if (!w.visible || !hitWin(w, cnx, cny, o)) continue;
+                if (w.c.inGrip(o[0], o[1])) { gripWin = w; break; }      // a bottom corner: pull it to resize
+                if (w.c.covers(o[0], o[1])) { target = w; break; }
             }
+        }
+        gripHot = gripWin != null || (dragWin != null && resizing);
+        if (gripWin != null && pinching && !prevPinch) {
+            dragWin = gripWin; resizing = true;
+            dnx = tnx; dny = tny;
+            rayYaw = (float) Math.toDegrees(Math.atan(dnx * tanH)); rayPitch = (float) Math.toDegrees(Math.atan(dny * tanV));
+            rsD0 = Math.max(3f, (float) Math.hypot(rayYaw - gripWin.yawA, rayPitch - gripWin.pitchA));
+            gripWin.dragS0 = gripWin.scale;
+            gripWin.c.setDragging(true);
+            wins.remove(gripWin); wins.add(gripWin);
         }
         if (target != null && pinching && !prevPinch && target.c.handleRecent()) {      // grabbed the bar under a window
             dragWin = target;
@@ -467,13 +498,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             wins.remove(target);                                          // bring to the front
             wins.add(target);
         }
-        if (dragWin != null && pinching && nowMs - dragT0 > 350) {     // not in the first moment of the grab, while the hand settles
-            // size follows how far the hand moved toward / away from you, but small changes (hand turning, noise) are ignored
-            float rr = sizeEma / dragWin.dragSize0;
-            float zr = rr > 1.15f ? rr / 1.15f : (rr < 0.87f ? rr / 0.87f : 1f);
-            float tg = dragWin.dragS0 * (float) Math.pow(zr, 1.2);
-            tg = Math.max(0.5f, Math.min(2.2f, tg));
-            dragWin.scale += (tg - dragWin.scale) * 0.15f;
+        if (dragWin != null && resizing && pinching) {                 // the corner follows the hand: size = distance from the window centre
+            float d = (float) Math.hypot(rayYaw - dragWin.yawA, rayPitch - dragWin.pitchA);
+            float tg = Math.max(0.5f, Math.min(2.5f, dragWin.dragS0 * d / rsD0));
+            dragWin.scale += (tg - dragWin.scale) * 0.3f;
         }
         // let go only when the pinch has been open for a moment (one bad detection must not drop the window)
         if (dragWin != null && !pinching && nowMs - lastPinchT > 250) endDrag();
@@ -498,7 +526,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         boolean grab = dragWin != null;
         aaBegin();
         aaSeg(x, y, x, y, (pinching ? 15f : 19f) * u);
-        aaFlush(pinching ? 1f : 0.15f, pinching ? 0.55f : 0.85f, pinching ? 0f : 1f);
+        if (gripHot) aaFlush(0.13f, 0.72f, 0.81f); else aaFlush(pinching ? 1f : 0.15f, pinching ? 0.55f : 0.85f, pinching ? 0f : 1f);
         aaBegin();
         aaSeg(x, y, x, y, 7f * u);
         aaFlush(1f, 1f, 1f);

@@ -10,5 +10,6 @@ public interface NvContent {
     void update(boolean valid, float x, float y, boolean pinch);
     boolean handleRecent();                    // was the grab bar under the pointer a moment ago?
     void setDragging(boolean d);
+    default boolean inGrip(float x, float y) { return false; }   // a bottom corner of the window: pulling it resizes
     boolean covers(float x, float y);          // is something drawn here (false = see-through, pointer goes to the window behind)
 }

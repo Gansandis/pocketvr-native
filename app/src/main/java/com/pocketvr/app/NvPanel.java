@@ -47,6 +47,7 @@ public class NvPanel implements NvContent {
     @Override public Bitmap bitmap() { return bmp; }
     @Override public void setDragging(boolean d) { if (d != dragging) { dragging = d; dirty = true; } }
     @Override public boolean covers(float x, float y) { return true; }
+    @Override public boolean inGrip(float x, float y) { return y > H * 0.78f && (x < W * 0.16f || x > W * 0.84f); }
     @Override public boolean handleRecent() { return hover == handleB || (lastH == handleB && System.currentTimeMillis() - lastHT < 300); }
 
     @Override public boolean takeDirty() {
@@ -81,6 +82,19 @@ public class NvPanel implements NvContent {
         return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 
+    /** glowing corner arcs on the bottom corners: these are the places to pull to resize */
+    static void grips(android.graphics.Canvas cv, Paint p, RectF pr, float r, float u) {
+        p.setShader(null);
+        p.setStyle(Paint.Style.STROKE);
+        p.setStrokeCap(Paint.Cap.ROUND);
+        p.setStrokeWidth(4f * u);
+        p.setColor(0xC8CFEFFF);
+        float in = 3f * u;
+        cv.drawArc(new RectF(pr.left + in, pr.bottom - 2 * r + in, pr.left + 2 * r - in, pr.bottom - in), 105f, 60f, false, p);
+        cv.drawArc(new RectF(pr.right - 2 * r + in, pr.bottom - 2 * r + in, pr.right - in, pr.bottom - in), 15f, 60f, false, p);
+        p.setStyle(Paint.Style.FILL);
+    }
+
     private void draw() {
         cv.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
         float u = H / 300f;
@@ -90,6 +104,7 @@ public class NvPanel implements NvContent {
         cv.drawRoundRect(pr, 26 * u, 26 * u, p);
         p.setShader(null);
         stroke(pr, 0x40FFFFFF, 1.5f * u, 26 * u);
+        grips(cv, p, pr, 26 * u, u);
         text(title, 24 * u, 29 * u, 20 * u, 0xFFFFFFFF, Paint.Align.LEFT, W - 100 * u);
         round(closeB.r, hover == closeB ? 0xFFE5484D : 0xFF2B2E38, closeB.r.width() / 2);
         text("✕", closeB.r.centerX(), closeB.r.centerY(), 17 * u, 0xFFFFFFFF, Paint.Align.CENTER, 0);
