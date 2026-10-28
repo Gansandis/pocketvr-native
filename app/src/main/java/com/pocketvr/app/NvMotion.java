@@ -20,13 +20,16 @@ public class NvMotion {
     public volatile RotSource rot;
     public volatile boolean rot180 = false;
 
-    private static final int GW = 128, GH = 96, NX = 8, NY = 6, PR = 3, SR = 5;
-    private byte[] prev = new byte[GW * GH], cur = new byte[GW * GH];
-    private boolean havePrev = false;
+    private static final int GW = 128, GH = 96, NX = 8, NY = 6, PR = 3, SR = 6, K = 3;      // K: compare with the picture K looks ago (3x the movement, same noise)
+    private final byte[][] frames = new byte[K + 1][GW * GH];
+    private final float[][] rots = new float[K + 1][];
+    private byte[] prev, cur;
+    private int wr = 0, count = 0;
     private float[] rotPrev = null;
+    public volatile int tracked = 0, usedN = 0;
     private long lastMs = 0;
 
-    public void reset() { px = py = pz = 0; havePrev = false; quality = 0; }
+    public void reset() { px = py = pz = 0; count = 0; quality = 0; tracked = 0; usedN = 0; }
 
     public void feed(Image img, float hFov) {
         long now = System.nanoTime() / 1000000L;
@@ -40,21 +43,26 @@ public class NvMotion {
         ByteBuffer yb = pl.getBuffer();
         int rowS = pl.getRowStride(), w = img.getWidth(), h = img.getHeight();
         int sx = Math.max(2, w / GW), sy = Math.max(2, h / GH);
+        byte[] dst = frames[wr];
         for (int y = 0; y < GH; y++) {
             int r0 = (y * sy) * rowS, r1 = r0 + rowS;
             for (int x = 0; x < GW; x++) {
                 int o = x * sx;
                 int v = (yb.get(r0 + o) & 0xFF) + (yb.get(r0 + o + 1) & 0xFF) + (yb.get(r1 + o) & 0xFF) + (yb.get(r1 + o + 1) & 0xFF);
-                cur[y * GW + x] = (byte) (v >> 2);
+                dst[y * GW + x] = (byte) (v >> 2);
             }
         }
+        rots[wr] = rn;
         float tanH = (float) Math.tan(hFov / 2.0), tanV = tanH * h / w;
-        if (havePrev && rotPrev != null) {
-            try { track(rn, tanH, tanV); } catch (Throwable t) { quality = 0; }
+        if (count >= K) {
+            int old = (wr + 1) % (K + 1);                // the picture K looks ago
+            cur = dst; prev = frames[old]; rotPrev = rots[old];
+            if (rotPrev != null) {
+                try { track(rn, tanH, tanV); } catch (Throwable t) { quality = 0; }
+            }
         }
-        byte[] t = prev; prev = cur; cur = t;
-        rotPrev = rn;
-        havePrev = true;
+        wr = (wr + 1) % (K + 1);
+        count++;
     }
 
     private int g(byte[] im, int x, int y) { return im[y * GW + x] & 0xFF; }
@@ -116,6 +124,7 @@ public class NvMotion {
                 n++;
             }
         }
+        tracked = n;
         if (n < 10) { quality = 0; return; }
         boolean[] use = new boolean[n];
         java.util.Arrays.fill(use, true);
@@ -136,13 +145,15 @@ public class NvMotion {
             if (used < 8) { quality = 0; return; }
         }
         if (!fit(ex, ey, rx, ry, use, n, sol)) { quality = 0; return; }
+        usedN = used;
         quality = used / (float) (NX * NY);
         if (used < 10) return;
         float Z = depthM;
         float tx = -sol[0] * Z * tanH, ty = -sol[1] * Z * tanV, tzf = sol[2] * Z;
         float mag = (float) Math.sqrt(tx * tx + ty * ty + tzf * tzf);
-        if (mag < 0.004f) return;                                         // tiny values are mostly noise: ignore
-        if (mag > 0.15f) { float k = 0.15f / mag; tx *= k; ty *= k; tzf *= k; }
+        if (mag < 0.006f) return;                                         // tiny values are mostly noise: ignore
+        if (mag > 0.30f) { float k = 0.30f / mag; tx *= k; ty *= k; tzf *= k; }
+        tx /= K; ty /= K; tzf /= K;                                        // this was K looks of walking: spread it out
         // view axes: x right, y up, z backwards -> world axes with the transpose of the turn
         float vx = tx, vy = ty, vz = -tzf;
         px += rn[0] * vx + rn[1] * vy + rn[2] * vz;
