@@ -44,12 +44,14 @@ public class NvMotion {
         Image.Plane pl = img.getPlanes()[0];
         ByteBuffer yb = pl.getBuffer();
         int rowS = pl.getRowStride(), w = img.getWidth(), h = img.getHeight();
-        int sx = Math.max(2, w / GW), sy = Math.max(2, h / GH);
         byte[] dst = frames[wr];
+        int lim = yb.limit();
         for (int y = 0; y < GH; y++) {
-            int r0 = (y * sy) * rowS, r1 = r0 + rowS;
+            int iy = Math.min(h - 2, y * h / GH);                 // works for any picture size, also small ones
+            int r0 = iy * rowS, r1 = r0 + rowS;
             for (int x = 0; x < GW; x++) {
-                int o = x * sx;
+                int o = Math.min(w - 2, x * w / GW);
+                if (r1 + o + 1 >= lim) { dst[y * GW + x] = dst[Math.max(0, y * GW + x - 1)]; continue; }
                 int v = (yb.get(r0 + o) & 0xFF) + (yb.get(r0 + o + 1) & 0xFF) + (yb.get(r1 + o) & 0xFF) + (yb.get(r1 + o + 1) & 0xFF);
                 dst[y * GW + x] = (byte) (v >> 2);
             }

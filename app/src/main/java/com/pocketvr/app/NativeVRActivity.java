@@ -177,7 +177,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             NvUi.glass = NvUi.glass >= 0xE0 ? 0xB0 : NvUi.glass >= 0xA0 ? 0x80 : NvUi.glass >= 0x70 ? 0x55 : 0xF0;
             menu.markDirty(); if (wClock != null) wClock.c.markDirty(); if (wStats != null) wStats.c.markDirty();
         }));
-        menu.home.add(new NvUi.Btn("🚶", () -> "เดินรอบได้ (ทดลอง)", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด x%.2f z%.2f ม. จุด %d/%d เฟรม %d", motion.px, motion.pz, motion.usedN, motion.tracked, motion.looks) : "ผิดพลาด " + motion.err) : "ปิดอยู่", () -> motion.enabled, GA, GB, () -> {
+        menu.home.add(new NvUi.Btn("🚶", () -> "เดินรอบได้ (ทดลอง)", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด x%.2f z%.2f ม. จุด %d/%d เฟรม %d", motion.px, motion.pz, motion.usedN, motion.tracked, motion.looks) : "ผิดพลาด " + (motion.err.length() > 26 ? motion.err.substring(motion.err.length() - 26) : motion.err)) : "ปิดอยู่", () -> motion.enabled, GA, GB, () -> {
             motion.enabled = !motion.enabled;
             motion.reset();
             for (VRRenderer.Win w : rend.wins) w.placeReq = true;       // put the windows up again in front of you, at the new starting point
