@@ -18,6 +18,9 @@ public class NvUi implements NvContent {
     public interface Txt { String get(); }
     public interface Flag { boolean get(); }
 
+    /** ความทึบของกระจกเมนู/หน้าต่าง 0..255 */
+    public static volatile int glass = 0xF0;
+
     public static class Btn {
         public String emoji = "";
         public Txt label, sub;
@@ -200,7 +203,7 @@ public class NvUi implements NvContent {
         if (!open) return;
         // glass panel
         RectF pr = new RectF(pX, pY, pX + pW, pY + pH);
-        p.setShader(new LinearGradient(0, pY, 0, pY + pH, 0xF02A2C36, 0xF0121319, Shader.TileMode.CLAMP));
+        p.setShader(new LinearGradient(0, pY, 0, pY + pH, (NvUi.glass << 24) | 0x2A2C36, (NvUi.glass << 24) | 0x121319, Shader.TileMode.CLAMP));
         p.setStyle(Paint.Style.FILL);
         cv.drawRoundRect(pr, 28 * u, 28 * u, p);
         p.setShader(null);

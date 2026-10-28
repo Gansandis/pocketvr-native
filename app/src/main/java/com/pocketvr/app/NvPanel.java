@@ -85,7 +85,7 @@ public class NvPanel implements NvContent {
         cv.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
         float u = H / 300f;
         RectF pr = new RectF(2, 2, W - 2, H - 2);
-        p.setShader(new LinearGradient(0, 0, 0, H, 0xF02A2C36, 0xF0121319, Shader.TileMode.CLAMP));
+        p.setShader(new LinearGradient(0, 0, 0, H, (NvUi.glass << 24) | 0x2A2C36, (NvUi.glass << 24) | 0x121319, Shader.TileMode.CLAMP));
         p.setStyle(Paint.Style.FILL);
         cv.drawRoundRect(pr, 26 * u, 26 * u, p);
         p.setShader(null);
