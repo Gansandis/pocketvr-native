@@ -57,6 +57,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 long p = cam.detPaceMs;
                 if (f >= 42) p = Math.max(0, p - 20); else if (f > 0 && f < 34) p = Math.min(160, p + 20);
                 cam.detPaceMs = p;
+                if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
                     hud.setText((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.79 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, err.isEmpty() ? "" : "\n! " + err));
@@ -176,7 +177,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             NvUi.glass = NvUi.glass >= 0xE0 ? 0xB0 : NvUi.glass >= 0xA0 ? 0x80 : NvUi.glass >= 0x70 ? 0x55 : 0xF0;
             menu.markDirty(); if (wClock != null) wClock.c.markDirty(); if (wStats != null) wStats.c.markDirty();
         }));
-        menu.home.add(new NvUi.Btn("🚶", () -> "เดินรอบได้ (ทดลอง)", () -> motion.enabled ? String.format("เปิด x%.2f z%.2f ม. จุด %d/%d", motion.px, motion.pz, motion.usedN, motion.tracked) : "ปิดอยู่", () -> motion.enabled, GA, GB, () -> {
+        menu.home.add(new NvUi.Btn("🚶", () -> "เดินรอบได้ (ทดลอง)", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด x%.2f z%.2f ม. จุด %d/%d เฟรม %d", motion.px, motion.pz, motion.usedN, motion.tracked, motion.looks) : "ผิดพลาด " + motion.err) : "ปิดอยู่", () -> motion.enabled, GA, GB, () -> {
             motion.enabled = !motion.enabled;
             motion.reset();
             for (VRRenderer.Win w : rend.wins) w.placeReq = true;       // put the windows up again in front of you, at the new starting point

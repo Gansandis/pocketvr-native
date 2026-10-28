@@ -26,7 +26,8 @@ public class NvMotion {
     private byte[] prev, cur;
     private int wr = 0, count = 0;
     private float[] rotPrev = null;
-    public volatile int tracked = 0, usedN = 0;
+    public volatile int tracked = 0, usedN = 0, looks = 0;     // frames = how many pictures it has looked at
+    public volatile String err = "";
     private long lastMs = 0;
 
     public void reset() { px = py = pz = 0; count = 0; quality = 0; tracked = 0; usedN = 0; }
@@ -39,6 +40,7 @@ public class NvMotion {
         float[] rn = rs.get();
         if (rn == null) return;
         lastMs = now;
+        looks++;
         Image.Plane pl = img.getPlanes()[0];
         ByteBuffer yb = pl.getBuffer();
         int rowS = pl.getRowStride(), w = img.getWidth(), h = img.getHeight();
@@ -58,7 +60,7 @@ public class NvMotion {
             int old = (wr + 1) % (K + 1);                // the picture K looks ago
             cur = dst; prev = frames[old]; rotPrev = rots[old];
             if (rotPrev != null) {
-                try { track(rn, tanH, tanV); } catch (Throwable t) { quality = 0; }
+                try { track(rn, tanH, tanV); } catch (Throwable t) { quality = 0; err = String.valueOf(t); }
             }
         }
         wr = (wr + 1) % (K + 1);
