@@ -499,8 +499,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             wins.add(target);
         }
         if (dragWin != null && resizing && pinching) {                 // the corner follows the hand: size = distance from the window centre
-            float d = (float) Math.hypot(rayYaw - dragWin.yawA, rayPitch - dragWin.pitchA);
-            float tg = Math.max(0.5f, Math.min(2.5f, dragWin.dragS0 * d / rsD0));
+            float rd = (float) Math.hypot(rayYaw - dragWin.yawA, rayPitch - dragWin.pitchA);
+            float tg = Math.max(0.5f, Math.min(2.5f, dragWin.dragS0 * rd / rsD0));
             dragWin.scale += (tg - dragWin.scale) * 0.3f;
         }
         // let go only when the pinch has been open for a moment (one bad detection must not drop the window)
