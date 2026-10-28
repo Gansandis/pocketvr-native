@@ -30,6 +30,19 @@ public class NvMotion {
     public volatile String err = "";
     private long lastMs = 0;
 
+    // calibration: walk a known 1 m sideways between calStart() and calEnd(); the assumed depth is then corrected to match
+    private float cx0, cz0;
+    public volatile boolean calibrating = false;
+    public void calStart() { cx0 = px; cz0 = pz; calibrating = true; }
+    public float calWalked() { return (float) Math.hypot(px - cx0, pz - cz0); }
+    public boolean calEnd(float knownM) {
+        calibrating = false;
+        float d = calWalked();
+        if (d < 0.08f) return false;
+        depthM = Math.max(1f, Math.min(25f, depthM * knownM / d));
+        return true;
+    }
+
     public void reset() { px = py = pz = 0; count = 0; quality = 0; tracked = 0; usedN = 0; }
 
     public void feed(Image img, float hFov) {
@@ -147,7 +160,7 @@ public class NvMotion {
             }
             float[] sorted = res.clone();
             java.util.Arrays.sort(sorted);
-            float lim = Math.max(0.006f, 2.5f * sorted[n / 2]);
+            float lim = Math.max(0.01f, 3.5f * sorted[n / 2]);     // near things move more than far things: do not throw them all away
             used = 0;
             for (int i = 0; i < n; i++) { use[i] = res[i] <= lim; if (use[i]) used++; }
             if (used < 8) { quality = 0; return; }
