@@ -182,6 +182,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             motion.reset();
             for (VRRenderer.Win w : rend.wins) w.placeReq = true;       // put the windows up again in front of you, at the new starting point
         }));
+        menu.home.add(new NvUi.Btn("📏", () -> "ขนาดห้อง (ความไวเดิน)", () -> String.format("ประมาณ %.0f ม.", motion.depthM), () -> motion.depthM > 3.5f, GA, GB, () -> motion.depthM = motion.depthM < 2.5f ? 3f : motion.depthM < 3.5f ? 4f : motion.depthM < 5f ? 6f : 2f));
         menu.home.add(new NvUi.Btn("🎈", () -> "ลอยเบาๆ", () -> rend.floaty ? "เปิดอยู่" : "ปิดอยู่", () -> rend.floaty, GA, GB, () -> rend.floaty = !rend.floaty));
         menu.home.add(new NvUi.Btn("🏠", () -> "กลับแอปหลัก", () -> "ออกจากหน้าจอนี้", null, 0xFF8D6BFF, 0xFF4A2FB8, () -> runOnUiThread(() -> finish())));
         menu.dock.add(new NvUi.Btn("🏠", () -> "เมนู", null, () -> menu.open, 0, 0, () -> menu.toggleOpen()));

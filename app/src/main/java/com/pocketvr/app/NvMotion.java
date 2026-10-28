@@ -14,7 +14,7 @@ public class NvMotion {
     public interface RotSource { float[] get(); }       // 4x4 world->view turn, as the renderer uses it
 
     public volatile boolean enabled = false;
-    public volatile float depthM = 2.0f;                // assumed distance of what the camera sees
+    public volatile float depthM = 3.0f;                // assumed distance of what the camera sees
     public volatile float px = 0, py = 0, pz = 0;       // where the user is, metres, world axes
     public volatile float quality = 0;                  // share of spots that agree, 0..1
     public volatile RotSource rot;
@@ -75,6 +75,10 @@ public class NvMotion {
         // turn from the old view to the new view (3x3), R = rn * rotPrev^T
         float[] a = rotPrev, b = rn;
         float[] R = new float[9];
+        // while the head is turning fast the gyro and the picture are never perfectly in step, which would look like walking: skip those moments
+        float tr = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[4] * b[4] + a[5] * b[5] + a[6] * b[6] + a[8] * b[8] + a[9] * b[9] + a[10] * b[10];
+        float cosT = Math.max(-1f, Math.min(1f, (tr - 1f) * 0.5f));
+        if (cosT < 0.9945f) { quality = 0; return; }       // more than ~6 degrees in these looks
         for (int i = 0; i < 3; i++)
             for (int j = 0; j < 3; j++)
                 R[i * 3 + j] = b[0 * 4 + i] * a[0 * 4 + j] + b[1 * 4 + i] * a[1 * 4 + j] + b[2 * 4 + i] * a[2 * 4 + j];   // column-major 4x4
@@ -155,7 +159,7 @@ public class NvMotion {
         float Z = depthM;
         float tx = -sol[0] * Z * tanH, ty = -sol[1] * Z * tanV, tzf = sol[2] * Z;
         float mag = (float) Math.sqrt(tx * tx + ty * ty + tzf * tzf);
-        if (mag < 0.006f) return;                                         // tiny values are mostly noise: ignore
+        if (mag < 0.004f) return;                                         // tiny values are mostly noise: ignore
         if (mag > 0.30f) { float k = 0.30f / mag; tx *= k; ty *= k; tzf *= k; }
         tx /= K; ty /= K; tzf /= K;                                        // this was K looks of walking: spread it out
         // view axes: x right, y up, z backwards -> world axes with the transpose of the turn
