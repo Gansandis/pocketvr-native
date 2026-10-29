@@ -46,7 +46,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         @Override public void onAccuracyChanged(android.hardware.Sensor s, int acc) { }
     };
     private final NvUi menu = new NvUi();
-    private VRRenderer.Win wMenu, wClock, wStats;
+    private VRRenderer.Win wMenu, wClock, wStats, wKeys;
     private NvMotion motion;
     private final long t0 = System.currentTimeMillis();
     private boolean swRunning = false;
@@ -162,6 +162,16 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         };
         wStats = rend.addWindow(stats, 0.55f);
         stats.onClose = () -> rend.setVisible(wStats, false, 0f, 0f);
+
+        final NvKeyboard kb = new NvKeyboard();
+        kb.copier = s -> runOnUiThread(() -> {
+            try {
+                android.content.ClipboardManager cm = (android.content.ClipboardManager) getSystemService(CLIPBOARD_SERVICE);
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("pocketvr", s));
+            } catch (Throwable ignored) { }
+        });
+        wKeys = rend.addWindow(kb, 0.80f);
+        kb.onClose = () -> rend.setVisible(wKeys, false, 0f, 0f);
     }
 
     private void buildMenu() {
@@ -170,6 +180,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.home.add(new NvUi.Btn("👓", () -> "เลนส์", () -> rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง", () -> rend.lens > 0, GA, GB, () -> rend.lens = (rend.lens + 1) % 4));
         menu.home.add(new NvUi.Btn("✋", () -> "คาดการณ์มือ", () -> rend.predict ? "เปิดอยู่" : "ปิดอยู่", () -> rend.predict, GA, GB, () -> rend.predict = !rend.predict));
         menu.home.add(new NvUi.Btn("🦴", () -> "โครงมือ", () -> rend.skel == 0 ? "ปิด" : rend.skel == 1 ? "เส้นโครง" : "เส้นขอบเรืองแสง", () -> rend.skel > 0, GA, GB, () -> rend.skel = (rend.skel + 1) % 3));
+        menu.home.add(new NvUi.Btn("⌨", () -> "คีย์บอร์ด", () -> wKeys.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wKeys.visible, GA, GB, () -> rend.toggle(wKeys, 0f, -24f)));
         menu.home.add(new NvUi.Btn("⏱", () -> "นาฬิกา/จับเวลา", () -> wClock.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wClock.visible, GA, GB, () -> rend.toggle(wClock, 18f, 0f)));
         menu.home.add(new NvUi.Btn("📈", () -> "สถานะระบบ", () -> wStats.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wStats.visible, GA, GB, () -> rend.toggle(wStats, -18f, 0f)));
         menu.home.add(new NvUi.Btn("📊", () -> "ตัวเลขบนจอ", () -> hudOn ? "เปิดอยู่" : "ปิดอยู่", () -> hudOn, GA, GB, () -> hudOn = !hudOn));
@@ -178,7 +189,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             NvUi.glass = NvUi.glass >= 0xE0 ? 0xB0 : NvUi.glass >= 0xA0 ? 0x80 : NvUi.glass >= 0x70 ? 0x55 : 0xF0;
             menu.markDirty(); if (wClock != null) wClock.c.markDirty(); if (wStats != null) wStats.c.markDirty();
         }));
-        menu.home.add(new NvUi.Btn("🚶", () -> "เดินรอบได้ (ทดลอง)", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด %.2f,%.2f ม. จุด %d/%d %s", motion.px, motion.py, motion.usedN, motion.tracked, motion.how) : "ผิดพลาด " + (motion.err.length() > 26 ? motion.err.substring(motion.err.length() - 26) : motion.err)) : "ปิดอยู่", () -> motion.enabled, GA, GB, () -> {
+        menu.home.add(new NvUi.Btn("🚶", () -> "เดินรอบได้ (ทดลอง)", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด %.2f,%.2f ม. จุด %d/%d %s", motion.px, motion.py, motion.usedN, motion.tracked, motion.how + " " + motion.size) : "ผิดพลาด " + (motion.err.length() > 26 ? motion.err.substring(motion.err.length() - 26) : motion.err)) : "ปิดอยู่", () -> motion.enabled, GA, GB, () -> {
             motion.enabled = !motion.enabled;
             motion.reset();
             for (VRRenderer.Win w : rend.wins) w.placeReq = true;       // put the windows up again in front of you, at the new starting point

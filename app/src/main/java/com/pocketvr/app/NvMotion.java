@@ -68,7 +68,7 @@ public class NvMotion {
     private int rhead = 0;
     public volatile boolean tsReal = false;             // camera times are on the same clock as the sensors
     public volatile int lagMs = 70;                     // otherwise: assume the picture is this old when it arrives
-    public volatile String how = "";
+    public volatile String how = "", size = "";
 
     public synchronized void pushRot(long tsNs, float[] m) {
         rhead = (rhead + 1) % RN;
@@ -115,6 +115,7 @@ public class NvMotion {
         Image.Plane pl = img.getPlanes()[0];
         ByteBuffer yb = pl.getBuffer();
         int rowS = pl.getRowStride(), w = img.getWidth(), h = img.getHeight();
+        size = w + "x" + h;
         byte[] dst = frames[wr];
         int lim = yb.limit();
         for (int y = 0; y < GH; y++) {
