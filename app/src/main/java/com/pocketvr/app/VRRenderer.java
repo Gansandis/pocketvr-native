@@ -115,6 +115,29 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     private float sux = 0, suy = 0, suz = 0;          // smoothed user position, so the estimate arriving in small steps looks smooth
+    // When you have walked away from the spot where a window was put up, turning/pushing it "about that old spot" goes the wrong way.
+    // So at the moment of grabbing, the window is re-based on where you stand now: same place in the room, now measured from you,
+    // and turned to face you (the smallest turn that does it).
+    private void rebase(Win w, float ux, float uy, float uz) {
+        if (w.rot == null) return;
+        float[] r = w.rot;
+        float ax = -r[8], ay = -r[9], az = -r[10];
+        float cx = w.wx + ax * w.dist, cy = w.wy + ay * w.dist, cz = w.wz + az * w.dist;
+        float vx = cx - ux, vy = cy - uy, vz = cz - uz;
+        float L = (float) Math.sqrt(vx * vx + vy * vy + vz * vz);
+        if (!(L > 0.2f) || Float.isNaN(L)) return;
+        float nx = vx / L, ny = vy / L, nz = vz / L;
+        float kx = ay * nz - az * ny, ky = az * nx - ax * nz, kz = ax * ny - ay * nx;
+        float s = (float) Math.sqrt(kx * kx + ky * ky + kz * kz), c = ax * nx + ay * ny + az * nz;
+        if (c > -0.99f && s > 1e-4f) {
+            android.opengl.Matrix.setRotateM(tE, 0, (float) Math.toDegrees(Math.atan2(s, c)), kx / s, ky / s, kz / s);
+            android.opengl.Matrix.multiplyMM(tF, 0, tE, 0, w.rot, 0);
+            w.rot = tF.clone();
+        }
+        w.wx = ux; w.wy = uy; w.wz = uz;
+        w.dist = L; w.dragD0 = L;
+    }
+
     private void smoothUser() {
         NvMotion mo = motion;
         if (mo != null && mo.enabled) { sux += (mo.px - sux) * 0.18f; suy += (mo.py - suy) * 0.18f; suz += (mo.pz - suz) * 0.18f; }
@@ -483,6 +506,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         gripHot = gripWin != null || (dragWin != null && resizing);
         if (gripWin != null && pinching && !prevPinch) {
+            if (motion != null && motion.enabled) rebase(gripWin, sux, suy, suz);
             dragWin = gripWin; resizing = true;
             dnx = tnx; dny = tny;
             rayYaw = (float) Math.toDegrees(Math.atan(dnx * tanH)); rayPitch = (float) Math.toDegrees(Math.atan(dny * tanV));
@@ -492,6 +516,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             wins.remove(gripWin); wins.add(gripWin);
         }
         if (target != null && pinching && !prevPinch && target.c.handleRecent()) {      // grabbed the bar under a window
+            if (motion != null && motion.enabled) rebase(target, sux, suy, suz);
             dragWin = target;
             dnx = tnx; dny = tny;
             float gy = (float) Math.toDegrees(Math.atan(dnx * tanH)), gp = (float) Math.toDegrees(Math.atan(dny * tanV));
@@ -516,7 +541,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             // Small changes are ignored (soft dead zone) and it moves gently, so it does not stutter or run away.
             float lr = (float) Math.log(Math.max(1e-3f, sizeEma) / dragWin.dragSize0);
             float f = lr > 0.10f ? lr - 0.10f : (lr < -0.10f ? lr + 0.10f : 0f);
-            float tgD = Math.max(0.6f, Math.min(4f, dragWin.dragD0 * (float) Math.exp(-1.8f * f)));
+            float tgD = Math.max(0.6f, Math.min(Math.max(4f, dragWin.dragD0), dragWin.dragD0 * (float) Math.exp(-1.8f * f)));
             dragWin.dist += (tgD - dragWin.dist) * 0.12f;
         }
         // let go only when the pinch has been open for a moment (one bad detection must not drop the window)

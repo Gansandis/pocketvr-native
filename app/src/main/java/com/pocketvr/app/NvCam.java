@@ -127,7 +127,7 @@ public class NvCam {
             Integer so = cc.get(CameraCharacteristics.SENSOR_ORIENTATION);
             int disp = act.getWindowManager().getDefaultDisplay().getRotation() * 90;
             boolean rot180 = so != null && ((so - disp + 360) % 360) == 180;
-            NvMotion mo = motion; if (mo != null) mo.rot180 = rot180;
+            NvMotion mo = motion; if (mo != null) { mo.rot180 = rot180; Integer tsrc = cc.get(CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE); mo.tsReal = tsrc != null && tsrc == CameraCharacteristics.SENSOR_INFO_TIMESTAMP_SOURCE_REALTIME; }
 
             st.setDefaultBufferSize(prev.getWidth(), prev.getHeight());
             previewSurface = new Surface(st);

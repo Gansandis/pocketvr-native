@@ -4,6 +4,8 @@ import android.media.Image;
 
 import java.nio.ByteBuffer;
 
+import android.os.SystemClock;
+
 /**
  * EXPERIMENTAL walk-around estimate without ARCore.
  * The turn of the head is known from the gyro, so every tracked spot in the camera picture is first "un-turned"; what is left over is
@@ -59,6 +61,29 @@ public class NvMotion {
     private long lastMs = 0;
 
     // calibration: walk a known 1 m sideways between calStart() and calEnd(); the assumed depth is then corrected to match
+    // ---- turn history: the camera picture is a little old, so the turn must be the one from the moment it was taken ----
+    private static final int RN = 64;
+    private final long[] rts = new long[RN];
+    private final float[][] rms = new float[RN][];
+    private int rhead = 0;
+    public volatile boolean tsReal = false;             // camera times are on the same clock as the sensors
+    public volatile int lagMs = 70;                     // otherwise: assume the picture is this old when it arrives
+    public volatile String how = "";
+
+    public synchronized void pushRot(long tsNs, float[] m) {
+        rhead = (rhead + 1) % RN;
+        rts[rhead] = tsNs; rms[rhead] = m.clone();
+    }
+    private synchronized float[] rotAt(long tsNs) {
+        float[] best = null; long bd = Long.MAX_VALUE;
+        for (int i = 0; i < RN; i++) {
+            if (rms[i] == null) continue;
+            long d = Math.abs(rts[i] - tsNs);
+            if (d < bd) { bd = d; best = rms[i]; }
+        }
+        return (best != null && bd < 150_000_000L) ? best : null;     // nothing close enough: do not guess
+    }
+
     private float cx0, cz0;
     public volatile boolean calibrating = false;
     public void calStart() { cx0 = px; cz0 = pz; calibrating = true; }
@@ -78,7 +103,12 @@ public class NvMotion {
         if (now - lastMs < 55) return;                  // ~18 looks a second is enough, and cheap
         RotSource rs = rot;
         if (rs == null) return;
-        float[] rn = rs.get();
+        float[] rn = null;
+        long nowEl = SystemClock.elapsedRealtimeNanos();
+        long imgTs = img.getTimestamp();
+        if (tsReal && Math.abs(nowEl - imgTs) < 1_000_000_000L) { rn = rotAt(imgTs); how = "เวลาภาพ"; }
+        if (rn == null) { rn = rotAt(nowEl - lagMs * 1_000_000L); how = "หน่วง" + lagMs; }
+        if (rn == null) { rn = rs.get(); how = "ล่าสุด"; }
         if (rn == null) return;
         lastMs = now;
         looks++;
@@ -204,6 +234,7 @@ public class NvMotion {
         float Z = depthM;
         float tx = -sol[0] * Z * tanH, ty = -sol[1] * Z * tanV, tzf = sol[2] * Z;
         float mag = (float) Math.sqrt(tx * tx + ty * ty + tzf * tzf);
+        if (!(mag > 1e-6f) || Float.isNaN(mag) || Float.isInfinite(mag)) return;       // never let a 0/0 or a bad number into the position
         float shrink = Math.max(0f, mag - 0.003f) / mag;                   // soft: tiny values fade out instead of switching on and off (no stepping)
         tx *= shrink; ty *= shrink; tzf *= shrink; mag *= shrink;
         if (mag <= 0f) return;
@@ -214,6 +245,11 @@ public class NvMotion {
         px += rn[0] * vx + rn[1] * vy + rn[2] * vz;
         py += rn[4] * vx + rn[5] * vy + rn[6] * vz;
         pz += rn[8] * vx + rn[9] * vy + rn[10] * vz;
+        // you walk on a floor: sideways/forward may be far, but up/down is limited, and the whole thing stays within a sane size.
+        // (a window sent far up or down by small errors would be gone when you turn back)
+        py = Math.max(-0.35f, Math.min(0.35f, py * 0.995f));
+        px = Math.max(-12f, Math.min(12f, px)); pz = Math.max(-12f, Math.min(12f, pz));
+        if (Float.isNaN(px + py + pz)) { px = py = pz = 0; }
     }
 
     // least squares for  dx = a + c*x,  dy = b + c*y

@@ -40,6 +40,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                     android.hardware.SensorManager.remapCoordinateSystem(r, android.hardware.SensorManager.AXIS_MINUS_Y, android.hardware.SensorManager.AXIS_X, o);
                     rend.setRotation(o);
                 } else rend.setRotation(r);
+                if (motion != null) motion.pushRot(e.timestamp, rend.rotCopy());
             } catch (Throwable ignored) { }
         }
         @Override public void onAccuracyChanged(android.hardware.Sensor s, int acc) { }
@@ -177,7 +178,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             NvUi.glass = NvUi.glass >= 0xE0 ? 0xB0 : NvUi.glass >= 0xA0 ? 0x80 : NvUi.glass >= 0x70 ? 0x55 : 0xF0;
             menu.markDirty(); if (wClock != null) wClock.c.markDirty(); if (wStats != null) wStats.c.markDirty();
         }));
-        menu.home.add(new NvUi.Btn("🚶", () -> "เดินรอบได้ (ทดลอง)", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด x%.2f z%.2f ม. จุด %d/%d เฟรม %d", motion.px, motion.pz, motion.usedN, motion.tracked, motion.looks) : "ผิดพลาด " + (motion.err.length() > 26 ? motion.err.substring(motion.err.length() - 26) : motion.err)) : "ปิดอยู่", () -> motion.enabled, GA, GB, () -> {
+        menu.home.add(new NvUi.Btn("🚶", () -> "เดินรอบได้ (ทดลอง)", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด x%.2f z%.2f ม. จุด %d/%d %s", motion.px, motion.pz, motion.usedN, motion.tracked, motion.how) : "ผิดพลาด " + (motion.err.length() > 26 ? motion.err.substring(motion.err.length() - 26) : motion.err)) : "ปิดอยู่", () -> motion.enabled, GA, GB, () -> {
             motion.enabled = !motion.enabled;
             motion.reset();
             for (VRRenderer.Win w : rend.wins) w.placeReq = true;       // put the windows up again in front of you, at the new starting point
@@ -187,6 +188,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             if (!motion.enabled) return;
             if (!motion.calibrating) motion.calStart(); else motion.calEnd(1.0f);
         }));
+        menu.home.add(new NvUi.Btn("⏱", () -> "หน่วงภาพกล้อง", () -> motion.tsReal ? "ใช้เวลาจากภาพ" : motion.lagMs + " ms (กดเปลี่ยน)", null, GA, GB, () -> motion.lagMs = motion.lagMs < 50 ? 70 : motion.lagMs < 90 ? 110 : motion.lagMs < 130 ? 150 : 30));
         menu.home.add(new NvUi.Btn("🎈", () -> "ลอยเบาๆ", () -> rend.floaty ? "เปิดอยู่" : "ปิดอยู่", () -> rend.floaty, GA, GB, () -> rend.floaty = !rend.floaty));
         menu.home.add(new NvUi.Btn("🏠", () -> "กลับแอปหลัก", () -> "ออกจากหน้าจอนี้", null, 0xFF8D6BFF, 0xFF4A2FB8, () -> runOnUiThread(() -> finish())));
         menu.dock.add(new NvUi.Btn("🏠", () -> "เมนู", null, () -> menu.open, 0, 0, () -> menu.toggleOpen()));
