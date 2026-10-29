@@ -54,7 +54,8 @@ public class NvUi implements NvContent {
     }
     public boolean handleRecent() { return hover == handle || (lastH == handle && System.currentTimeMillis() - lastHT < 300); }
 
-    private final List<Btn> tabs = new ArrayList<>();
+    private static class Tab { Btn b; List<Btn> items; String title; }
+    private final List<Tab> tabs = new ArrayList<>();
     private final List<Btn> visible = new ArrayList<>();
     private Btn prevB, nextB;
     private int tab = 0, page = 0, pages = 1;
@@ -75,10 +76,24 @@ public class NvUi implements NvContent {
     private final RectF dockR = new RectF();
 
     public NvUi() {
-        tabs.add(new Btn("🏠", () -> "หน้าแรก", null, null, 0, 0, () -> { tab = 0; page = 0; layout(); }));
-        tabs.add(new Btn("📱", () -> "แอป", null, null, 0, 0, () -> { tab = 1; page = 0; layout(); }));
+        addTabInternal("🏠", "หน้าแรก", "หน้าแรก", home, false);
+        addTabInternal("📱", "แอป", "แอปในเครื่อง", apps, false);
         prevB = new Btn("", () -> "‹", null, null, 0, 0, () -> { page = (page + pages - 1) % pages; layout(); });
         nextB = new Btn("", () -> "›", null, null, 0, 0, () -> { page = (page + 1) % pages; layout(); });
+    }
+
+    private void addTabInternal(String emoji, final String name, String title, List<Btn> items, boolean beforeLast) {
+        final Tab t = new Tab();
+        t.items = items; t.title = title;
+        t.b = new Btn(emoji, () -> name, null, null, 0, 0, () -> { tab = tabs.indexOf(t); page = 0; layout(); });
+        if (beforeLast && !tabs.isEmpty()) tabs.add(tabs.size() - 1, t); else tabs.add(t);
+    }
+
+    /** A new category in the side bar (before the apps tab). Returns the list to put its cards in. */
+    public List<Btn> addTab(String emoji, String name, String title) {
+        List<Btn> l = new ArrayList<>();
+        addTabInternal(emoji, name, title, l, true);
+        return l;
     }
 
     public void toggleOpen() { open = !open; layout(); dirty = true; }
@@ -133,10 +148,11 @@ public class NvUi implements NvContent {
         pY = H * 0.04f;
         pH = dy - 12 * u - pY;
         sbW = 78 * u;
+        float tabStep = Math.min(70 * u, (pH - 66 * u) / Math.max(1, tabs.size()));
         for (int i = 0; i < tabs.size(); i++) {
-            float y = pY + 54 * u + i * 70 * u;
-            tabs.get(i).r.set(pX + 8 * u, y, pX + sbW - 4 * u, y + 62 * u);
-            visible.add(tabs.get(i));
+            float y = pY + 50 * u + i * tabStep;
+            tabs.get(i).b.r.set(pX + 8 * u, y, pX + sbW - 4 * u, y + tabStep - 6 * u);
+            visible.add(tabs.get(i).b);
         }
         float cx0 = pX + sbW + 8 * u, cy0 = pY + 52 * u;
         float cw = pW - sbW - 18 * u, ch = pH - 52 * u - 40 * u;
@@ -144,11 +160,12 @@ public class NvUi implements NvContent {
         int rows = Math.max(1, (int) (ch / (114 * u)));
         float gw = 8 * u;
         float cardW = (cw - (cols - 1) * gw) / cols, cardH = Math.min(ch / rows - gw, 124 * u);
-        List<Btn> list = tab == 0 ? home : apps;
+        if (tab >= tabs.size()) tab = 0;
+        List<Btn> list = tabs.get(tab).items;
         int per = cols * rows;
         pages = Math.max(1, (list.size() + per - 1) / per);
         if (page >= pages) page = 0;
-        for (Btn b : list) b.r.setEmpty();
+        for (Tab tt : tabs) for (Btn b : tt.items) b.r.setEmpty();
         for (int i = 0; i < per && page * per + i < list.size(); i++) {
             int c = i % cols, rw = i / cols;
             float x = cx0 + c * (cardW + gw), y = cy0 + rw * (cardH + gw);
@@ -214,10 +231,10 @@ public class NvUi implements NvContent {
         p.setShader(null);
         stroke(pr, 0x40FFFFFF, 1.5f * u, 28 * u);
         NvPanel.grips(cv, p, pr, 28 * u, u);
-        text(tab == 0 ? "หน้าแรก" : "แอปในเครื่อง", pX + sbW + (pW - sbW) / 2f, pY + 28 * u, 22 * u, 0xFFFFFFFF, pW - sbW - 20 * u);
+        text(tabs.get(Math.min(tab, tabs.size() - 1)).title, pX + sbW + (pW - sbW) / 2f, pY + 28 * u, 22 * u, 0xFFFFFFFF, pW - sbW - 20 * u);
         // sidebar
         for (int i = 0; i < tabs.size(); i++) {
-            Btn t = tabs.get(i);
+            Btn t = tabs.get(i).b;
             boolean act = i == tab;
             if (act) round(t.r, 0x38FFFFFF, 16 * u);
             if (hover == t) stroke(t.r, 0xFF22B8CF, 3 * u, 16 * u);
@@ -226,7 +243,7 @@ public class NvUi implements NvContent {
             if (act) round(new RectF(pX + 3 * u, t.r.top + 14 * u, pX + 6.5f * u, t.r.bottom - 14 * u), 0xFF4D8DFF, 2 * u);
         }
         // cards
-        List<Btn> list = tab == 0 ? home : apps;
+        List<Btn> list = tabs.get(Math.min(tab, tabs.size() - 1)).items;
         for (Btn b : list) {
             if (b.r.isEmpty()) continue;
             boolean on = b.on != null && b.on.get();

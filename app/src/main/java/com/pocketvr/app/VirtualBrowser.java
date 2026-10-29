@@ -42,6 +42,8 @@ public class VirtualBrowser {
     public static volatile int seq = 0;
     public interface Sink { void onFrame(Bitmap b); }      // the native VR screen takes pictures directly (no JPEG step)
     public static volatile Sink sink = null;
+    public volatile Sink inst = null;                      // per browser (several browser windows at once)
+    public volatile long myGap = -1;                        // per browser picture gap; -1 = use the shared gapMs
     public static volatile long gapMs = 66;
     public void setGap(int ms) { gapMs = Math.max(20, Math.min(1000, ms)); }
 
@@ -196,7 +198,8 @@ public class VirtualBrowser {
             img = r.acquireLatestImage();
             if (img == null) return;
             long now = SystemClock.uptimeMillis();
-            if (now - lastFrame < gapMs) return;        // picture rate chosen by the page (saves CPU)
+            long gap = myGap > 0 ? myGap : gapMs;
+            if (now - lastFrame < gap) return;          // picture rate chosen by the page (saves CPU)
             lastFrame = now;
             Image.Plane p = img.getPlanes()[0];
             ByteBuffer buf = p.getBuffer();
@@ -205,10 +208,10 @@ public class VirtualBrowser {
             if (bmp == null || bmp.getWidth() != bw || bmp.getHeight() != ih) bmp = Bitmap.createBitmap(bw, ih, Bitmap.Config.ARGB_8888);
             bmp.copyPixelsFromBuffer(buf);
             Bitmap src = bw == iw ? bmp : Bitmap.createBitmap(bmp, 0, 0, iw, ih);
-            Sink sk = sink;
+            Sink sk = inst != null ? inst : sink;
             if (sk != null) { sk.onFrame(src); seq++; return; }
             // the page is out of sight (the web side asks for a slow picture rate): a smaller, lighter picture is enough and costs far less CPU
-            boolean far = gapMs >= 400;
+            boolean far = gap >= 400;
             if (far) src = Bitmap.createScaledBitmap(src, Math.max(2, iw * 6 / 10), Math.max(2, ih * 6 / 10), true);
             ByteArrayOutputStream out = new ByteArrayOutputStream(far ? 40000 : 90000);
             src.compress(Bitmap.CompressFormat.JPEG, far ? 55 : 72, out);

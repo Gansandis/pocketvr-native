@@ -46,13 +46,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         android.opengl.Matrix.multiplyMM(tF, 0, tE, 0, m, 0);
         System.arraycopy(tF, 0, m, 0, 16);
     }
-    public volatile boolean floaty = true;
+    public volatile boolean floaty = false;               // windows stay perfectly still unless this is switched on
+    public volatile int cursorSz = 0;                     // 0 small and faint, 1 medium, 2 large
     public volatile int sel = 2;              // how things are pressed: 0 pinch, 1 air touch (push the index finger forward), 2 both
     public volatile int pokeS = 1;            // air touch sensitivity: 0 light, 1 medium, 2 firm
     private static final float[] POKE_TH = {0.07f, 0.10f, 0.14f};
     private float pkBase = 0, pkPeak = 0, pkProg = 0;
     private long pkT = 0;
     private boolean pkOn = false, pkInit = false;
+    private long pkT2 = 0, pkAbove = 0, idxSince = 0, pkRelT = 0, lastFreshT = 0;
+    private float pkDepthF = 0, handSpd = 0, lastTx = 0, lastTy = 0;
+    private float[] lastRef = null;
     private final float[] tA = new float[16], tB = new float[16], tC = new float[16], tD = new float[16];
 
     /** A floating window in the room: it keeps its place when the phone turns, can float a little, be grabbed by its bar, and be pulled bigger or smaller. */
@@ -312,8 +316,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             " gl_FragColor = vec4(vec3(0.92,0.97,1.0)*e, a); }");
         progAA = prog(
             "attribute vec2 p; attribute vec4 q; varying vec4 vq; void main(){ gl_Position=vec4(p,0.,1.); vq=q; }",
-            "precision mediump float; uniform vec3 col; uniform float sf; varying vec4 vq;" +
-            "void main(){ float t=clamp(vq.x,0.,vq.z); float d=length(vec2(vq.x-t,vq.y)); float al=clamp((1.-d)*vq.w/sf,0.,1.); gl_FragColor=vec4(col*al,al); }");
+            "precision mediump float; uniform vec3 col; uniform float sf; uniform float fade; varying vec4 vq;" +
+            "void main(){ float t=clamp(vq.x,0.,vq.z); float d=length(vec2(vq.x-t,vq.y)); float al=clamp((1.-d)*vq.w/sf,0.,1.); gl_FragColor=vec4(col*al,al)*fade; }");
         aaBuf = fb(6 * 6 * 60);
         triBuf = fb(4096);
         maskW = 0; maskFbo[0] = 0; maskTex[0] = 0;
@@ -471,27 +475,42 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (pinching) { if (ratio > 0.30f) pinching = false; } else { if (ratio < 0.17f) pinching = true; }
         if (pinching) lastPinchT = nowMs;
 
-        // air touch (as in the web version): the index finger is out and is pushed forward = the hand gets smaller in the picture
+        // air touch (as in the web version): the index finger is out and is pushed forward = the hand gets smaller in the picture.
+        // Made calmer: the depth is smoothed, the pose has to be steady for a moment, a fast-moving hand does not count as a push,
+        // the push must last a moment, and there is a short pause after a press.
         int selM = sel;
         {
             float z8 = r[1 + 8 * 3 + 2], z0 = r[1 + 2];
             float sz = Math.max(1e-3f, size);
-            float depth = -((float) Math.log(sz) - 0.6f * (z8 - z0) / sz);
+            float depthRaw = -((float) Math.log(sz) - 0.6f * (z8 - z0) / sz);
+            float dtF = pkT2 == 0 ? 0.02f : Math.min(0.1f, (nowMs - pkT2) / 1000f);
+            pkT2 = nowMs;
+            pkDepthF = !pkInit ? depthRaw : pkDepthF + (depthRaw - pkDepthF) * (1f - (float) Math.exp(-dtF / 0.10f));
+            float depth = pkDepthF;
+            if (vel.length > 26) handSpd = (float) Math.hypot(vel[1 + 8 * 3], vel[1 + 8 * 3 + 1]);    // how fast the fingertip crosses the picture (picture widths per second)
             float d8 = (float) Math.hypot((tx - wx) * ar, ty - wy);
             float d6 = (float) Math.hypot((r[1 + 6 * 3] - wx) * ar, r[1 + 6 * 3 + 1] - wy);
             boolean idxOut = !pinching && ratio > 0.30f && d8 > d6 * 1.1f;
-            if (selM == 0 || !idxOut) { pkOn = false; pkBase = depth; pkT = nowMs; pkProg = 0; pkInit = true; }
+            if (!idxOut) idxSince = 0; else if (idxSince == 0) idxSince = nowMs;
+            boolean ready = idxOut && nowMs - idxSince > 120 && nowMs - pkRelT > 300 && handSpd < 0.6f;
+            if (selM == 0 || !idxOut) { pkOn = false; pkBase = depth; pkT = nowMs; pkProg = 0; pkInit = true; pkAbove = 0; }
+            else if (!ready && !pkOn) { pkBase = depth; pkT = nowMs; pkProg = 0; pkAbove = 0; pkInit = true; }
             else {
                 if (!pkInit) { pkBase = depth; pkT = nowMs; pkInit = true; }
                 float th = POKE_TH[Math.max(0, Math.min(2, pokeS))] * 1.6f;
                 pkProg = pkOn ? 1f : Math.max(0f, Math.min(1f, (depth - pkBase) / th));
                 if (!pkOn) {
                     float dt = Math.min(0.5f, (nowMs - pkT) / 1000f); pkT = nowMs;
-                    if (depth - pkBase > th) { pkOn = true; pkPeak = depth; }
-                    else pkBase += (depth - pkBase) * Math.min(1f, dt / 0.6f);      // slow changes (the whole arm moving) are not a poke
+                    if (depth - pkBase > th) {
+                        if (pkAbove == 0) pkAbove = nowMs;
+                        if (nowMs - pkAbove > 70) { pkOn = true; pkPeak = depth; }      // must stay pushed for a moment
+                    } else {
+                        pkAbove = 0;
+                        pkBase += (depth - pkBase) * Math.min(1f, dt / 0.6f);              // slow changes (the whole arm moving) are not a poke
+                    }
                 } else {
                     if (depth > pkPeak) pkPeak = depth;
-                    if (depth - pkBase < th * 0.45f) pkOn = false;                   // finger pulled back
+                    if (depth - pkBase < th * 0.45f) { pkOn = false; pkRelT = nowMs; pkAbove = 0; }   // finger pulled back
                 }
             }
         }
@@ -597,14 +616,19 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         if (!curOk || !anyVisible()) return;
         float x = cnx * sceneW / 2f, y = cny * sceneH / 2f;
-        boolean grab = dragWin != null;
-        aaBegin();
+        // small and faint so it does not cover what you are pointing at; it fills in and turns orange when pressed
+        float[] ro = {8f, 12f, 18f}, ri = {2.6f, 4f, 6f}, fo = {0.55f, 0.7f, 1f};
+        int cs = Math.max(0, Math.min(2, cursorSz));
         boolean pv = pinching || pkOn;
-        aaSeg(x, y, x, y, (pv ? 15f : 19f - 4f * pkProg) * u);
-        if (gripHot) aaFlush(0.13f, 0.72f, 0.81f); else aaFlush(pv ? 1f : 0.15f, pv ? 0.55f : 0.85f, pv ? 0f : 1f);
+        aaFade = fo[cs];
         aaBegin();
-        aaSeg(x, y, x, y, 7f * u);
+        aaSeg(x, y, x, y, (pv ? ro[cs] * 0.8f : ro[cs] * (1f - 0.25f * pkProg)) * u);
+        if (gripHot) aaFlush(0.13f, 0.72f, 0.81f); else aaFlush(pv ? 1f : 0.55f, pv ? 0.55f : 0.9f, pv ? 0f : 1f);
+        aaFade = Math.min(1f, fo[cs] + 0.2f);
+        aaBegin();
+        aaSeg(x, y, x, y, ri[cs] * u);
         aaFlush(1f, 1f, 1f);
+        aaFade = 1f;
     }
 
     private void drawQuad(int prog) {
@@ -681,6 +705,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     // ---- soft-edged lines and dots: every stroke is a small quad whose edge fades over ~1.5 px, so nothing looks jagged ----
     private int progAA;
+    private float aaFade = 1f;
     private FloatBuffer aaBuf;
     private int aaN = 0;
     private float aaSoft = 1.5f;
@@ -723,6 +748,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glVertexAttribPointer(aq, 4, GLES20.GL_FLOAT, false, 24, aaBuf);
         GLES20.glUniform3f(GLES20.glGetUniformLocation(progAA, "col"), cr, cg, cb);
         GLES20.glUniform1f(GLES20.glGetUniformLocation(progAA, "sf"), aaSoft);
+        GLES20.glUniform1f(GLES20.glGetUniformLocation(progAA, "fade"), aaFade);
         GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, aaN);
         GLES20.glDisableVertexAttribArray(ap);
         GLES20.glDisableVertexAttribArray(aq);

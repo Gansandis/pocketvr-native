@@ -21,10 +21,11 @@ public class NvBrowser implements NvContent {
 
     public KbHost kbHost;
     public Runnable onClose;
+    public Runnable onNewWindow;
     public String err = "";
 
     static final int PW = 1024, PH = 576, TB = 84, W = PW, H = TB + PH + 44;
-    private static final int BACK = 0, FWD = 1, RELOAD = 2, NEWTAB = 3, TABS = 4, DESK = 5, KEYB = 6, CLOSE = 7, URL = 8;
+    private static final int BACK = 0, FWD = 1, RELOAD = 2, NEWTAB = 3, TABS = 4, DESK = 5, KEYB = 6, CLOSE = 7, URL = 8, NEWWIN = 9;
 
     private static class B { int type; String label; final RectF r = new RectF(); }
 
@@ -62,21 +63,21 @@ public class NvBrowser implements NvContent {
 
     public NvBrowser(Activity a, Handler uiHandler) {
         act = a; ui = uiHandler; vb = new VirtualBrowser(a);
-        mk(BACK, "◀", 12); mk(FWD, "▶", 84); mk(RELOAD, "⟳", 156);
-        float x = W - 76;
-        mkr(CLOSE, "✕", x); x -= 72; mkr(KEYB, "⌨", x); x -= 72; mkr(DESK, "🖥", x); x -= 72; mkr(TABS, "1", x); x -= 72; mkr(NEWTAB, "＋", x);
-        B u = new B(); u.type = URL; u.label = ""; u.r.set(228, 10, x - 8, 74); btns.add(u);
+        mk(BACK, "◀", 10); mk(FWD, "▶", 76); mk(RELOAD, "⟳", 142);
+        float x = W - 70;
+        mkr(CLOSE, "✕", x); x -= 66; mkr(KEYB, "⌨", x); x -= 66; mkr(DESK, "🖥", x); x -= 66; mkr(TABS, "1", x); x -= 66; mkr(NEWTAB, "＋", x); x -= 66; mkr(NEWWIN, "⧉", x);
+        B u = new B(); u.type = URL; u.label = ""; u.r.set(212, 10, x - 6, 74); btns.add(u);
     }
 
-    private void mk(int t, String l, float x) { B b = new B(); b.type = t; b.label = l; b.r.set(x, 10, x + 64, 74); btns.add(b); }
+    private void mk(int t, String l, float x) { B b = new B(); b.type = t; b.label = l; b.r.set(x, 10, x + 60, 74); btns.add(b); }
     private void mkr(int t, String l, float x) { mk(t, l, x); }
 
     // ---------- browser control ----------
     public boolean isOpen() { return opened; }
 
     public void open(final String start) {
-        VirtualBrowser.sink = this::onFrame;
-        VirtualBrowser.gapMs = 50;
+        vb.inst = this::onFrame;
+        vb.myGap = 50;
         ui.post(() -> {
             String e = vb.open(start, PW, PH);
             if (e != null) { err = e; opened = false; } else { err = ""; opened = true; }
@@ -84,10 +85,10 @@ public class NvBrowser implements NvContent {
         });
     }
 
-    public void setActive(boolean on) { VirtualBrowser.gapMs = on ? 50 : 1000; }
+    public void setActive(boolean on) { vb.myGap = on ? 50 : 1000; }
 
     public void close() {
-        VirtualBrowser.sink = null;
+        vb.inst = null;
         opened = false;
         ui.post(() -> { try { vb.close(); } catch (Throwable ignored) { } });
         synchronized (lock) { page = null; }
@@ -149,6 +150,7 @@ public class NvBrowser implements NvContent {
             case KEYB: if (kbHost != null) kbHost.showKeyboard(pageSink); break;
             case URL: urlEdit = ""; if (kbHost != null) kbHost.showKeyboard(urlSink); break;
             case CLOSE: if (onClose != null) onClose.run(); break;
+            case NEWWIN: if (onNewWindow != null) onNewWindow.run(); break;
             default: break;
         }
     }

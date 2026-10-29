@@ -46,9 +46,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         @Override public void onAccuracyChanged(android.hardware.Sensor s, int acc) { }
     };
     private final NvUi menu = new NvUi();
-    private VRRenderer.Win wMenu, wClock, wStats, wKeys, wBrowser;
-    private NvBrowser brw;
+    private VRRenderer.Win wMenu, wClock, wStats, wKeys;
     private NvKeyboard kbd;
+    private final NvBrowser[] brs = new NvBrowser[3];             // up to three browser windows at once
+    private final VRRenderer.Win[] bws = new VRRenderer.Win[3];
+    private static final float[] BYAW = {0f, 52f, -52f};
     private NvMotion motion;
     private final long t0 = System.currentTimeMillis();
     private boolean swRunning = false;
@@ -60,7 +62,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 long p = cam.detPaceMs;
                 if (f >= 42) p = Math.max(0, p - 20); else if (f > 0 && f < 34) p = Math.min(160, p + 20);
                 cam.detPaceMs = p;
-                if (brw != null) brw.poll();
+                for (NvBrowser b : brs) if (b != null) b.poll();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
                     hud.setText((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.79 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms%s",
@@ -176,55 +178,79 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         wKeys = rend.addWindow(kb, 0.80f);
         kbd = kb;
         kb.onClose = () -> { kb.sink = null; rend.setVisible(wKeys, false, 0f, 0f); };
-
-        brw = new NvBrowser(this, ui);
-        brw.kbHost = s -> { kb.sink = s; kb.clear(); if (!wKeys.visible) rend.setVisible(wKeys, true, 0f, -28f); };
-        wBrowser = rend.addWindow(brw, 1.25f);
-        brw.onClose = () -> { brw.close(); rend.setVisible(wBrowser, false, 0f, 0f); kb.sink = null; };
     }
+
+    private NvBrowser browserSlot(final int i) {
+        if (brs[i] != null) return brs[i];
+        final NvBrowser b = new NvBrowser(this, ui);
+        b.kbHost = s -> { kbd.sink = s; kbd.clear(); if (!wKeys.visible) rend.setVisible(wKeys, true, 0f, -28f); };
+        final VRRenderer.Win w = rend.addWindow(b, 1.25f);
+        b.onClose = () -> { b.close(); rend.setVisible(w, false, 0f, 0f); if (kbd != null) kbd.sink = null; };
+        b.onNewWindow = () -> openBrowser(-1);
+        brs[i] = b; bws[i] = w;
+        return b;
+    }
+
+    /** show browser window i (or the first free one when i < 0) */
+    private void openBrowser(int want) {
+        int i = want;
+        if (i < 0) { for (int k = 0; k < brs.length; k++) if (bws[k] == null || !bws[k].visible) { i = k; break; } }
+        if (i < 0) { menu.toast("เปิดเบราว์เซอร์ได้สูงสุด 3 หน้าต่าง"); return; }
+        NvBrowser b = browserSlot(i);
+        rend.setVisible(bws[i], true, BYAW[i], 4f);
+        if (!b.isOpen()) b.open("https://www.google.com");
+        b.setActive(true);
+    }
+
+    private int browsersShown() { int n = 0; for (VRRenderer.Win w : bws) if (w != null && w.visible) n++; return n; }
 
     private void buildMenu() {
         final int GA = 0xFF5A5A63, GB = 0xFF38383E;
-        menu.home.add(new NvUi.Btn("🥽", () -> "แยกจอ VR", () -> rend.stereo ? "เปิดอยู่" : "ปิดอยู่", () -> rend.stereo, GA, GB, () -> rend.stereo = !rend.stereo));
-        menu.home.add(new NvUi.Btn("👓", () -> "เลนส์", () -> rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง", () -> rend.lens > 0, GA, GB, () -> rend.lens = (rend.lens + 1) % 4));
-        menu.home.add(new NvUi.Btn("✋", () -> "คาดการณ์มือ", () -> rend.predict ? "เปิดอยู่" : "ปิดอยู่", () -> rend.predict, GA, GB, () -> rend.predict = !rend.predict));
-        menu.home.add(new NvUi.Btn("🦴", () -> "โครงมือ", () -> rend.skel == 0 ? "ปิด" : rend.skel == 1 ? "เส้นโครง" : "เส้นขอบเรืองแสง", () -> rend.skel > 0, GA, GB, () -> rend.skel = (rend.skel + 1) % 3));
-        menu.home.add(new NvUi.Btn("🌐", () -> "เบราว์เซอร์", () -> wBrowser.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wBrowser.visible, GA, GB, () -> {
-            if (wBrowser.visible) { brw.setActive(false); rend.setVisible(wBrowser, false, 0f, 0f); }
-            else {
-                rend.setVisible(wBrowser, true, 0f, 4f);
-                if (!brw.isOpen()) brw.open("https://www.google.com");
-                brw.setActive(true);
+        final java.util.List<NvUi.Btn> cCtl = menu.addTab("🎛", "ควบคุม", "การควบคุมมือ");
+        final java.util.List<NvUi.Btn> cDisp = menu.addTab("🖥", "แสดงผล", "การแสดงผล");
+        final java.util.List<NvUi.Btn> cLab = menu.addTab("🧪", "ทดลอง", "ฟีเจอร์ทดลอง");
+        menu.home.add(new NvUi.Btn("🌐", () -> "เบราว์เซอร์", () -> browsersShown() > 0 ? browsersShown() + " หน้าต่าง" : "ปิดอยู่", () -> browsersShown() > 0, GA, GB, () -> {
+            if (browsersShown() > 0) {                                     // hide them all (they keep their pages and rest quietly)
+                for (int k = 0; k < brs.length; k++) if (brs[k] != null && bws[k].visible) { brs[k].setActive(false); rend.setVisible(bws[k], false, 0f, 0f); }
+            } else {
+                boolean any = false;                                         // bring back the ones that were open
+                for (int k = 0; k < brs.length; k++) if (brs[k] != null && brs[k].isOpen()) { rend.setVisible(bws[k], true, BYAW[k], 4f); brs[k].setActive(true); any = true; }
+                if (!any) openBrowser(0);
             }
         }));
         menu.home.add(new NvUi.Btn("⌨", () -> "คีย์บอร์ด", () -> wKeys.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wKeys.visible, GA, GB, () -> rend.toggle(wKeys, 0f, -24f)));
         menu.home.add(new NvUi.Btn("⏱", () -> "นาฬิกา/จับเวลา", () -> wClock.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wClock.visible, GA, GB, () -> rend.toggle(wClock, 18f, 0f)));
         menu.home.add(new NvUi.Btn("📈", () -> "สถานะระบบ", () -> wStats.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wStats.visible, GA, GB, () -> rend.toggle(wStats, -18f, 0f)));
-        menu.home.add(new NvUi.Btn("📊", () -> "ตัวเลขบนจอ", () -> hudOn ? "เปิดอยู่" : "ปิดอยู่", () -> hudOn, GA, GB, () -> hudOn = !hudOn));
         menu.home.add(new NvUi.Btn("📍", () -> "จัดกลางใหม่", () -> "วางเมนูตรงหน้า", null, GA, GB, () -> rend.recenter = true));
-        menu.home.add(new NvUi.Btn("👆", () -> "เลือกด้วย", () -> rend.sel == 0 ? "จีบนิ้ว" : rend.sel == 1 ? "สัมผัสอากาศ" : "ทั้งสองแบบ", () -> rend.sel != 0, GA, GB, () -> rend.sel = (rend.sel + 1) % 3));
-        menu.home.add(new NvUi.Btn("🎚", () -> "ความไวสัมผัสอากาศ", () -> rend.pokeS == 0 ? "ไว (เบา)" : rend.pokeS == 1 ? "กลาง" : "หนัก (ต้องดัน)", () -> rend.sel != 0, GA, GB, () -> rend.pokeS = (rend.pokeS + 1) % 3));
-        menu.home.add(new NvUi.Btn("🪟", () -> "ความโปร่งของแผง", () -> NvUi.glass >= 0xE0 ? "ทึบ" : NvUi.glass >= 0xA0 ? "กึ่งโปร่ง" : NvUi.glass >= 0x70 ? "โปร่ง" : "โปร่งมาก", () -> NvUi.glass < 0xE0, GA, GB, () -> {
+        menu.home.add(new NvUi.Btn("🏠", () -> "กลับแอปหลัก", () -> "ออกจากหน้าจอนี้", null, 0xFF8D6BFF, 0xFF4A2FB8, () -> runOnUiThread(() -> finish())));
+
+        cCtl.add(new NvUi.Btn("👆", () -> "เลือกด้วย", () -> rend.sel == 0 ? "จีบนิ้ว" : rend.sel == 1 ? "สัมผัสอากาศ" : "ทั้งสองแบบ", () -> rend.sel != 0, GA, GB, () -> rend.sel = (rend.sel + 1) % 3));
+        cCtl.add(new NvUi.Btn("🎚", () -> "ความไวสัมผัสอากาศ", () -> rend.pokeS == 0 ? "ไว (เบา)" : rend.pokeS == 1 ? "กลาง" : "หนัก (ต้องดัน)", () -> rend.sel != 0, GA, GB, () -> rend.pokeS = (rend.pokeS + 1) % 3));
+        cCtl.add(new NvUi.Btn("✋", () -> "คาดการณ์มือ", () -> rend.predict ? "เปิดอยู่" : "ปิดอยู่", () -> rend.predict, GA, GB, () -> rend.predict = !rend.predict));
+        cCtl.add(new NvUi.Btn("🎈", () -> "ลอยเบาๆ", () -> rend.floaty ? "เปิดอยู่" : "ปิดอยู่", () -> rend.floaty, GA, GB, () -> rend.floaty = !rend.floaty));
+        cDisp.add(new NvUi.Btn("🥽", () -> "แยกจอ VR", () -> rend.stereo ? "เปิดอยู่" : "ปิดอยู่", () -> rend.stereo, GA, GB, () -> rend.stereo = !rend.stereo));
+        cDisp.add(new NvUi.Btn("👓", () -> "เลนส์", () -> rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง", () -> rend.lens > 0, GA, GB, () -> rend.lens = (rend.lens + 1) % 4));
+        cDisp.add(new NvUi.Btn("🦴", () -> "โครงมือ", () -> rend.skel == 0 ? "ปิด" : rend.skel == 1 ? "เส้นโครง" : "เส้นขอบเรืองแสง", () -> rend.skel > 0, GA, GB, () -> rend.skel = (rend.skel + 1) % 3));
+        cDisp.add(new NvUi.Btn("🪟", () -> "ความโปร่งของแผง", () -> NvUi.glass >= 0xE0 ? "ทึบ" : NvUi.glass >= 0xA0 ? "กึ่งโปร่ง" : NvUi.glass >= 0x70 ? "โปร่ง" : "โปร่งมาก", () -> NvUi.glass < 0xE0, GA, GB, () -> {
             NvUi.glass = NvUi.glass >= 0xE0 ? 0xB0 : NvUi.glass >= 0xA0 ? 0x80 : NvUi.glass >= 0x70 ? 0x55 : 0xF0;
             menu.markDirty(); if (wClock != null) wClock.c.markDirty(); if (wStats != null) wStats.c.markDirty();
         }));
-        menu.home.add(new NvUi.Btn("🚶", () -> "เดินรอบได้ (ทดลอง)", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด %.2f,%.2f ม. จุด %d/%d %s", motion.px, motion.py, motion.usedN, motion.tracked, motion.how + " " + motion.size) : "ผิดพลาด " + (motion.err.length() > 26 ? motion.err.substring(motion.err.length() - 26) : motion.err)) : "ปิดอยู่", () -> motion.enabled, GA, GB, () -> {
+        cDisp.add(new NvUi.Btn("📊", () -> "ตัวเลขบนจอ", () -> hudOn ? "เปิดอยู่" : "ปิดอยู่", () -> hudOn, GA, GB, () -> hudOn = !hudOn));
+        cLab.add(new NvUi.Btn("🚶", () -> "เดินรอบได้ (ทดลอง)", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด %.2f,%.2f ม. จุด %d/%d %s", motion.px, motion.py, motion.usedN, motion.tracked, motion.how + " " + motion.size) : "ผิดพลาด " + (motion.err.length() > 26 ? motion.err.substring(motion.err.length() - 26) : motion.err)) : "ปิดอยู่", () -> motion.enabled, GA, GB, () -> {
             motion.enabled = !motion.enabled;
             motion.reset();
             for (VRRenderer.Win w : rend.wins) w.placeReq = true;       // put the windows up again in front of you, at the new starting point
         }));
-        menu.home.add(new NvUi.Btn("📏", () -> "ขนาดห้อง (ความไวเดิน)", () -> String.format("ประมาณ %.1f ม.", motion.depthM), () -> motion.depthM > 3.5f, GA, GB, () -> motion.depthM = motion.depthM < 2.5f ? 3f : motion.depthM < 3.5f ? 4f : motion.depthM < 5f ? 6f : 2f));
-        menu.home.add(new NvUi.Btn("📐", () -> "ปรับเทียบการเดิน", () -> motion.calibrating ? String.format("วัดได้ %.2f ม. เดินครบ 1 ม. แล้วกด", motion.calWalked()) : "กด แล้วเดินข้าง 1 ม. แล้วกดอีกที", () -> motion.calibrating, GA, GB, () -> {
+        cLab.add(new NvUi.Btn("📏", () -> "ขนาดห้อง (ความไวเดิน)", () -> String.format("ประมาณ %.1f ม.", motion.depthM), () -> motion.depthM > 3.5f, GA, GB, () -> motion.depthM = motion.depthM < 2.5f ? 3f : motion.depthM < 3.5f ? 4f : motion.depthM < 5f ? 6f : 2f));
+        cLab.add(new NvUi.Btn("📐", () -> "ปรับเทียบการเดิน", () -> motion.calibrating ? String.format("วัดได้ %.2f ม. เดินครบ 1 ม. แล้วกด", motion.calWalked()) : "กด แล้วเดินข้าง 1 ม. แล้วกดอีกที", () -> motion.calibrating, GA, GB, () -> {
             if (!motion.enabled) return;
             if (!motion.calibrating) motion.calStart(); else motion.calEnd(1.0f);
         }));
-        menu.home.add(new NvUi.Btn("⏱", () -> "หน่วงภาพกล้อง", () -> motion.tsReal ? "ใช้เวลาจากภาพ" : motion.lagMs + " ms (กดเปลี่ยน)", null, GA, GB, () -> motion.lagMs = motion.lagMs < 50 ? 70 : motion.lagMs < 90 ? 110 : motion.lagMs < 130 ? 150 : 30));
-        menu.home.add(new NvUi.Btn("🎈", () -> "ลอยเบาๆ", () -> rend.floaty ? "เปิดอยู่" : "ปิดอยู่", () -> rend.floaty, GA, GB, () -> rend.floaty = !rend.floaty));
-        menu.home.add(new NvUi.Btn("🏠", () -> "กลับแอปหลัก", () -> "ออกจากหน้าจอนี้", null, 0xFF8D6BFF, 0xFF4A2FB8, () -> runOnUiThread(() -> finish())));
+        cLab.add(new NvUi.Btn("⏱", () -> "หน่วงภาพกล้อง", () -> motion.tsReal ? "ใช้เวลาจากภาพ" : motion.lagMs + " ms (กดเปลี่ยน)", null, GA, GB, () -> motion.lagMs = motion.lagMs < 50 ? 70 : motion.lagMs < 90 ? 110 : motion.lagMs < 130 ? 150 : 30));
+        cDisp.add(new NvUi.Btn("🖱", () -> "เคอร์เซอร์", () -> rend.cursorSz == 0 ? "เล็กจาง" : rend.cursorSz == 1 ? "กลาง" : "ใหญ่", null, GA, GB, () -> rend.cursorSz = (rend.cursorSz + 1) % 3));
         menu.dock.add(new NvUi.Btn("🏠", () -> "เมนู", null, () -> menu.open, 0, 0, () -> menu.toggleOpen()));
         menu.dock.add(new NvUi.Btn("🥽", () -> "แยกจอ", null, () -> rend.stereo, 0, 0, () -> rend.stereo = !rend.stereo));
         menu.dock.add(new NvUi.Btn("👓", () -> "เลนส์", null, () -> rend.lens > 0, 0, 0, () -> rend.lens = (rend.lens + 1) % 4));
-        menu.dock.add(new NvUi.Btn("✖", () -> "ซ่อนเมนู", null, null, 0, 0, () -> rend.hideMenu()));
         menu.dock.add(new NvUi.Btn("✋", () -> "คาดการณ์", null, () -> rend.predict, 0, 0, () -> rend.predict = !rend.predict));
         try {
             android.content.pm.PackageManager pm = getPackageManager();
@@ -298,7 +324,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     @Override protected void onDestroy() {
-        try { if (brw != null) brw.close(); } catch (Throwable ignored) { }
+        for (NvBrowser b : brs) { try { if (b != null) b.close(); } catch (Throwable ignored) { } }
         super.onDestroy();
     }
 
