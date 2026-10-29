@@ -48,6 +48,10 @@ public class NvBrowser implements NvContent {
     // page touch state
     private boolean touching = false, moved = false;
     private float tx0, ty0, tlx, tly;
+    private static final int HN = 16;
+    private final float[] hx = new float[HN], hy = new float[HN];
+    private final long[] ht = new long[HN];
+    private int hi = 0;
 
     // info (filled on the UI thread by poll())
     private volatile String title = "", url = "";
@@ -177,11 +181,18 @@ public class NvBrowser implements NvContent {
         boolean inPage = valid && y >= TB && y < TB + PH && x >= 0 && x < PW;
         // ---- page touch ----
         boolean edge = pinch && !wasPinch;
+        // recent pointer positions: closing the fingers (or pushing the finger) moves the pointer a little, so a tap lands where it was just before
+        if (valid && !pinch) { hx[hi] = x; hy[hi] = y; ht[hi] = now; hi = (hi + 1) % HN; }
         if (!touching && edge && inPage) {
-            touching = true; moved = false; tx0 = tlx = x; ty0 = tly = y;
-            send(0, x, y - TB);
+            float sx = x, sy = y;
+            for (int i = 0; i < HN; i++) {
+                int k = (hi + i) % HN;                       // oldest first
+                if (ht[k] != 0 && now - ht[k] <= 260 && now - ht[k] >= 90 && Math.hypot(hx[k] - x, hy[k] - y) < 70) { sx = hx[k]; sy = hy[k]; break; }
+            }
+            touching = true; moved = false; tx0 = tlx = sx; ty0 = tly = sy;
+            send(0, sx, sy - TB);
         } else if (touching && pinch) {
-            if (valid && (moved || Math.hypot(x - tx0, y - ty0) > 14)) { moved = true; tlx = x; tly = y; send(2, x, y - TB); }
+            if (valid && (moved || Math.hypot(x - tx0, y - ty0) > 44)) { moved = true; tlx = x; tly = y; send(2, x, y - TB); }
         } else if (touching && !pinch) {
             touching = false;
             send(1, moved ? tlx : tx0, (moved ? tly : ty0) - TB);

@@ -47,6 +47,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         System.arraycopy(tF, 0, m, 0, 16);
     }
     public volatile boolean floaty = true;
+    public volatile int sel = 2;              // how things are pressed: 0 pinch, 1 air touch (push the index finger forward), 2 both
+    public volatile int pokeS = 1;            // air touch sensitivity: 0 light, 1 medium, 2 firm
+    private static final float[] POKE_TH = {0.07f, 0.10f, 0.14f};
+    private float pkBase = 0, pkPeak = 0, pkProg = 0;
+    private long pkT = 0;
+    private boolean pkOn = false, pkInit = false;
     private final float[] tA = new float[16], tB = new float[16], tC = new float[16], tD = new float[16];
 
     /** A floating window in the room: it keeps its place when the phone turns, can float a little, be grabbed by its bar, and be pulled bigger or smaller. */
@@ -438,7 +444,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         long nowMs = System.currentTimeMillis();
         boolean hand = r.length >= 64 && r[0] >= 1;
         if (!hand) {
-            curOk = false;
+            curOk = false; pkOn = false; pkProg = 0; pkInit = false;
             mpOn = false; mpSince = 0; mpProg = 0; mpLatched = false;
             if (lostT == 0) lostT = nowMs;
             // a short loss of the hand (detection blink) must not drop a grabbed window
@@ -465,6 +471,32 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (pinching) { if (ratio > 0.30f) pinching = false; } else { if (ratio < 0.17f) pinching = true; }
         if (pinching) lastPinchT = nowMs;
 
+        // air touch (as in the web version): the index finger is out and is pushed forward = the hand gets smaller in the picture
+        int selM = sel;
+        {
+            float z8 = r[1 + 8 * 3 + 2], z0 = r[1 + 2];
+            float sz = Math.max(1e-3f, size);
+            float depth = -((float) Math.log(sz) - 0.6f * (z8 - z0) / sz);
+            float d8 = (float) Math.hypot((tx - wx) * ar, ty - wy);
+            float d6 = (float) Math.hypot((r[1 + 6 * 3] - wx) * ar, r[1 + 6 * 3 + 1] - wy);
+            boolean idxOut = !pinching && ratio > 0.30f && d8 > d6 * 1.1f;
+            if (selM == 0 || !idxOut) { pkOn = false; pkBase = depth; pkT = nowMs; pkProg = 0; pkInit = true; }
+            else {
+                if (!pkInit) { pkBase = depth; pkT = nowMs; pkInit = true; }
+                float th = POKE_TH[Math.max(0, Math.min(2, pokeS))] * 1.6f;
+                pkProg = pkOn ? 1f : Math.max(0f, Math.min(1f, (depth - pkBase) / th));
+                if (!pkOn) {
+                    float dt = Math.min(0.5f, (nowMs - pkT) / 1000f); pkT = nowMs;
+                    if (depth - pkBase > th) { pkOn = true; pkPeak = depth; }
+                    else pkBase += (depth - pkBase) * Math.min(1f, dt / 0.6f);      // slow changes (the whole arm moving) are not a poke
+                } else {
+                    if (depth > pkPeak) pkPeak = depth;
+                    if (depth - pkBase < th * 0.45f) pkOn = false;                   // finger pulled back
+                }
+            }
+        }
+        final boolean press = selM == 0 ? pinching : (selM == 1 ? pkOn : (pinching || pkOn));
+
         // thumb + middle finger held together for a moment: show / hide the menu
         mpOn = mpOn ? (ratioM < 0.32f) : (ratioM < 0.20f && ratio > 0.35f);
         if (mpOn && !mpLatched) {
@@ -477,10 +509,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         mpNx = mhx * 2f - 1f; mpNy = 1f - mhy * 2f;
 
         // the pointer sits between thumb tip and index tip, so closing the fingers does not push it off the target
-        float hx = (tx + ax) * 0.5f, hy = (ty + ay) * 0.5f;
+        float hx = selM == 0 ? (tx + ax) * 0.5f : tx, hy = selM == 0 ? (ty + ay) * 0.5f : ty;     // air touch: the fingertip itself
         if (rot180) { hx = 1f - hx; hy = 1f - hy; }
         float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
-        if (!curOk) { cnx = nx; cny = ny; } else { cnx += (nx - cnx) * 0.6f; cny += (ny - cny) * 0.6f; }
+        boolean hold = selM != 0 && (ratio < 0.45f || pkProg > 0.5f);          // fingers closing / finger being pushed: the pointer stays where it was
+        if (!curOk) { cnx = nx; cny = ny; } else if (!hold) { cnx += (nx - cnx) * 0.6f; cny += (ny - cny) * 0.6f; }
         curOk = true;
         if (dragWin != null) {
             float ddx = tnx - dnx, ddy = tny - dny;
@@ -549,7 +582,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         prevPinch = pinching;
         for (Win w : wins) {
             if (!w.visible) continue;
-            if (w == target && dragWin == null) w.c.update(true, o[0], o[1], pinching);
+            if (w == target && dragWin == null) w.c.update(true, o[0], o[1], press);
             else w.c.update(false, 0, 0, false);
         }
     }
@@ -566,8 +599,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float x = cnx * sceneW / 2f, y = cny * sceneH / 2f;
         boolean grab = dragWin != null;
         aaBegin();
-        aaSeg(x, y, x, y, (pinching ? 15f : 19f) * u);
-        if (gripHot) aaFlush(0.13f, 0.72f, 0.81f); else aaFlush(pinching ? 1f : 0.15f, pinching ? 0.55f : 0.85f, pinching ? 0f : 1f);
+        boolean pv = pinching || pkOn;
+        aaSeg(x, y, x, y, (pv ? 15f : 19f - 4f * pkProg) * u);
+        if (gripHot) aaFlush(0.13f, 0.72f, 0.81f); else aaFlush(pv ? 1f : 0.15f, pv ? 0.55f : 0.85f, pv ? 0f : 1f);
         aaBegin();
         aaSeg(x, y, x, y, 7f * u);
         aaFlush(1f, 1f, 1f);

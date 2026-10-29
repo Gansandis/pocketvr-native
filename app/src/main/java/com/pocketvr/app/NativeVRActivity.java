@@ -202,6 +202,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.home.add(new NvUi.Btn("📈", () -> "สถานะระบบ", () -> wStats.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wStats.visible, GA, GB, () -> rend.toggle(wStats, -18f, 0f)));
         menu.home.add(new NvUi.Btn("📊", () -> "ตัวเลขบนจอ", () -> hudOn ? "เปิดอยู่" : "ปิดอยู่", () -> hudOn, GA, GB, () -> hudOn = !hudOn));
         menu.home.add(new NvUi.Btn("📍", () -> "จัดกลางใหม่", () -> "วางเมนูตรงหน้า", null, GA, GB, () -> rend.recenter = true));
+        menu.home.add(new NvUi.Btn("👆", () -> "เลือกด้วย", () -> rend.sel == 0 ? "จีบนิ้ว" : rend.sel == 1 ? "สัมผัสอากาศ" : "ทั้งสองแบบ", () -> rend.sel != 0, GA, GB, () -> rend.sel = (rend.sel + 1) % 3));
+        menu.home.add(new NvUi.Btn("🎚", () -> "ความไวสัมผัสอากาศ", () -> rend.pokeS == 0 ? "ไว (เบา)" : rend.pokeS == 1 ? "กลาง" : "หนัก (ต้องดัน)", () -> rend.sel != 0, GA, GB, () -> rend.pokeS = (rend.pokeS + 1) % 3));
         menu.home.add(new NvUi.Btn("🪟", () -> "ความโปร่งของแผง", () -> NvUi.glass >= 0xE0 ? "ทึบ" : NvUi.glass >= 0xA0 ? "กึ่งโปร่ง" : NvUi.glass >= 0x70 ? "โปร่ง" : "โปร่งมาก", () -> NvUi.glass < 0xE0, GA, GB, () -> {
             NvUi.glass = NvUi.glass >= 0xE0 ? 0xB0 : NvUi.glass >= 0xA0 ? 0x80 : NvUi.glass >= 0x70 ? 0x55 : 0xF0;
             menu.markDirty(); if (wClock != null) wClock.c.markDirty(); if (wStats != null) wStats.c.markDirty();
