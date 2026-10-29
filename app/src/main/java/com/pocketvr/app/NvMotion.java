@@ -19,6 +19,33 @@ public class NvMotion {
     public volatile float quality = 0;                  // share of spots that agree, 0..1
     public volatile RotSource rot;
     public volatile boolean rot180 = false;
+    public volatile float[] hands;                      // latest hand result [n, 21*(x,y,z) per hand], in the camera picture: spots on a hand are not the room
+
+    private float[] hb = new float[16];                 // up to 2 hand boxes: x0,y0,x1,y1 (0..1 of the picture), already grown
+    private int nhb = 0;
+    private void makeBoxes() {
+        nhb = 0;
+        float[] r = hands;
+        if (r == null || r.length < 64 || r[0] < 1) return;
+        int n = Math.min(2, (int) r[0]);
+        for (int h = 0; h < n; h++) {
+            float x0 = 9, y0 = 9, x1 = -9, y1 = -9;
+            for (int i = 0; i < 21; i++) {
+                int o = 1 + h * 63 + i * 3;
+                if (o + 1 >= r.length) break;
+                x0 = Math.min(x0, r[o]); x1 = Math.max(x1, r[o]); y0 = Math.min(y0, r[o + 1]); y1 = Math.max(y1, r[o + 1]);
+            }
+            if (x1 < x0) continue;
+            float mx = 0.10f + 0.25f * (x1 - x0), my = 0.10f + 0.25f * (y1 - y0);      // hand moves between looks, and the result is a little old
+            hb[nhb * 4] = x0 - mx; hb[nhb * 4 + 1] = y0 - my; hb[nhb * 4 + 2] = x1 + mx; hb[nhb * 4 + 3] = y1 + my;
+            nhb++;
+        }
+    }
+    private boolean inHand(float px, float py) {
+        float u = (px + 0.5f) / GW, v = (py + 0.5f) / GH;
+        for (int i = 0; i < nhb; i++) if (u >= hb[i * 4] && u <= hb[i * 4 + 2] && v >= hb[i * 4 + 1] && v <= hb[i * 4 + 3]) return true;
+        return false;
+    }
 
     private static final int GW = 128, GH = 96, NX = 8, NY = 6, PR = 3, SR = 6, K = 3;      // K: compare with the picture K looks ago (3x the movement, same noise)
     private final byte[][] frames = new byte[K + 1][GW * GH];
@@ -95,6 +122,7 @@ public class NvMotion {
         for (int i = 0; i < 3; i++)
             for (int j = 0; j < 3; j++)
                 R[i * 3 + j] = b[0 * 4 + i] * a[0 * 4 + j] + b[1 * 4 + i] * a[1 * 4 + j] + b[2 * 4 + i] * a[2 * 4 + j];   // column-major 4x4
+        makeBoxes();
         final int M = NX * NY;
         float[] ex = new float[M], ey = new float[M], rx = new float[M], ry = new float[M];
         int n = 0;
@@ -106,6 +134,7 @@ public class NvMotion {
                 int bx = -1, by = -1, bs = 0;
                 for (int y = m0 + cy * ch; y < m0 + (cy + 1) * ch; y += 2) {
                     for (int x = m0 + cx * cw; x < m0 + (cx + 1) * cw; x += 2) {
+                        if (inHand(x, y)) continue;
                         int s = Math.abs(g(prev, x + 2, y) - g(prev, x - 2, y)) + Math.abs(g(prev, x, y + 2) - g(prev, x, y - 2));
                         if (s > bs) { bs = s; bx = x; by = y; }
                     }
@@ -134,6 +163,7 @@ public class NvMotion {
                     }
                 }
                 if (best > 20 * (2 * PR + 1) * (2 * PR + 1)) continue;
+                if (inHand(ix + bmx, iy + bmy)) continue;
                 if (Math.abs(bmx) == SR || Math.abs(bmy) == SR) continue;      // best at the edge of the search = not trustworthy
                 float fxs = bmx, fys = bmy;
                 int l = sad[bmy + SR][bmx - 1 + SR], c0 = sad[bmy + SR][bmx + SR], r = sad[bmy + SR][bmx + 1 + SR];
