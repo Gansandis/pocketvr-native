@@ -40,6 +40,8 @@ import java.nio.ByteBuffer;
 public class VirtualBrowser {
     public static volatile byte[] jpeg = null;
     public static volatile int seq = 0;
+    public interface Sink { void onFrame(Bitmap b); }      // the native VR screen takes pictures directly (no JPEG step)
+    public static volatile Sink sink = null;
     public static volatile long gapMs = 66;
     public void setGap(int ms) { gapMs = Math.max(20, Math.min(1000, ms)); }
 
@@ -203,6 +205,8 @@ public class VirtualBrowser {
             if (bmp == null || bmp.getWidth() != bw || bmp.getHeight() != ih) bmp = Bitmap.createBitmap(bw, ih, Bitmap.Config.ARGB_8888);
             bmp.copyPixelsFromBuffer(buf);
             Bitmap src = bw == iw ? bmp : Bitmap.createBitmap(bmp, 0, 0, iw, ih);
+            Sink sk = sink;
+            if (sk != null) { sk.onFrame(src); seq++; return; }
             // the page is out of sight (the web side asks for a slow picture rate): a smaller, lighter picture is enough and costs far less CPU
             boolean far = gapMs >= 400;
             if (far) src = Bitmap.createScaledBitmap(src, Math.max(2, iw * 6 / 10), Math.max(2, ih * 6 / 10), true);

@@ -46,7 +46,9 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         @Override public void onAccuracyChanged(android.hardware.Sensor s, int acc) { }
     };
     private final NvUi menu = new NvUi();
-    private VRRenderer.Win wMenu, wClock, wStats, wKeys;
+    private VRRenderer.Win wMenu, wClock, wStats, wKeys, wBrowser;
+    private NvBrowser brw;
+    private NvKeyboard kbd;
     private NvMotion motion;
     private final long t0 = System.currentTimeMillis();
     private boolean swRunning = false;
@@ -58,6 +60,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 long p = cam.detPaceMs;
                 if (f >= 42) p = Math.max(0, p - 20); else if (f > 0 && f < 34) p = Math.min(160, p + 20);
                 cam.detPaceMs = p;
+                if (brw != null) brw.poll();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
                     hud.setText((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.79 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms%s",
@@ -171,7 +174,13 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             } catch (Throwable ignored) { }
         });
         wKeys = rend.addWindow(kb, 0.80f);
-        kb.onClose = () -> rend.setVisible(wKeys, false, 0f, 0f);
+        kbd = kb;
+        kb.onClose = () -> { kb.sink = null; rend.setVisible(wKeys, false, 0f, 0f); };
+
+        brw = new NvBrowser(this, ui);
+        brw.kbHost = s -> { kb.sink = s; kb.clear(); if (!wKeys.visible) rend.setVisible(wKeys, true, 0f, -28f); };
+        wBrowser = rend.addWindow(brw, 1.25f);
+        brw.onClose = () -> { brw.close(); rend.setVisible(wBrowser, false, 0f, 0f); kb.sink = null; };
     }
 
     private void buildMenu() {
@@ -180,6 +189,14 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.home.add(new NvUi.Btn("👓", () -> "เลนส์", () -> rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง", () -> rend.lens > 0, GA, GB, () -> rend.lens = (rend.lens + 1) % 4));
         menu.home.add(new NvUi.Btn("✋", () -> "คาดการณ์มือ", () -> rend.predict ? "เปิดอยู่" : "ปิดอยู่", () -> rend.predict, GA, GB, () -> rend.predict = !rend.predict));
         menu.home.add(new NvUi.Btn("🦴", () -> "โครงมือ", () -> rend.skel == 0 ? "ปิด" : rend.skel == 1 ? "เส้นโครง" : "เส้นขอบเรืองแสง", () -> rend.skel > 0, GA, GB, () -> rend.skel = (rend.skel + 1) % 3));
+        menu.home.add(new NvUi.Btn("🌐", () -> "เบราว์เซอร์", () -> wBrowser.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wBrowser.visible, GA, GB, () -> {
+            if (wBrowser.visible) { brw.setActive(false); rend.setVisible(wBrowser, false, 0f, 0f); }
+            else {
+                rend.setVisible(wBrowser, true, 0f, 4f);
+                if (!brw.isOpen()) brw.open("https://www.google.com");
+                brw.setActive(true);
+            }
+        }));
         menu.home.add(new NvUi.Btn("⌨", () -> "คีย์บอร์ด", () -> wKeys.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wKeys.visible, GA, GB, () -> rend.toggle(wKeys, 0f, -24f)));
         menu.home.add(new NvUi.Btn("⏱", () -> "นาฬิกา/จับเวลา", () -> wClock.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wClock.visible, GA, GB, () -> rend.toggle(wClock, 18f, 0f)));
         menu.home.add(new NvUi.Btn("📈", () -> "สถานะระบบ", () -> wStats.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wStats.visible, GA, GB, () -> rend.toggle(wStats, -18f, 0f)));
@@ -276,6 +293,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         cam.stop();
         gl.onPause();
         super.onPause();
+    }
+
+    @Override protected void onDestroy() {
+        try { if (brw != null) brw.close(); } catch (Throwable ignored) { }
+        super.onDestroy();
     }
 
     @Override public void onWindowFocusChanged(boolean f) { super.onWindowFocusChanged(f); if (f) immersive(); }
