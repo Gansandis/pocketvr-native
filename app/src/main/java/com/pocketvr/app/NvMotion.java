@@ -23,6 +23,7 @@ public class NvMotion {
 
     private float[] hb = new float[16];                 // up to 2 hand boxes: x0,y0,x1,y1 (0..1 of the picture), already grown
     private int nhb = 0;
+    private float lastA = 0, lastB = 0, lastC = 0;      // movement of the picture last time: where to look first when walking fast
     private void makeBoxes() {
         nhb = 0;
         float[] r = hands;
@@ -47,7 +48,7 @@ public class NvMotion {
         return false;
     }
 
-    private static final int GW = 128, GH = 96, NX = 8, NY = 6, PR = 3, SR = 6, K = 3;      // K: compare with the picture K looks ago (3x the movement, same noise)
+    private static final int GW = 128, GH = 96, NX = 8, NY = 6, PR = 3, SR = 8, K = 3;      // K: compare with the picture K looks ago (3x the movement, same noise)
     private final byte[][] frames = new byte[K + 1][GW * GH];
     private final float[][] rots = new float[K + 1][];
     private byte[] prev, cur;
@@ -118,7 +119,7 @@ public class NvMotion {
         // while the head is turning fast the gyro and the picture are never perfectly in step, which would look like walking: skip those moments
         float tr = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[4] * b[4] + a[5] * b[5] + a[6] * b[6] + a[8] * b[8] + a[9] * b[9] + a[10] * b[10];
         float cosT = Math.max(-1f, Math.min(1f, (tr - 1f) * 0.5f));
-        if (cosT < 0.9945f) { quality = 0; return; }       // more than ~6 degrees in these looks
+        if (cosT < 0.985f) { quality = 0; lastA = lastB = lastC = 0; return; }       // more than ~10 degrees in these looks
         for (int i = 0; i < 3; i++)
             for (int j = 0; j < 3; j++)
                 R[i * 3 + j] = b[0 * 4 + i] * a[0 * 4 + j] + b[1 * 4 + i] * a[1 * 4 + j] + b[2 * 4 + i] * a[2 * 4 + j];   // column-major 4x4
@@ -146,7 +147,7 @@ public class NvMotion {
                 float wx = R[0] * vx + R[1] * vy + R[2] * vz, wy = R[3] * vx + R[4] * vy + R[5] * vz, wz = R[6] * vx + R[7] * vy + R[8] * vz;
                 if (wz > -0.2f) continue;
                 float pdx = wx / -wz / tanH, pdy = wy / -wz / tanV;
-                float ppx = dxToPix(pdx), ppy = dyToPix(pdy);
+                float ppx = dxToPix(pdx + lastA + lastC * dx), ppy = dyToPix(pdy + lastB + lastC * dy);      // start looking where last time's movement suggests
                 int ix = Math.round(ppx), iy = Math.round(ppy);
                 if (ix < PR + SR || ix >= GW - PR - SR || iy < PR + SR || iy >= GH - PR - SR) continue;
                 // block match around the predicted place
@@ -176,7 +177,7 @@ public class NvMotion {
             }
         }
         tracked = n;
-        if (n < 10) { quality = 0; return; }
+        if (n < 10) { quality = 0; lastA = lastB = lastC = 0; return; }
         boolean[] use = new boolean[n];
         java.util.Arrays.fill(use, true);
         float[] sol = new float[3];
@@ -197,12 +198,15 @@ public class NvMotion {
         }
         if (!fit(ex, ey, rx, ry, use, n, sol)) { quality = 0; return; }
         usedN = used;
+        lastA = sol[0] * 0.9f; lastB = sol[1] * 0.9f; lastC = sol[2] * 0.9f;
         quality = used / (float) (NX * NY);
         if (used < 10) return;
         float Z = depthM;
         float tx = -sol[0] * Z * tanH, ty = -sol[1] * Z * tanV, tzf = sol[2] * Z;
         float mag = (float) Math.sqrt(tx * tx + ty * ty + tzf * tzf);
-        if (mag < 0.004f) return;                                         // tiny values are mostly noise: ignore
+        float shrink = Math.max(0f, mag - 0.003f) / mag;                   // soft: tiny values fade out instead of switching on and off (no stepping)
+        tx *= shrink; ty *= shrink; tzf *= shrink; mag *= shrink;
+        if (mag <= 0f) return;
         if (mag > 0.30f) { float k = 0.30f / mag; tx *= k; ty *= k; tzf *= k; }
         tx /= K; ty /= K; tzf /= K;                                        // this was K looks of walking: spread it out
         // view axes: x right, y up, z backwards -> world axes with the transpose of the turn

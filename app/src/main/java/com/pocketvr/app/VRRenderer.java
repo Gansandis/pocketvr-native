@@ -114,10 +114,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.rot = tC.clone();
     }
 
-    private void updateWin(Win w, float[] rn, float t) {
+    private float sux = 0, suy = 0, suz = 0;          // smoothed user position, so the estimate arriving in small steps looks smooth
+    private void smoothUser() {
         NvMotion mo = motion;
-        float ux = 0, uy = 0, uz = 0;
-        if (mo != null && mo.enabled) { ux = mo.px; uy = mo.py; uz = mo.pz; }
+        if (mo != null && mo.enabled) { sux += (mo.px - sux) * 0.18f; suy += (mo.py - suy) * 0.18f; suz += (mo.pz - suz) * 0.18f; }
+        else { sux = suy = suz = 0f; }
+    }
+
+    private void updateWin(Win w, float[] rn, float t) {
+        float ux = sux, uy = suy, uz = suz;
         if (w.placeReq || w.rot == null) {
             android.opengl.Matrix.transposeM(tA, 0, rn, 0);
             w.rot = tA.clone();
@@ -166,6 +171,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (recenter) { recenter = false; if (menuWin != null) menuWin.placeReq = true; }
         computeProj();
         float t = (System.nanoTime() / 1e9f) % 600f;
+        smoothUser();
         for (Win w : wins) if (w.visible) updateWin(w, rn, t);
     }
 
