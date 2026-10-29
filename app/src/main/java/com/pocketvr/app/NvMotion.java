@@ -84,10 +84,10 @@ public class NvMotion {
         return (best != null && bd < 150_000_000L) ? best : null;     // nothing close enough: do not guess
     }
 
-    private float cx0, cz0;
+    private float cx0, cy0;
     public volatile boolean calibrating = false;
-    public void calStart() { cx0 = px; cz0 = pz; calibrating = true; }
-    public float calWalked() { return (float) Math.hypot(px - cx0, pz - cz0); }
+    public void calStart() { cx0 = px; cy0 = py; calibrating = true; }
+    public float calWalked() { return (float) Math.hypot(px - cx0, py - cy0); }
     public boolean calEnd(float knownM) {
         calibrating = false;
         float d = calWalked();
@@ -247,8 +247,9 @@ public class NvMotion {
         pz += rn[8] * vx + rn[9] * vy + rn[10] * vz;
         // you walk on a floor: sideways/forward may be far, but up/down is limited, and the whole thing stays within a sane size.
         // (a window sent far up or down by small errors would be gone when you turn back)
-        py = Math.max(-0.35f, Math.min(0.35f, py * 0.995f));
-        px = Math.max(-12f, Math.min(12f, px)); pz = Math.max(-12f, Math.min(12f, pz));
+        // (the sensors' world: x east, y north, z UP: so z is the up/down one)
+        pz = Math.max(-0.30f, Math.min(0.30f, pz * 0.99f));
+        px = Math.max(-12f, Math.min(12f, px)); py = Math.max(-12f, Math.min(12f, py));
         if (Float.isNaN(px + py + pz)) { px = py = pz = 0; }
     }
 
