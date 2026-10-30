@@ -64,6 +64,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         public final NvContent c;
         public final float widthM;
         public volatile boolean visible = false, placeReq = false;
+        int texW = 0, texH = 0;
         public volatile float offYaw = 0, offPitch = 0;      // where it appears, relative to the view centre (degrees)
         float[] rot = null;
         float scale = 1f;
@@ -417,7 +418,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
             if (d) {
                 GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, w.tex);
-                android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bm, 0);
+                if (w.texW == bm.getWidth() && w.texH == bm.getHeight())
+                    android.opengl.GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, bm);   // same size: no new memory each time (smoother)
+                else {
+                    android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, bm, 0);
+                    w.texW = bm.getWidth(); w.texH = bm.getHeight();
+                }
             }
             GLES20.glEnable(GLES20.GL_BLEND);
             GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);

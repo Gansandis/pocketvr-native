@@ -40,6 +40,7 @@ public class NvBrowser implements NvContent {
     private final Object lock = new Object();
     private Bitmap page;
     private volatile boolean frameDirty = false;
+    private float sx0, sy0;
     private boolean dirty = true, dragging = false, wasPinch = false;
     private B hover = null, lastH = null;
     private boolean hoverHandle = false, lastHandle = false;
@@ -189,12 +190,17 @@ public class NvBrowser implements NvContent {
             float sx = x, sy = y;
             for (int i = 0; i < HN; i++) {
                 int k = (hi + i) % HN;                       // oldest first
-                if (ht[k] != 0 && now - ht[k] <= 260 && now - ht[k] >= 90 && Math.hypot(hx[k] - x, hy[k] - y) < 70) { sx = hx[k]; sy = hy[k]; break; }
+                if (ht[k] != 0 && now - ht[k] <= 300 && now - ht[k] >= 70 && Math.hypot(hx[k] - x, hy[k] - y) < 110) { sx = hx[k]; sy = hy[k]; break; }
             }
             touching = true; moved = false; tx0 = tlx = sx; ty0 = tly = sy;
             send(0, sx, sy - TB);
         } else if (touching && pinch) {
-            if (valid && (moved || Math.hypot(x - tx0, y - ty0) > 44)) { moved = true; tlx = x; tly = y; send(2, x, y - TB); }
+            // a click is the default: only a clear, deliberate move (about 1/12 of the page) becomes a scroll; small shakes are ignored
+            if (valid && !moved && Math.hypot(x - tx0, y - ty0) > 105) { moved = true; sx0 = x; sy0 = y; }
+            if (valid && moved) {                                  // scroll relative to where the move began, so the page does not jump
+                tlx = tx0 + (x - sx0); tly = ty0 + (y - sy0);
+                send(2, tlx, tly - TB);
+            }
         } else if (touching && !pinch) {
             touching = false;
             send(1, moved ? tlx : tx0, (moved ? tly : ty0) - TB);
