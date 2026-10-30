@@ -59,6 +59,7 @@ public class NvCam {
     public volatile int detW = 320;               // width of the picture given to the hand model (bigger = steadier points, slower conversion)
     private long lastSeenHand = 0;
     private int[] pxBuf;
+    private float gain = 1f;                       // brightens the picture given to the hand model when the room is dark
     private long camCount = 0, camT0 = 0, detCount = 0, detT0 = 0, lastDet = 0;
 
     public NvCam(Activity a, NvHands hh, Listener l) { act = a; hands = hh; lis = l; }
@@ -142,10 +143,13 @@ public class NvCam {
             Range<Integer>[] rs = cc.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
             if (rs != null) {
                 for (Range<Integer> r : rs) {
-                    if (r.getUpper() == 30 && (fps == null || r.getLower() > fps.getLower())) fps = r;
+                    if (r.getUpper() == 30 && (fps == null || r.getLower() < fps.getLower())) fps = r;      // lowest minimum: in dim light the camera may slow down and gather more light
                 }
             }
             final Range<Integer> fpsF = fps;
+            int aeHi = 0;
+            try { Range<Integer> er = cc.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE); if (er != null) aeHi = (int) Math.round(er.getUpper() * 0.6); } catch (Throwable ignored) { }
+            final int aeComp = aeHi;
             cm.openCamera(id, new CameraDevice.StateCallback() {
                 @Override public void onOpened(CameraDevice camera) {
                     if (!running) { camera.close(); return; }
@@ -160,6 +164,8 @@ public class NvCam {
                                     b.addTarget(previewSurface);
                                     b.addTarget(reader.getSurface());
                                     b.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
+                                    b.set(CaptureRequest.CONTROL_AE_MODE, CaptureRequest.CONTROL_AE_MODE_ON);
+                                    if (aeComp > 0) b.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, aeComp);       // a little brighter: the hand must be seen in dim rooms
                                     if (fpsF != null) b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsF);
                                     s.setRepeatingRequest(b.build(), null, h);
                                 } catch (Throwable t) { lis.onError("session: " + t); }
@@ -235,6 +241,7 @@ public class NvCam {
         int yrs = p[0].getRowStride(), urs = p[1].getRowStride(), ups = p[1].getPixelStride(), vrs = p[2].getRowStride(), vps = p[2].getPixelStride();
         int ow = Math.max(64, Math.min(w, self.detW)), oh = Math.max(36, ow * hh / w);
         int sxm = w, sym = hh;
+        final float gn = self.gain; long ysum = 0;
         int[] px = self.pxBuf;
         if (px == null || px.length != ow * oh) px = self.pxBuf = new int[ow * oh];
         for (int oy = 0; oy < oh; oy++) {
@@ -243,6 +250,8 @@ public class NvCam {
             for (int ox = 0; ox < ow; ox++) {
                 int srcX = Math.min(w - 1, ox * sxm / ow);
                 int y = yb.get(yRow + srcX) & 0xFF;
+                ysum += y;
+                if (gn > 1.02f) { y = Math.min(255, (int) (y * gn)); }
                 int u = (ub.get(uRow + (srcX >> 1) * ups) & 0xFF) - 128;
                 int v = (vb.get(vRow + (srcX >> 1) * vps) & 0xFF) - 128;
                 int r = y + ((1436 * v) >> 10);
@@ -254,6 +263,9 @@ public class NvCam {
                 px[oy * ow + ox] = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
         }
+        float mean = ysum / (float) (ow * oh);
+        float want = mean < 95f ? Math.min(3.5f, 105f / Math.max(12f, mean)) : 1f;      // dark picture: lift it (limited, so noise does not explode)
+        self.gain += (want - self.gain) * 0.3f;
         return Bitmap.createBitmap(px, ow, oh, Bitmap.Config.ARGB_8888);
     }
 }
