@@ -74,7 +74,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                     for (int k = 0; k < 4; k++) { out[k] = c * m[k] - s * m[4 + k]; out[4 + k] = s * m[k] + c * m[4 + k]; }
                     rend.setRotation(out);
                 } else rend.setRotation(m);
-                if (motion != null) motion.pushRot(e.timestamp, rend.rotCopy());
+                if (motion != null && motion.enabled) motion.pushRot(e.timestamp, rend.rotCopy());
             } catch (Throwable ignored) { }
         }
         @Override public void onAccuracyChanged(android.hardware.Sensor s, int acc) { }
@@ -94,7 +94,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             if (cam != null && rend != null) {
                 float f = rend.fps;
                 long p = cam.detPaceMs;
-                if (f >= 42) p = Math.max(0, p - 20); else if (f > 0 && f < 34) p = Math.min(160, p + 20);
+                if (f >= 40) p = Math.max(0, p - 20); else if (f > 0 && f < 28) p = Math.min(100, p + 15);
                 cam.detPaceMs = p;
                 for (NvBrowser b : brs) if (b != null) b.poll();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
@@ -261,6 +261,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         cCtl.add(new NvUi.Btn("👆", () -> "เลือกด้วย", () -> rend.sel == 0 ? "จีบนิ้ว" : rend.sel == 1 ? "สัมผัสอากาศ" : "ทั้งสองแบบ", () -> rend.sel != 0, GA, GB, () -> rend.sel = (rend.sel + 1) % 3));
         cCtl.add(new NvUi.Btn("🎚", () -> "ความไวสัมผัสอากาศ", () -> rend.pokeS == 0 ? "ไว (เบา)" : rend.pokeS == 1 ? "กลาง" : "หนัก (ต้องดัน)", () -> rend.sel != 0, GA, GB, () -> rend.pokeS = (rend.pokeS + 1) % 3));
         cCtl.add(new NvUi.Btn("✋", () -> "คาดการณ์มือ", () -> rend.predict ? "เปิดอยู่" : "ปิดอยู่", () -> rend.predict, GA, GB, () -> rend.predict = !rend.predict));
+        cCtl.add(new NvUi.Btn("🔍", () -> "ความละเอียดตรวจมือ", () -> cam.detW + " px" + (cam.detW <= 320 ? " (เร็ว)" : cam.detW >= 640 ? " (แม่นสุด)" : ""), null, GA, GB, () -> cam.detW = cam.detW <= 320 ? 480 : (cam.detW <= 480 ? 640 : 320)));
         cCtl.add(new NvUi.Btn("🧭", () -> "เข็มทิศช่วยแก้ทิศ", () -> compass ? "เปิดอยู่ (กันจอไหล)" : "ปิดอยู่", () -> compass, GA, GB, () -> compass = !compass));
         cCtl.add(new NvUi.Btn("🎈", () -> "ลอยเบาๆ", () -> rend.floaty ? "เปิดอยู่" : "ปิดอยู่", () -> rend.floaty, GA, GB, () -> rend.floaty = !rend.floaty));
         cDisp.add(new NvUi.Btn("🥽", () -> "แยกจอ VR", () -> rend.stereo ? "เปิดอยู่" : "ปิดอยู่", () -> rend.stereo, GA, GB, () -> rend.stereo = !rend.stereo));

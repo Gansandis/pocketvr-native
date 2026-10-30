@@ -56,6 +56,9 @@ public class NvCam {
     public volatile float hFov = 1.15f;           // horizontal field of view of the camera, radians
     public volatile NvMotion motion;
     public volatile long detPaceMs = 0;           // shortest time between two looks for hands
+    public volatile int detW = 320;               // width of the picture given to the hand model (bigger = steadier points, slower conversion)
+    private long lastSeenHand = 0;
+    private int[] pxBuf;
     private long camCount = 0, camT0 = 0, detCount = 0, detT0 = 0, lastDet = 0;
 
     public NvCam(Activity a, NvHands hh, Listener l) { act = a; hands = hh; lis = l; }
@@ -184,10 +187,14 @@ public class NvCam {
             if (now - camT0 >= 1000) { camFps = camCount * 1000f / (now - camT0); camCount = 0; camT0 = now; }
             NvMotion mo = motion;
             if (mo != null && mo.enabled) { try { mo.hands = result; mo.feed(img, hFov); } catch (Throwable t) { mo.err = String.valueOf(t); } }
-            if (handsFailed || now - lastDet < detPaceMs || !detBusy.compareAndSet(false, true)) return;
+            float[] rr = result;
+            if (rr != null && rr.length > 0 && rr[0] >= 1) lastSeenHand = now;
+            long pace = detPaceMs;
+            if (now - lastSeenHand > 3000) pace = Math.max(pace, 80);     // no hand in sight for a while: look less often (saves heat), wake up fast when one appears
+            if (handsFailed || now - lastDet < pace || !detBusy.compareAndSet(false, true)) return;
             lastDet = now;
             long c0 = System.nanoTime();
-            final Bitmap bmp = yuvToBitmap(img);
+            final Bitmap bmp = yuvToBitmap(img, this);
             convMs += ((System.nanoTime() - c0) / 1e6f - convMs) * 0.2f;
             final long ts = now;
             ExecutorService ex = detEx;
@@ -221,19 +228,23 @@ public class NvCam {
     }
 
     // the camera gives YUV; the hand model wants colour pixels. Every second pixel is used (half size is plenty for the model).
-    private static Bitmap yuvToBitmap(Image img) {
+    private static Bitmap yuvToBitmap(Image img, NvCam self) {
         int w = img.getWidth(), hh = img.getHeight();
         Image.Plane[] p = img.getPlanes();
         ByteBuffer yb = p[0].getBuffer(), ub = p[1].getBuffer(), vb = p[2].getBuffer();
         int yrs = p[0].getRowStride(), urs = p[1].getRowStride(), ups = p[1].getPixelStride(), vrs = p[2].getRowStride(), vps = p[2].getPixelStride();
-        int ow = w / 2, oh = hh / 2;
-        int[] px = new int[ow * oh];
+        int ow = Math.max(64, Math.min(w, self.detW)), oh = Math.max(36, ow * hh / w);
+        int sxm = w, sym = hh;
+        int[] px = self.pxBuf;
+        if (px == null || px.length != ow * oh) px = self.pxBuf = new int[ow * oh];
         for (int oy = 0; oy < oh; oy++) {
-            int yRow = oy * 2 * yrs, uRow = oy * urs, vRow = oy * vrs;
+            int srcY = Math.min(hh - 1, oy * sym / oh);
+            int yRow = srcY * yrs, uRow = (srcY >> 1) * urs, vRow = (srcY >> 1) * vrs;
             for (int ox = 0; ox < ow; ox++) {
-                int y = yb.get(yRow + ox * 2) & 0xFF;
-                int u = (ub.get(uRow + ox * ups) & 0xFF) - 128;
-                int v = (vb.get(vRow + ox * vps) & 0xFF) - 128;
+                int srcX = Math.min(w - 1, ox * sxm / ow);
+                int y = yb.get(yRow + srcX) & 0xFF;
+                int u = (ub.get(uRow + (srcX >> 1) * ups) & 0xFF) - 128;
+                int v = (vb.get(vRow + (srcX >> 1) * vps) & 0xFF) - 128;
                 int r = y + ((1436 * v) >> 10);
                 int g = y - ((352 * u + 731 * v) >> 10);
                 int b = y + ((1815 * u) >> 10);

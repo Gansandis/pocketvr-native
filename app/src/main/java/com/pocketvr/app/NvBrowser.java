@@ -86,7 +86,7 @@ public class NvBrowser implements NvContent {
         });
     }
 
-    public void setActive(boolean on) { vb.myGap = on ? 50 : 1000; }
+    public void setActive(boolean on) { vb.myGap = on ? 50 : 1000; final boolean a = on; ui.post(() -> vb.pause(!a)); }
 
     public void close() {
         vb.inst = null;

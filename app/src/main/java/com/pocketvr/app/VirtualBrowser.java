@@ -269,6 +269,11 @@ public class VirtualBrowser {
 
     public String url() { WebView web = current(); return web == null ? "" : String.valueOf(web.getUrl()); }
 
+    /** a window nobody is looking at stops drawing and running its page scripts (saves a lot of power and speed for the rest) */
+    public void pause(boolean p) {
+        for (WebView wv : tabs) { try { if (p) wv.onPause(); else wv.onResume(); } catch (Throwable ignored) { } }
+    }
+
     public void close() {
         try { if (presentation != null) presentation.dismiss(); } catch (Throwable ignored) { }
         for (WebView wv : tabs) { try { wv.destroy(); } catch (Throwable ignored) { } }
