@@ -27,19 +27,53 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     private boolean hudOn = true;
     private android.hardware.SensorManager sm;
     private android.hardware.Sensor rotSensor;
+    private android.hardware.Sensor magSensor;
+    public volatile boolean compass = true;                  // the compass sensor slowly corrects the turn sensor's sideways drift
     private final android.hardware.SensorEventListener sl = new android.hardware.SensorEventListener() {
-        private final float[] r = new float[16], o = new float[16];
+        private final float[] r = new float[16], o = new float[16], gm = new float[16], out = new float[16];
+        private boolean haveG = false, haveD = false;
+        private double delta = 0;                            // radians: how far the turn sensor has drifted from the compass
+        private long lastMagT = 0;
+        private float[] mapped(float[] values) {
+            android.hardware.SensorManager.getRotationMatrixFromVector(r, values);
+            int rot = getWindowManager().getDefaultDisplay().getRotation();
+            if (rot == android.view.Surface.ROTATION_90) { android.hardware.SensorManager.remapCoordinateSystem(r, android.hardware.SensorManager.AXIS_Y, android.hardware.SensorManager.AXIS_MINUS_X, o); return o; }
+            if (rot == android.view.Surface.ROTATION_270) { android.hardware.SensorManager.remapCoordinateSystem(r, android.hardware.SensorManager.AXIS_MINUS_Y, android.hardware.SensorManager.AXIS_X, o); return o; }
+            return r;
+        }
+        private double heading(float[] m) { return Math.atan2(-m[6], -m[2]); }   // where the back camera points, turned about "up"
         @Override public void onSensorChanged(android.hardware.SensorEvent e) {
             try {
-                android.hardware.SensorManager.getRotationMatrixFromVector(r, e.values);
-                int rot = getWindowManager().getDefaultDisplay().getRotation();
-                if (rot == android.view.Surface.ROTATION_90) {
-                    android.hardware.SensorManager.remapCoordinateSystem(r, android.hardware.SensorManager.AXIS_Y, android.hardware.SensorManager.AXIS_MINUS_X, o);
-                    rend.setRotation(o);
-                } else if (rot == android.view.Surface.ROTATION_270) {
-                    android.hardware.SensorManager.remapCoordinateSystem(r, android.hardware.SensorManager.AXIS_MINUS_Y, android.hardware.SensorManager.AXIS_X, o);
-                    rend.setRotation(o);
-                } else rend.setRotation(r);
+                boolean isMag = magSensor != null && e.sensor.getType() == android.hardware.Sensor.TYPE_ROTATION_VECTOR && rotSensor != null && rotSensor.getType() == android.hardware.Sensor.TYPE_GAME_ROTATION_VECTOR;
+                float[] m = mapped(e.values);
+                if (isMag) {
+                    if (!haveG || e.accuracy < 2) return;
+                    if (Math.abs(m[10]) > 0.8f || Math.abs(gm[10]) > 0.8f) return;       // looking straight up/down: the turn angle is undefined
+                    double tgt = heading(m) - heading(gm);
+                    while (tgt > Math.PI) tgt -= 2 * Math.PI;
+                    while (tgt < -Math.PI) tgt += 2 * Math.PI;
+                    double err = tgt - delta;
+                    while (err > Math.PI) err -= 2 * Math.PI;
+                    while (err < -Math.PI) err += 2 * Math.PI;
+                    long now = e.timestamp;
+                    double dt = lastMagT == 0 ? 0 : Math.min(0.5, (now - lastMagT) / 1e9);
+                    lastMagT = now;
+                    if (!haveD) { delta = tgt; haveD = true; }
+                    else if (compass) {
+                        double step = err * dt / 20.0;                                  // slow: about 20 s, so compass noise never shows
+                        double mx = Math.toRadians(0.5) * dt * 3;                       // and never faster than ~1.5 degrees a second
+                        delta += Math.max(-mx, Math.min(mx, step));
+                    }
+                    return;
+                }
+                System.arraycopy(m, 0, gm, 0, 16);
+                haveG = true;
+                if (compass && haveD) {
+                    float c = (float) Math.cos(delta), s = (float) Math.sin(delta);
+                    System.arraycopy(m, 0, out, 0, 16);
+                    for (int k = 0; k < 4; k++) { out[k] = c * m[k] - s * m[4 + k]; out[4 + k] = s * m[k] + c * m[4 + k]; }
+                    rend.setRotation(out);
+                } else rend.setRotation(m);
                 if (motion != null) motion.pushRot(e.timestamp, rend.rotCopy());
             } catch (Throwable ignored) { }
         }
@@ -227,6 +261,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         cCtl.add(new NvUi.Btn("👆", () -> "เลือกด้วย", () -> rend.sel == 0 ? "จีบนิ้ว" : rend.sel == 1 ? "สัมผัสอากาศ" : "ทั้งสองแบบ", () -> rend.sel != 0, GA, GB, () -> rend.sel = (rend.sel + 1) % 3));
         cCtl.add(new NvUi.Btn("🎚", () -> "ความไวสัมผัสอากาศ", () -> rend.pokeS == 0 ? "ไว (เบา)" : rend.pokeS == 1 ? "กลาง" : "หนัก (ต้องดัน)", () -> rend.sel != 0, GA, GB, () -> rend.pokeS = (rend.pokeS + 1) % 3));
         cCtl.add(new NvUi.Btn("✋", () -> "คาดการณ์มือ", () -> rend.predict ? "เปิดอยู่" : "ปิดอยู่", () -> rend.predict, GA, GB, () -> rend.predict = !rend.predict));
+        cCtl.add(new NvUi.Btn("🧭", () -> "เข็มทิศช่วยแก้ทิศ", () -> compass ? "เปิดอยู่ (กันจอไหล)" : "ปิดอยู่", () -> compass, GA, GB, () -> compass = !compass));
         cCtl.add(new NvUi.Btn("🎈", () -> "ลอยเบาๆ", () -> rend.floaty ? "เปิดอยู่" : "ปิดอยู่", () -> rend.floaty, GA, GB, () -> rend.floaty = !rend.floaty));
         cDisp.add(new NvUi.Btn("🥽", () -> "แยกจอ VR", () -> rend.stereo ? "เปิดอยู่" : "ปิดอยู่", () -> rend.stereo, GA, GB, () -> rend.stereo = !rend.stereo));
         cDisp.add(new NvUi.Btn("👓", () -> "เลนส์", () -> rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง", () -> rend.lens > 0, GA, GB, () -> rend.lens = (rend.lens + 1) % 4));
@@ -308,7 +343,9 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             sm = (android.hardware.SensorManager) getSystemService(SENSOR_SERVICE);
             rotSensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_GAME_ROTATION_VECTOR);
             if (rotSensor == null) rotSensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR);
+            magSensor = rotSensor != null && rotSensor.getType() == android.hardware.Sensor.TYPE_GAME_ROTATION_VECTOR ? sm.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR) : null;
             if (rotSensor != null) sm.registerListener(sl, rotSensor, android.hardware.SensorManager.SENSOR_DELAY_GAME);
+            if (magSensor != null) sm.registerListener(sl, magSensor, android.hardware.SensorManager.SENSOR_DELAY_UI);
             else err = "no turn sensor";
         } catch (Throwable t) { err = "sensor: " + t; }
         rend.recenter = true;
