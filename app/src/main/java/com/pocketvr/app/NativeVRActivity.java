@@ -265,12 +265,6 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         rend.setVisible(wMedia, true, 0f, 0f);
     }
 
-    @Override public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
-        super.onRequestPermissionsResult(code, perms, res);
-        if (code == 77 && hasMediaPerm()) { media.reload(); rend.setVisible(wMedia, true, 0f, 0f); }
-        else if (code == 77) menu.toast("ยังไม่ได้รับอนุญาตให้อ่านรูป");
-    }
-
     private NvBrowser browserSlot(final int i) {
         if (brs[i] != null) return brs[i];
         final NvBrowser b = new NvBrowser(this, ui);
@@ -389,6 +383,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     @Override public void onRequestPermissionsResult(int rc, String[] p, int[] r) {
+        if (rc == 77) {                                                  // pictures / videos permission (the app keeps running if it is refused)
+            if (hasMediaPerm()) { media.reload(); rend.setVisible(wMedia, true, 0f, 0f); }
+            else menu.toast("ยังไม่ได้รับอนุญาตให้อ่านรูป");
+            return;
+        }
         if (r.length == 0 || r[0] != PackageManager.PERMISSION_GRANTED) finish();
         else { gl.onPause(); gl.onResume(); }
     }
