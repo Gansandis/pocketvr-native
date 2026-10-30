@@ -34,7 +34,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private final float[] mP = new float[16], mM = new float[16];
     private float tanH = 0.65f, tanV = 0.37f;
     private static final float PANEL_D = 1.5f;
-    private int progPanel;
+    private int progPanel, progVid, progPano;
+    // ---- 360 picture around the user (replaces the camera picture while it is on) ----
+    private volatile android.graphics.Bitmap panoBmp = null;
+    private volatile int panoCmd = 0;                       // 1 = show panoBmp, 2 = switch off
+    private volatile boolean panoOn = false;
+    private int panoTex = 0;
+    private float panoLon0 = 0f;
+    private final float[] rm3 = new float[9];
+    public boolean panoActive() { return panoOn || panoCmd == 1; }
+    /** a whole-sky (equirectangular) picture to look around in; null = back to the camera */
+    public void setPano(android.graphics.Bitmap b) { panoBmp = b; panoCmd = b == null ? 2 : 1; }
     private float cnx = 0, cny = 0;
     public void setRotation(float[] m) { rotNow = m.clone(); }
     public float[] rotCopy() { return rotNow; }
@@ -295,6 +305,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     @Override public void onSurfaceCreated(GL10 gl, EGLConfig cfg) {
         ulc.clear();
+        panoTex = 0; panoOn = false;
+        for (Win w : wins) if (w.c instanceof NvVideo) ((NvVideo) w.c).glLost();
         progCam = prog(
             "attribute vec2 p; uniform mat4 stm; uniform float rf; varying vec2 uv;" +
             "void main(){ gl_Position=vec4(p,0.,1.); vec2 t=p*0.5+0.5; t=mix(t,1.-t,rf); uv=vec2(t.x,1.-t.y); }",
@@ -336,6 +348,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progPanel = prog(
             "attribute vec2 p; uniform mat4 mvp; uniform vec2 hs; varying vec2 uv; void main(){ gl_Position=mvp*vec4(p*hs,0.,1.); uv=vec2(p.x*0.5+0.5, 0.5-p.y*0.5); }",
             "precision mediump float; uniform sampler2D tex; varying vec2 uv; void main(){ gl_FragColor=texture2D(tex,uv); }");
+        progVid = prog(
+            "attribute vec2 p; uniform mat4 mvp; uniform vec2 hs; uniform vec2 off; uniform vec2 fit; uniform mat4 stm; varying vec2 uv; varying vec2 c;" +
+            "void main(){ gl_Position=mvp*vec4(p*hs+off,0.,1.); c=p*0.5*fit+0.5; uv=(stm*vec4(c,0.,1.)).xy; }",
+            "#extension GL_OES_EGL_image_external : require\nprecision mediump float; uniform samplerExternalOES tex; varying vec2 uv; varying vec2 c;" +
+            "void main(){ if(c.x<0.||c.x>1.||c.y<0.||c.y>1.) gl_FragColor=vec4(0.,0.,0.,1.); else gl_FragColor=texture2D(tex,uv); }");
+        progPano = prog(
+            "attribute vec2 p; uniform vec2 tn; varying vec2 ray; void main(){ gl_Position=vec4(p,0.,1.); ray=p*tn; }",
+            "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
+            "uniform sampler2D tex; uniform mat3 rm; uniform float lon0; varying vec2 ray;" +
+            "void main(){ vec3 d=normalize(vec3(ray,-1.)); vec3 w=d*rm; float lon=atan(w.x,w.y)+lon0; float lat=asin(clamp(w.z,-1.,1.));" +
+            " gl_FragColor=texture2D(tex,vec2(fract(lon/6.2831853+0.5),0.5-lat/3.1415927)); }");
         quad = fb(8);
         quad.put(new float[]{-1,-1, 1,-1, -1,1, 1,1}).position(0);
         lineBuf = fb(BONES.length * 2 * 2 * 2);
@@ -408,6 +431,42 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         } else predMs = 0;
     }
 
+    /** the video picture, straight from the player's texture, in the top part of the window (the control bar is drawn over the rest) */
+    private void drawVideo(Win w, NvVideo v, android.graphics.Bitmap bm) {
+        if (v.st == null) {
+            int[] t = new int[1];
+            GLES20.glGenTextures(1, t, 0);
+            GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, t[0]);
+            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+            GLES20.glTexParameteri(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+            v.glReady(new SurfaceTexture(t[0]), t[0]);
+        }
+        if (v.st == null) return;
+        if (v.frameAvail) {
+            v.frameAvail = false;
+            try { v.st.updateTexImage(); v.st.getTransformMatrix(v.stm); } catch (Throwable ignored) { }
+        }
+        if (v.vw <= 0 || v.vh <= 0) return;
+        float wa = (float) NvVideo.W / NvVideo.VH, va = (float) v.vw / v.vh;
+        float fx = va > wa ? 1f : wa / va, fy = va > wa ? va / wa : 1f;
+        float pw = w.widthM * w.scale;
+        float hh = pw * bm.getHeight() / bm.getWidth() / 2f;
+        float fr = (float) NvVideo.VH / bm.getHeight();
+        GLES20.glDisable(GLES20.GL_BLEND);
+        GLES20.glUseProgram(progVid);
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, v.oes);
+        GLES20.glUniform1i(ul(progVid, "tex"), 0);
+        GLES20.glUniformMatrix4fv(ul(progVid, "mvp"), 1, false, w.mvp, 0);
+        GLES20.glUniformMatrix4fv(ul(progVid, "stm"), 1, false, v.stm, 0);
+        GLES20.glUniform2f(ul(progVid, "hs"), pw / 2f, hh * fr);
+        GLES20.glUniform2f(ul(progVid, "off"), 0f, hh - hh * fr);
+        GLES20.glUniform2f(ul(progVid, "fit"), fx, fy);
+        drawQuad(progVid);
+    }
+
     private void drawWins() {
         for (Win w : wins) {
             if (!w.visible) continue;
@@ -436,6 +495,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     w.texW = bm.getWidth(); w.texH = bm.getHeight();
                 }
             }
+            if (w.c instanceof NvVideo) drawVideo(w, (NvVideo) w.c, bm);
             GLES20.glEnable(GLES20.GL_BLEND);
             GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
             GLES20.glUseProgram(progPanel);
@@ -841,10 +901,52 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (upd && st != null) {
             try { st.updateTexImage(); st.getTransformMatrix(stm); } catch (Throwable ignored) { }
         }
-        // 1) scene picture: camera + hand skeleton
+        int pc = panoCmd;
+        if (pc != 0) {
+            panoCmd = 0;
+            if (pc == 2) { panoOn = false; panoBmp = null; }
+            else {
+                android.graphics.Bitmap pb = panoBmp; panoBmp = null;
+                if (pb != null) {
+                    try {
+                        int[] mx = new int[1];
+                        GLES20.glGetIntegerv(GLES20.GL_MAX_TEXTURE_SIZE, mx, 0);
+                        int lim = Math.max(1024, mx[0]);
+                        if (pb.getWidth() > lim) {
+                            android.graphics.Bitmap b2 = android.graphics.Bitmap.createScaledBitmap(pb, lim, Math.max(1, (int) ((long) pb.getHeight() * lim / pb.getWidth())), true);
+                            pb.recycle(); pb = b2;
+                        }
+                        if (panoTex == 0) { int[] t = new int[1]; GLES20.glGenTextures(1, t, 0); panoTex = t[0]; }
+                        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, panoTex);
+                        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+                        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+                        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+                        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+                        android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, pb, 0);
+                        pb.recycle();
+                        float[] m = rotNow;                              // the picture's middle is where you are looking now
+                        panoLon0 = -(float) Math.atan2(-m[2], -m[6]);
+                        panoOn = true;
+                    } catch (Throwable t) { panoOn = false; }
+                }
+            }
+        }
+        // 1) scene picture: camera (or the 360 picture) + hand skeleton
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0]);
         GLES20.glViewport(0, 0, sceneW, sceneH);
         GLES20.glDisable(GLES20.GL_BLEND);
+        if (panoOn && panoTex != 0) {
+            float[] m = rotNow;
+            rm3[0] = m[0]; rm3[1] = m[1]; rm3[2] = m[2]; rm3[3] = m[4]; rm3[4] = m[5]; rm3[5] = m[6]; rm3[6] = m[8]; rm3[7] = m[9]; rm3[8] = m[10];
+            GLES20.glUseProgram(progPano);
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, panoTex);
+            GLES20.glUniform1i(ul(progPano, "tex"), 0);
+            GLES20.glUniform2f(ul(progPano, "tn"), tanH, tanV);
+            GLES20.glUniformMatrix3fv(ul(progPano, "rm"), 1, false, rm3, 0);
+            GLES20.glUniform1f(ul(progPano, "lon0"), panoLon0);
+            drawQuad(progPano);
+        } else {
         GLES20.glUseProgram(progCam);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, camTex[0]);
@@ -852,6 +954,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniformMatrix4fv(ul(progCam, "stm"), 1, false, stm, 0);
         GLES20.glUniform1f(ul(progCam, "rf"), rot180 ? 1f : 0f);
         drawQuad(progCam);
+        }
         predictNow(now);
         computePanel();
         cursor();

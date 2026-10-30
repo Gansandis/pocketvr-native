@@ -82,6 +82,10 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     private final NvUi menu = new NvUi();
     private VRRenderer.Win wMenu, wClock, wStats, wKeys;
     private NvKeyboard kbd;
+    private NvMedia media;
+    private NvVideo video;
+    private VRRenderer.Win wMedia, wVideo;
+    private final java.util.concurrent.ExecutorService bgIo = java.util.concurrent.Executors.newSingleThreadExecutor();
     private final NvBrowser[] brs = new NvBrowser[3];             // up to three browser windows at once
     private final VRRenderer.Win[] bws = new VRRenderer.Win[3];
     private static final float[] BYAW = {0f, 52f, -52f};
@@ -212,6 +216,59 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         wKeys = rend.addWindow(kb, 0.80f);
         kbd = kb;
         kb.onClose = () -> { kb.sink = null; rend.setVisible(wKeys, false, 0f, 0f); };
+
+        // gallery, 360 viewer and cinema
+        video = new NvVideo(this);
+        wVideo = rend.addWindow(video, 1.7f);
+        video.onClose = () -> { video.release(); rend.setVisible(wVideo, false, 0f, 0f); };
+        media = new NvMedia(this);
+        wMedia = rend.addWindow(media, 1.3f);
+        media.onClose = () -> { rend.setPano(null); media.panoOn = false; rend.setVisible(wMedia, false, 0f, 0f); };
+        media.host = new NvMedia.Host() {
+            @Override public void onPano(final android.net.Uri u) {
+                if (rend.panoActive()) { rend.setPano(null); media.panoOn = false; return; }
+                media.panoOn = true;                                       // button shows "exit" while it loads
+                bgIo.execute(() -> {
+                    android.graphics.Bitmap b = media.decode(u, 4096);
+                    if (b == null) { media.panoOn = false; return; }
+                    rend.setPano(b);
+                });
+            }
+            @Override public void onVideo(android.net.Uri u) {
+                rend.setPano(null); media.panoOn = false;
+                video.open(u);
+                rend.setVisible(wVideo, true, 0f, 4f);
+                rend.setVisible(wMedia, false, 0f, 0f);                   // the cinema takes the place of the gallery
+            }
+        };
+    }
+
+    // ---- permission to read the phone's pictures and videos (asked once, with the phone in the hand) ----
+    private String[] mediaPerms() {
+        return android.os.Build.VERSION.SDK_INT >= 33
+                ? new String[]{Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO}
+                : new String[]{Manifest.permission.READ_EXTERNAL_STORAGE};
+    }
+
+    private boolean hasMediaPerm() {
+        for (String s : mediaPerms()) if (checkSelfPermission(s) == PackageManager.PERMISSION_GRANTED) return true;   // "some photos only" on newer Android still counts
+        return false;
+    }
+
+    private void openGallery() {
+        if (!hasMediaPerm()) {
+            menu.toast("ถอดแว่นแล้วกดอนุญาตบนหน้าจอ");
+            runOnUiThread(() -> requestPermissions(mediaPerms(), 77));
+            return;
+        }
+        if (!media.isLoaded()) media.reload();
+        rend.setVisible(wMedia, true, 0f, 0f);
+    }
+
+    @Override public void onRequestPermissionsResult(int code, String[] perms, int[] res) {
+        super.onRequestPermissionsResult(code, perms, res);
+        if (code == 77 && hasMediaPerm()) { media.reload(); rend.setVisible(wMedia, true, 0f, 0f); }
+        else if (code == 77) menu.toast("ยังไม่ได้รับอนุญาตให้อ่านรูป");
     }
 
     private NvBrowser browserSlot(final int i) {
@@ -251,6 +308,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 for (int k = 0; k < brs.length; k++) if (brs[k] != null && brs[k].isOpen()) { rend.setVisible(bws[k], true, BYAW[k], 4f); brs[k].setActive(true); any = true; }
                 if (!any) openBrowser(0);
             }
+        }));
+        menu.home.add(new NvUi.Btn("🖼", () -> "แกลเลอรี/โรงหนัง", () -> rend.panoActive() ? "กำลังดูภาพ 360°" : (wVideo.visible ? "กำลังเล่นวิดีโอ" : (wMedia.visible ? "เปิดอยู่" : "รูป วิดีโอ 360°")), () -> wMedia.visible || wVideo.visible || rend.panoActive(), GA, GB, () -> {
+            if (wMedia.visible) { media.onClose.run(); }
+            else if (wVideo.visible) { video.onClose.run(); }
+            else openGallery();
         }));
         menu.home.add(new NvUi.Btn("⌨", () -> "คีย์บอร์ด", () -> wKeys.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wKeys.visible, GA, GB, () -> rend.toggle(wKeys, 0f, -24f)));
         menu.home.add(new NvUi.Btn("⏱", () -> "นาฬิกา/จับเวลา", () -> wClock.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wClock.visible, GA, GB, () -> rend.toggle(wClock, 18f, 0f)));
@@ -362,6 +424,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     @Override protected void onDestroy() {
+        try { if (video != null) video.release(); } catch (Throwable ignored) { }
+        bgIo.shutdown();
         for (NvBrowser b : brs) { try { if (b != null) b.close(); } catch (Throwable ignored) { } }
         super.onDestroy();
     }

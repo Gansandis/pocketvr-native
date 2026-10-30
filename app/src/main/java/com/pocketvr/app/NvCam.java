@@ -57,7 +57,7 @@ public class NvCam {
     public volatile NvMotion motion;
     public volatile long detPaceMs = 0;           // shortest time between two looks for hands
     public volatile int detW = 320;               // width of the picture given to the hand model (bigger = steadier points, slower conversion)
-    private long lastSeenHand = 0;
+    private long lastSeenHand = 0, lastHandT = 0;
     private int[] pxBuf;
     private long camCount = 0, camT0 = 0, detCount = 0, detT0 = 0, lastDet = 0;
 
@@ -208,6 +208,10 @@ public class NvCam {
                     float[] res = hands.detect(bmp, ts);
                     bmp.recycle();
                     if (res != null) {
+                        long tn = System.nanoTime() / 1000000L;
+                        if (res[0] >= 1) lastHandT = tn;
+                        // one or two empty answers in a row (a blink of the model) must not drop the hand: keep the last good points for a moment
+                        if (res[0] < 1 && result.length > 0 && result[0] >= 1 && tn - lastHandT < 260) res = result;
                         result = res;
                         long t = System.nanoTime() / 1000000L;
                         detCount++;

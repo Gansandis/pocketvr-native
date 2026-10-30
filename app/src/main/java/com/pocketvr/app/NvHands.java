@@ -32,9 +32,9 @@ public class NvHands {
                     .setBaseOptions(bo.build())
                     .setRunningMode(RunningMode.VIDEO)
                     .setNumHands(hands)
-                    .setMinHandDetectionConfidence(0.3f)
-                    .setMinHandPresenceConfidence(0.3f)
-                    .setMinTrackingConfidence(0.3f)
+                    .setMinHandDetectionConfidence(0.25f)
+                    .setMinHandPresenceConfidence(0.2f)
+                    .setMinTrackingConfidence(0.2f)
                     .build();
             lm = HandLandmarker.createFromOptions(ctx, opt);
             return true;
