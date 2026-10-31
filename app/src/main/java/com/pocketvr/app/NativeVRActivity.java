@@ -312,7 +312,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.home.add(new NvUi.Btn("⏱", () -> "นาฬิกา/จับเวลา", () -> wClock.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wClock.visible, GA, GB, () -> rend.toggle(wClock, 18f, 0f)));
         menu.home.add(new NvUi.Btn("📈", () -> "สถานะระบบ", () -> wStats.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wStats.visible, GA, GB, () -> rend.toggle(wStats, -18f, 0f)));
         menu.home.add(new NvUi.Btn("📍", () -> "จัดกลางใหม่", () -> "วางเมนูตรงหน้า", null, GA, GB, () -> rend.recenter = true));
-        menu.home.add(new NvUi.Btn("🏠", () -> "กลับแอปหลัก", () -> "ออกจากหน้าจอนี้", null, 0xFF8D6BFF, 0xFF4A2FB8, () -> runOnUiThread(() -> finish())));
+        menu.home.add(new NvUi.Btn("🕸", () -> "เวอร์ชันเว็บ (สำรอง)", () -> "เปิดหน้าเว็บเดิม", null, 0xFF8D6BFF, 0xFF4A2FB8, () -> runOnUiThread(() -> {
+            try { startActivity(new android.content.Intent(this, MainActivity.class)); } catch (Throwable t) { err = "web: " + t; }
+            finish();
+        })));
+        menu.home.add(new NvUi.Btn("⏻", () -> "ออกจากแอป", () -> "ปิด PocketVR", null, 0xFF6A3036, 0xFF4A2024, () -> runOnUiThread(() -> finishAffinity())));
 
         cCtl.add(new NvUi.Btn("👆", () -> "เลือกด้วย", () -> rend.sel == 0 ? "จีบนิ้ว" : rend.sel == 1 ? "สัมผัสอากาศ" : "ทั้งสองแบบ", () -> rend.sel != 0, GA, GB, () -> rend.sel = (rend.sel + 1) % 3));
         cCtl.add(new NvUi.Btn("🎚", () -> "ความไวสัมผัสอากาศ", () -> rend.pokeS == 0 ? "ไว (เบา)" : rend.pokeS == 1 ? "กลาง" : "หนัก (ต้องดัน)", () -> rend.sel != 0, GA, GB, () -> rend.pokeS = (rend.pokeS + 1) % 3));

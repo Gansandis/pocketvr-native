@@ -64,6 +64,20 @@ public class VirtualBrowser {
 
     public VirtualBrowser(Activity a) { act = a; }
 
+    private View fsView;
+    private WebChromeClient.CustomViewCallback fsCb;
+    public boolean inFullscreen() { return fsView != null; }
+
+    /** leave the video's full screen (UI thread); true if there was one */
+    public boolean exitFullscreen() {
+        if (fsView == null) return false;
+        try { if (root != null) root.removeView(fsView); } catch (Throwable ignored) { }
+        fsView = null;
+        try { if (fsCb != null) fsCb.onCustomViewHidden(); } catch (Throwable ignored) { }
+        fsCb = null;
+        return true;
+    }
+
     public boolean isOpen() { return root != null; }
 
     private WebView current() { return tabs.isEmpty() ? null : tabs.get(Math.min(cur, tabs.size() - 1)); }
@@ -139,7 +153,15 @@ public class VirtualBrowser {
         CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true);
         applyUa(wv);
         wv.setWebViewClient(new WebViewClient());        // links stay inside this browser
-        wv.setWebChromeClient(new WebChromeClient());
+        wv.setWebChromeClient(new WebChromeClient() {
+            // the video's own "full screen" button (YouTube and others): the video fills this browser window
+            @Override public void onShowCustomView(View v, CustomViewCallback c) {
+                if (fsView != null) { c.onCustomViewHidden(); return; }
+                fsView = v; fsCb = c;
+                root.addView(v, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+            }
+            @Override public void onHideCustomView() { exitFullscreen(); }
+        });
         root.addView(wv, new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         return wv;
     }
@@ -262,7 +284,7 @@ public class VirtualBrowser {
     public void nav(String a) {
         WebView web = current();
         if (web == null) return;
-        if ("back".equals(a)) { if (web.canGoBack()) web.goBack(); }
+        if ("back".equals(a)) { if (exitFullscreen()) return; if (web.canGoBack()) web.goBack(); }
         else if ("forward".equals(a)) { if (web.canGoForward()) web.goForward(); }
         else if ("reload".equals(a)) web.reload();
     }

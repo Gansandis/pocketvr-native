@@ -50,7 +50,7 @@ public class NvMedia implements NvContent {
     private final ExecutorService io = Executors.newSingleThreadExecutor();
 
     private volatile List<Item> imgs = new ArrayList<>(), vids = new ArrayList<>();
-    private volatile boolean loading = false, loaded = false;
+    private volatile boolean loading = false, loaded = false, relayoutReq = false;
     private int tab = 0, page = 0;
     private int viewIdx = -1;                       // >= 0: looking at one picture
     private volatile Bitmap photo = null;
@@ -74,7 +74,7 @@ public class NvMedia implements NvContent {
             try {
                 imgs = query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, false);
                 vids = query(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, true);
-                loaded = true;
+                loaded = true; relayoutReq = true;                          // the grid cells are made from the list: build them now it has arrived
             } catch (Throwable ignored) { }
             loading = false; dirty = true;
         });
@@ -236,6 +236,7 @@ public class NvMedia implements NvContent {
     @Override public boolean takeDirty() {
         long now = System.currentTimeMillis();
         if (lastPano != panoOn) { lastPano = panoOn; layout(); }
+        if (relayoutReq) { relayoutReq = false; layout(); }
         if (pressed != null && now - pressT > 150) { pressed = null; dirty = true; }
         if (!dirty) return false;
         dirty = false;
