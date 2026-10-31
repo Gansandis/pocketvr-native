@@ -51,7 +51,7 @@ jobs:
           cat > $D/NativeVRActivity.java <<'STUB'
           package com.pocketvr.app;
           public class NativeVRActivity extends android.app.Activity {
-              @Override protected void onCreate(android.os.Bundle b) { super.onCreate(b); finish(); }
+              @Override protected void onCreate(android.os.Bundle b) { super.onCreate(b); startActivity(new android.content.Intent(this, MainActivity.class)); finish(); }   // the web page is the safe way in when the native screen cannot be built
           }
           STUB
           gradle --no-daemon assembleDebug && echo "NOTE=หน้าจอ VR เนทีฟคอมไพล์ไม่ผ่าน (ปิดไว้)" >> "$GITHUB_ENV" && exit 0
