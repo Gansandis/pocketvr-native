@@ -31,6 +31,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private int progUi, uiTex = 0;
     private volatile float[] rotNow = new float[]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};
     public volatile boolean recenter = false;
+    public volatile boolean cinema = false;                // dark room: no camera picture, only the windows marked showInCinema
+    public volatile float eyeShift = 0.12f;                // VR split view: how far each eye's picture is moved towards the nose (fixes a doubled picture)
+    public volatile float sharpen = 0.5f;                  // camera picture sharpening 0..1
+    private boolean shown(Win w) { return w.visible && (!cinema || w.showInCinema); }
     private final float[] mP = new float[16], mM = new float[16];
     private float tanH = 0.65f, tanV = 0.37f;
     private static final float PANEL_D = 1.5f;
@@ -73,7 +77,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public static class Win {
         public final NvContent c;
         public final float widthM;
-        public volatile boolean visible = false, placeReq = false;
+        public volatile boolean visible = false, placeReq = false, showInCinema = false;
+        public volatile float wantScale = 0;                 // size to take when (re)placed in front of the user; 0 = normal
         int texW = 0, texH = 0;
         public volatile float offYaw = 0, offPitch = 0;      // where it appears, relative to the view centre (degrees)
         float[] rot = null;
@@ -93,7 +98,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public Win addWindow(NvContent c, float widthM) {
         Win w = new Win(c, widthM);
         wins.add(w);
-        if (c instanceof NvUi) menuWin = w;
+        if (c instanceof NvUi) { menuWin = w; w.showInCinema = true; }
         return w;
     }
 
@@ -112,7 +117,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         else { menuWin.offYaw = 0; menuWin.offPitch = 0; menuWin.placeReq = true; menuWin.visible = true; if (ui != null) ui.setOpen(true); }
     }
 
-    private boolean anyVisible() { for (Win w : wins) if (w.visible) return true; return false; }
+    private boolean anyVisible() { for (Win w : wins) if (shown(w)) return true; return false; }
+    public void setWinScale(Win w, float s) { w.scale = Math.max(0.5f, Math.min(2.5f, s)); }
 
     private void computeProj() {
         float aspect = (float) sceneW / Math.max(1, sceneH);
@@ -171,7 +177,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             android.opengl.Matrix.transposeM(tA, 0, rn, 0);
             w.rot = tA.clone();
             if (w.offYaw != 0f || w.offPitch != 0f) turnWin(w, rn, -w.offYaw, w.offPitch);
-            w.scale = 1f;
+            w.scale = w.wantScale > 0 ? w.wantScale : 1f;
             w.dist = PANEL_D;
             w.wx = ux; w.wy = uy; w.wz = uz;
             w.placeReq = false;
@@ -212,11 +218,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     private void computePanel() {
         float[] rn = rotNow;
-        if (recenter) { recenter = false; if (menuWin != null) menuWin.placeReq = true; }
+        if (recenter) {
+            recenter = false;
+            if (cinema) { for (Win w : wins) if (w.visible && w.showInCinema) w.placeReq = true; }
+            else if (menuWin != null) menuWin.placeReq = true;
+        }
         computeProj();
         float t = (System.nanoTime() / 1e9f) % 600f;
         smoothUser();
-        for (Win w : wins) if (w.visible) updateWin(w, rn, t);
+        for (Win w : wins) if (shown(w)) updateWin(w, rn, t);
     }
 
     // where the pointing finger meets the window, in that window's picture pixels
@@ -310,8 +320,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCam = prog(
             "attribute vec2 p; uniform mat4 stm; uniform float rf; varying vec2 uv;" +
             "void main(){ gl_Position=vec4(p,0.,1.); vec2 t=p*0.5+0.5; t=mix(t,1.-t,rf); uv=vec2(t.x,1.-t.y); }",
-            "#extension GL_OES_EGL_image_external : require\nprecision mediump float; uniform samplerExternalOES tex; varying vec2 uv;" +
-            "void main(){ gl_FragColor=texture2D(tex,uv); }");
+            "#extension GL_OES_EGL_image_external : require\nprecision mediump float; uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; varying vec2 uv;" +
+            "void main(){ vec4 c=texture2D(tex,uv); if(amt>0.){ vec4 b=(texture2D(tex,uv+vec2(px.x,0.))+texture2D(tex,uv-vec2(px.x,0.))+texture2D(tex,uv+vec2(0.,px.y))+texture2D(tex,uv-vec2(0.,px.y)))*0.25; c=clamp(c+(c-b)*amt,0.,1.); } gl_FragColor=c; }");
         progCol = prog(
             "attribute vec2 p; uniform float ps; void main(){ gl_Position=vec4(p,0.,1.); gl_PointSize=ps; }",
             "precision mediump float; uniform vec4 col; uniform float rnd; void main(){ if (rnd>0.5 && length(gl_PointCoord-0.5)>0.5) discard; gl_FragColor=col; }");
@@ -469,7 +479,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     private void drawWins() {
         for (Win w : wins) {
-            if (!w.visible) continue;
+            if (!shown(w)) continue;
             android.graphics.Bitmap bm = w.c.bitmap();
             if (bm == null) continue;
             boolean d = w.c.takeDirty();
@@ -518,6 +528,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private float rsD0 = 1f;
     private long dragT0 = 0;
     private boolean mpOn = false, mpLatched = false;
+    private long mpT0 = 0, mpTapT = 0;
     private float mpProg = 0, mpNx = 0, mpNy = 0;
 
     private void cursor() {
@@ -530,7 +541,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (lostT == 0) lostT = nowMs;
             // a short loss of the hand (detection blink) must not drop a grabbed window
             if (!(dragWin != null && nowMs - lostT < 400)) { pinching = false; prevPinch = false; endDrag(); }
-            for (Win w : wins) if (w.visible) w.c.update(false, 0, 0, false);
+            for (Win w : wins) if (shown(w)) w.c.update(false, 0, 0, false);
             return;
         }
         lostT = 0;
@@ -594,7 +605,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         final boolean press = selM == 0 ? pinching : (selM == 1 ? pkOn : (pinching || pkOn));
 
         // thumb + middle finger held together for a moment: show / hide the menu
+        boolean mpPrev = mpOn;
         mpOn = mpOn ? (ratioM < 0.32f) : (ratioM < 0.20f && ratio > 0.35f);
+        if (mpOn && !mpPrev) mpT0 = nowMs;
+        if (!mpOn && mpPrev && !mpLatched && nowMs - mpT0 < 500) {        // a quick tap; two quick taps = put the screens back in front of you
+            if (nowMs - mpTapT < 1000) { recenter = true; mpTapT = 0; } else mpTapT = nowMs;
+        }
         if (mpOn && !mpLatched) {
             if (mpSince == 0) mpSince = nowMs;
             mpProg = Math.min(1f, (nowMs - mpSince) / 700f);
@@ -633,7 +649,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (dragWin == null && !mpOn) {
             for (int i = wins.size() - 1; i >= 0; i--) {                 // the one drawn last is in front
                 Win w = wins.get(i);
-                if (!w.visible || !hitWin(w, cnx, cny, o)) continue;
+                if (!shown(w) || !hitWin(w, cnx, cny, o)) continue;
                 if (w.c.inGrip(o[0], o[1])) { gripWin = w; break; }      // a bottom corner: pull it to resize
                 if (w.c.covers(o[0], o[1])) { target = w; break; }
             }
@@ -682,7 +698,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (dragWin != null && !pinching && nowMs - lastPinchT > 250) endDrag();
         prevPinch = pinching;
         for (Win w : wins) {
-            if (!w.visible) continue;
+            if (!shown(w)) continue;
             if (w == target && dragWin == null) w.c.update(true, o[0], o[1], press);
             else w.c.update(false, 0, 0, false);
         }
@@ -946,6 +962,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glUniformMatrix3fv(ul(progPano, "rm"), 1, false, rm3, 0);
             GLES20.glUniform1f(ul(progPano, "lon0"), panoLon0);
             drawQuad(progPano);
+        } else if (cinema) {
+            GLES20.glClearColor(0.01f, 0.01f, 0.015f, 1f);          // the room goes dark: only the screen is left
+            GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         } else {
         GLES20.glUseProgram(progCam);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
@@ -953,6 +972,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform1i(ul(progCam, "tex"), 0);
         GLES20.glUniformMatrix4fv(ul(progCam, "stm"), 1, false, stm, 0);
         GLES20.glUniform1f(ul(progCam, "rf"), rot180 ? 1f : 0f);
+        GLES20.glUniform2f(ul(progCam, "px"), 1f / Math.max(1, imgW), 1f / Math.max(1, imgH));
+        GLES20.glUniform1f(ul(progCam, "amt"), sharpen);
         drawQuad(progCam);
         }
         predictNow(now);
@@ -980,7 +1001,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         int ush = ul(progFin, "sh");
         for (int e = 0; e < eyes; e++) {
             GLES20.glViewport(e * ew, 0, ew, vh);
-            GLES20.glUniform1f(ush, 0f);
+            GLES20.glUniform1f(ush, eyes == 2 ? (e == 0 ? -eyeShift : eyeShift) : 0f);   // each eye's picture is moved towards the nose so its middle sits in front of that lens
             drawQuad(progFin);
         }
     }

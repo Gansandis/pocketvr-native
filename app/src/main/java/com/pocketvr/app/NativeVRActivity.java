@@ -220,9 +220,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         // gallery, 360 viewer and cinema
         video = new NvVideo(this);
         wVideo = rend.addWindow(video, 1.7f);
-        video.onClose = () -> { video.release(); rend.setVisible(wVideo, false, 0f, 0f); };
+        wVideo.showInCinema = true; wKeys.showInCinema = true;
+        video.onClose = () -> { video.release(); rend.setVisible(wVideo, false, 0f, 0f); rend.cinema = false; };
         media = new NvMedia(this);
         wMedia = rend.addWindow(media, 1.3f);
+        wMedia.showInCinema = true;
         media.onClose = () -> { rend.setPano(null); media.panoOn = false; rend.setVisible(wMedia, false, 0f, 0f); };
         media.host = new NvMedia.Host() {
             @Override public void onPano(final android.net.Uri u) {
@@ -237,7 +239,9 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             @Override public void onVideo(android.net.Uri u) {
                 rend.setPano(null); media.panoOn = false;
                 video.open(u);
+                rend.cinema = true;                                       // the room goes dark: only the screen (and the menu) stay
                 rend.setVisible(wVideo, true, 0f, 4f);
+                rend.recenter = true;
                 rend.setVisible(wMedia, false, 0f, 0f);                   // the cinema takes the place of the gallery
             }
         };
@@ -270,6 +274,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         final NvBrowser b = new NvBrowser(this, ui);
         b.kbHost = s -> { kbd.sink = s; kbd.clear(); if (!wKeys.visible) rend.setVisible(wKeys, true, 0f, -28f); };
         final VRRenderer.Win w = rend.addWindow(b, 1.25f);
+        w.showInCinema = true;
         b.onClose = () -> { b.close(); rend.setVisible(w, false, 0f, 0f); if (kbd != null) kbd.sink = null; };
         b.onNewWindow = () -> openBrowser(-1);
         brs[i] = b; bws[i] = w;
@@ -308,6 +313,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             else if (wVideo.visible) { video.onClose.run(); }
             else openGallery();
         }));
+        menu.home.add(new NvUi.Btn("🎬", () -> "โหมดโรงหนัง", () -> rend.cinema ? "ห้องมืด เห็นแค่จอ" : "ปิดอยู่ (เห็นห้องจริง)", () -> rend.cinema, GA, GB, () -> { rend.cinema = !rend.cinema; rend.recenter = true; }));
         menu.home.add(new NvUi.Btn("⌨", () -> "คีย์บอร์ด", () -> wKeys.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wKeys.visible, GA, GB, () -> rend.toggle(wKeys, 0f, -24f)));
         menu.home.add(new NvUi.Btn("⏱", () -> "นาฬิกา/จับเวลา", () -> wClock.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wClock.visible, GA, GB, () -> rend.toggle(wClock, 18f, 0f)));
         menu.home.add(new NvUi.Btn("📈", () -> "สถานะระบบ", () -> wStats.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wStats.visible, GA, GB, () -> rend.toggle(wStats, -18f, 0f)));
@@ -343,6 +349,9 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             if (!motion.calibrating) motion.calStart(); else motion.calEnd(1.0f);
         }));
         cLab.add(new NvUi.Btn("⏱", () -> "หน่วงภาพกล้อง", () -> motion.tsReal ? "ใช้เวลาจากภาพ" : motion.lagMs + " ms (กดเปลี่ยน)", null, GA, GB, () -> motion.lagMs = motion.lagMs < 50 ? 70 : motion.lagMs < 90 ? 110 : motion.lagMs < 130 ? 150 : 30));
+        cDisp.add(new NvUi.Btn("👁", () -> "ภาพซ้อน: ขยับเข้าหาจมูก", () -> String.format("%.2f", rend.eyeShift) + "  (กดเพิ่ม)", () -> rend.stereo, GA, GB, () -> rend.eyeShift = Math.min(0.40f, Math.round((rend.eyeShift + 0.03f) * 100f) / 100f)));
+        cDisp.add(new NvUi.Btn("👁", () -> "ภาพซ้อน: ขยับออกจากจมูก", () -> String.format("%.2f", rend.eyeShift) + "  (กดลด)", () -> rend.stereo, GA, GB, () -> rend.eyeShift = Math.max(-0.20f, Math.round((rend.eyeShift - 0.03f) * 100f) / 100f)));
+        cDisp.add(new NvUi.Btn("✨", () -> "ความคมภาพกล้อง", () -> rend.sharpen <= 0.01f ? "ปิด (เร็วสุด)" : rend.sharpen < 0.45f ? "น้อย" : rend.sharpen < 0.75f ? "กลาง" : "มาก", () -> rend.sharpen > 0.01f, GA, GB, () -> rend.sharpen = rend.sharpen <= 0.01f ? 0.3f : rend.sharpen < 0.45f ? 0.55f : rend.sharpen < 0.75f ? 0.9f : 0f));
         cDisp.add(new NvUi.Btn("🖱", () -> "เคอร์เซอร์", () -> rend.cursorSz == 0 ? "เล็กจาง" : rend.cursorSz == 1 ? "กลาง" : "ใหญ่", null, GA, GB, () -> rend.cursorSz = (rend.cursorSz + 1) % 3));
         menu.dock.add(new NvUi.Btn("🏠", () -> "เมนู", null, () -> menu.open, 0, 0, () -> menu.toggleOpen()));
         menu.dock.add(new NvUi.Btn("🥽", () -> "แยกจอ", null, () -> rend.stereo, 0, 0, () -> rend.stereo = !rend.stereo));

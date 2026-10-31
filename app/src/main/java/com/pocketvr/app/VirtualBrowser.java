@@ -254,7 +254,9 @@ public class VirtualBrowser {
         if (a == MotionEvent.ACTION_DOWN) downTime = t;
         MotionEvent ev = MotionEvent.obtain(downTime, t, a, Math.max(0, Math.min(1, fx)) * w, Math.max(0, Math.min(1, fy)) * h, 0);
         ev.setSource(InputDevice.SOURCE_TOUCHSCREEN);
-        web.dispatchTouchEvent(ev);
+        // while a video is full screen it sits over the page: touches (skip ad, play, seek) must go to it, not to the page behind
+        View tv = fsView != null ? fsView : web;
+        tv.dispatchTouchEvent(ev);
         ev.recycle();
     }
 
