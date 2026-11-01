@@ -54,7 +54,10 @@ public class NvHands {
             HandLandmarkerResult r = lm.detectForVideo(img, lastTs);
             inferMs += ((System.nanoTime() - t0) / 1e6f - inferMs) * 0.2f;
             try { img.close(); } catch (Throwable ignored) { }
-            List<List<NormalizedLandmark>> all = r.landmarks();
+            List<List<NormalizedLandmark>> all = new java.util.ArrayList<>(r.landmarks());
+            if (all.size() > 1) {                                      // keep the two hands in a steady order (left to right in the picture)
+                java.util.Collections.sort(all, (a, b) -> Float.compare(a.isEmpty() ? 0f : a.get(0).x(), b.isEmpty() ? 0f : b.get(0).x()));
+            }
             int n = Math.min(all.size(), 2);
             float[] out = new float[1 + n * 63];
             out[0] = n;

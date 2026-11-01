@@ -56,6 +56,8 @@ public class NvCam {
     public volatile float hFov = 1.15f;           // horizontal field of view of the camera, radians
     public volatile NvMotion motion;
     public volatile long detPaceMs = 0;           // shortest time between two looks for hands
+    public volatile int handsN = 1;               // how many hands to look for (1 or 2; two is slower)
+    private int openedN = 1;
     public volatile int detW = 320;               // width of the picture given to the hand model (bigger = steadier points, slower conversion)
     private long lastSeenHand = 0, lastHandT = 0;
     private int[] pxBuf;
@@ -201,8 +203,10 @@ public class NvCam {
             if (ex == null) { detBusy.set(false); return; }
             ex.execute(() -> {
                 try {
+                    if (handsOpened && openedN != handsN) { hands.close(); handsOpened = false; }      // the number of hands was changed
                     if (!handsOpened) {
-                        handsOpened = hands.open(act.getApplicationContext(), true, 1);
+                        openedN = Math.max(1, Math.min(2, handsN));
+                        handsOpened = hands.open(act.getApplicationContext(), true, openedN);
                         if (!handsOpened) { handsFailed = true; lis.onError("hands: " + hands.error); return; }
                     }
                     float[] res = hands.detect(bmp, ts);

@@ -36,7 +36,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile float sharpen = 0.5f;                  // camera picture sharpening 0..1
     private boolean shown(Win w) { return w.visible && (!cinema || w.showInCinema); }
     private final float[] mP = new float[16], mM = new float[16];
-    private float tanH = 0.65f, tanV = 0.37f;
+    private float tanH = 0.65f, tanV = 0.37f;           // what the windows are drawn with (the field of view you see)
+    private float tanHc = 0.65f, tanVc = 0.37f;         // what the camera picture covers (hands, pointer)
+    private float camScale = 1f;                        // camera picture size relative to the scene (below 1 = smaller, with a dark border)
+    public volatile float vrFov = 80f;                  // VR split view: how wide each eye's view is in degrees; should match the headset lenses
     private static final float PANEL_D = 1.5f;
     private int progPanel, progVid, progPano;
     // ---- 360 picture around the user (replaces the camera picture while it is on) ----
@@ -125,6 +128,18 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float hf = Math.max(0.8f, Math.min(1.9f, cam.hFov));
         tanH = (float) Math.tan(hf / 2f);
         tanV = tanH / aspect;
+        tanHc = tanH; tanVc = tanV;
+        if (stereo && vw > 1 && vh > 1) {
+            // in the VR box every eye looks through a lens with its own field of view. If the picture is drawn with a different one,
+            // the world turns faster or slower than your head (that is what makes you dizzy). So the scene is drawn with the lens' field of view,
+            // and the camera picture is shown at its true angular size inside it.
+            float ea = (float) (vw / 2) / vh;
+            float scx = ea < aspect ? ea / aspect : 1f;
+            float fv = Math.max(40f, Math.min(120f, vrFov));
+            tanH = (float) Math.tan(Math.toRadians(fv) / 2.0) / scx;
+            tanV = tanH / aspect;
+        }
+        camScale = tanHc / tanH;
         float fovy = (float) Math.toDegrees(2.0 * Math.atan(tanV));
         android.opengl.Matrix.perspectiveM(mP, 0, fovy, aspect, 0.05f, 20f);
     }
@@ -233,7 +248,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private boolean hitWin(Win w, float nx, float ny, float[] out) {
         android.graphics.Bitmap bm = w.c.bitmap();
         if (bm == null) return false;
-        float dx = nx * tanH, dy = ny * tanV, dz = -1f;
+        float dx = nx * tanHc, dy = ny * tanVc, dz = -1f;
         float[] mInv = w.inv;
         float ox = mInv[12], oy = mInv[13], oz = mInv[14];
         float Dz = mInv[2] * dx + mInv[6] * dy + mInv[10] * dz;
@@ -318,8 +333,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         panoTex = 0; panoOn = false;
         for (Win w : wins) if (w.c instanceof NvVideo) ((NvVideo) w.c).glLost();
         progCam = prog(
-            "attribute vec2 p; uniform mat4 stm; uniform float rf; varying vec2 uv;" +
-            "void main(){ gl_Position=vec4(p,0.,1.); vec2 t=p*0.5+0.5; t=mix(t,1.-t,rf); uv=vec2(t.x,1.-t.y); }",
+            "attribute vec2 p; uniform mat4 stm; uniform float rf; uniform float zs; varying vec2 uv;" +
+            "void main(){ gl_Position=vec4(p*zs,0.,1.); vec2 t=p*0.5+0.5; t=mix(t,1.-t,rf); uv=vec2(t.x,1.-t.y); }",
             "#extension GL_OES_EGL_image_external : require\nprecision mediump float; uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; varying vec2 uv;" +
             "void main(){ vec4 c=texture2D(tex,uv); if(amt>0.){ vec4 b=(texture2D(tex,uv+vec2(px.x,0.))+texture2D(tex,uv-vec2(px.x,0.))+texture2D(tex,uv+vec2(0.,px.y))+texture2D(tex,uv-vec2(0.,px.y)))*0.25; c=clamp(c+(c-b)*amt,0.,1.); } gl_FragColor=c; }");
         progCol = prog(
@@ -531,8 +546,38 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private long mpT0 = 0, mpTapT = 0;
     private float mpProg = 0, mpNx = 0, mpNy = 0;
 
+    // with two hands in view, one of them drives the pointer: the one that is pinching / poking, otherwise the one nearest to where the pointer was
+    private int selHand = 0, handBase = 0;
+    private float selTx = 0, selTy = 0;
+    private final float[] oneHand = new float[64];
+    private float[] pickHand(float[] d) {
+        int n = d.length > 0 ? (int) d[0] : 0;
+        handBase = 0;
+        if (n <= 1 || d.length < 1 + n * 63) { selHand = 0; return d; }
+        float ar = (float) Math.max(1, imgW) / Math.max(1, imgH);
+        int best = 0; float bestScore = 1e9f;
+        for (int i = 0; i < n; i++) {
+            int b = 1 + i * 63;
+            float tx = d[b + 24], ty = d[b + 25], ax = d[b + 12], ay = d[b + 13], kx = d[b + 36], ky = d[b + 37];
+            float size = Math.max(1e-3f, (float) Math.hypot((d[b + 27] - d[b]) * ar, d[b + 28] - d[b + 1]));
+            float rp = (float) Math.hypot((tx - ax) * ar, ty - ay) / size, rm = (float) Math.hypot((kx - ax) * ar, ky - ay) / size;
+            boolean active = rp < 0.25f || rm < 0.25f;
+            float score = (float) Math.hypot((tx - selTx) * ar, ty - selTy);
+            if (active) score -= 10f;
+            if (i == selHand) score -= 0.08f;                          // a little loyalty to the hand already in use
+            if (i == selHand && active) score -= 10f;                  // keep the hand that is in the middle of a gesture
+            if (score < bestScore) { bestScore = score; best = i; }
+        }
+        selHand = best;
+        handBase = best * 63;
+        oneHand[0] = 1f;
+        System.arraycopy(d, 1 + best * 63, oneHand, 1, 63);
+        selTx = oneHand[25]; selTy = oneHand[26];
+        return oneHand;
+    }
+
     private void cursor() {
-        float[] r = disp;
+        float[] r = pickHand(disp);
         long nowMs = System.currentTimeMillis();
         boolean hand = r.length >= 64 && r[0] >= 1;
         if (!hand) {
@@ -575,7 +620,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             pkT2 = nowMs;
             pkDepthF = !pkInit ? depthRaw : pkDepthF + (depthRaw - pkDepthF) * (1f - (float) Math.exp(-dtF / 0.10f));
             float depth = pkDepthF;
-            if (vel.length > 26) handSpd = (float) Math.hypot(vel[1 + 8 * 3], vel[1 + 8 * 3 + 1]);    // how fast the fingertip crosses the picture (picture widths per second)
+            if (vel.length > handBase + 27) handSpd = (float) Math.hypot(vel[1 + handBase + 8 * 3], vel[1 + handBase + 8 * 3 + 1]);    // how fast the fingertip crosses the picture (picture widths per second)
             float d8 = (float) Math.hypot((tx - wx) * ar, ty - wy);
             float d6 = (float) Math.hypot((r[1 + 6 * 3] - wx) * ar, r[1 + 6 * 3 + 1] - wy);
             boolean idxOut = !pinching && ratio > 0.30f && d8 > d6 * 1.1f;
@@ -637,11 +682,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float dl = (float) Math.hypot(ddx, ddy);
             float stp = Math.min(dl * 0.55f, 0.10f);                     // smooth, and never a sudden big jump
             if (dl > 1e-5f) { dnx += ddx / dl * stp; dny += ddy / dl * stp; }
-            rayYaw = (float) Math.toDegrees(Math.atan(dnx * tanH));
-            rayPitch = (float) Math.toDegrees(Math.atan(dny * tanV));
+            rayYaw = (float) Math.toDegrees(Math.atan(dnx * tanHc));
+            rayPitch = (float) Math.toDegrees(Math.atan(dny * tanVc));
         } else {
-            rayYaw = (float) Math.toDegrees(Math.atan(cnx * tanH));
-            rayPitch = (float) Math.toDegrees(Math.atan(cny * tanV));
+            rayYaw = (float) Math.toDegrees(Math.atan(cnx * tanHc));
+            rayPitch = (float) Math.toDegrees(Math.atan(cny * tanVc));
         }
 
         float[] o = new float[2];
@@ -659,7 +704,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (motion != null && motion.enabled) rebase(gripWin, sux, suy, suz);
             dragWin = gripWin; resizing = true;
             dnx = tnx; dny = tny;
-            rayYaw = (float) Math.toDegrees(Math.atan(dnx * tanH)); rayPitch = (float) Math.toDegrees(Math.atan(dny * tanV));
+            rayYaw = (float) Math.toDegrees(Math.atan(dnx * tanHc)); rayPitch = (float) Math.toDegrees(Math.atan(dny * tanVc));
             rsD0 = Math.max(3f, (float) Math.hypot(rayYaw - gripWin.yawA, rayPitch - gripWin.pitchA));
             gripWin.dragS0 = gripWin.scale;
             gripWin.c.setDragging(true);
@@ -669,7 +714,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (motion != null && motion.enabled) rebase(target, sux, suy, suz);
             dragWin = target;
             dnx = tnx; dny = tny;
-            float gy = (float) Math.toDegrees(Math.atan(dnx * tanH)), gp = (float) Math.toDegrees(Math.atan(dny * tanV));
+            float gy = (float) Math.toDegrees(Math.atan(dnx * tanHc)), gp = (float) Math.toDegrees(Math.atan(dny * tanVc));
             rayYaw = gy; rayPitch = gp;
             target.dragYawOff = target.yawA - gy;
             target.dragPitchOff = target.pitchA - gp;
@@ -707,13 +752,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void drawCursor() {
         float u = sceneH / 540f;
         if (mpProg > 0f) {                                   // growing dot while the menu gesture is being held
-            float x = mpNx * sceneW / 2f, y = mpNy * sceneH / 2f;
+            float x = mpNx * sceneW / 2f * camScale, y = mpNy * sceneH / 2f * camScale;
             aaBegin();
             aaSeg(x, y, x, y, (8f + 20f * mpProg) * u);
             aaFlush(1f, 0.7f, 0.15f);
         }
         if (!curOk || !anyVisible()) return;
-        float x = cnx * sceneW / 2f, y = cny * sceneH / 2f;
+        float x = cnx * sceneW / 2f * camScale, y = cny * sceneH / 2f * camScale;
         // small and faint so it does not cover what you are pointing at; it fills in and turns orange when pressed
         float[] ro = {8f, 12f, 18f}, ri = {2.6f, 4f, 6f}, fo = {0.55f, 0.7f, 1f};
         int cs = Math.max(0, Math.min(2, cursorSz));
@@ -769,7 +814,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             for (int k = 0; k < 21; k++) {
                 float hx = r[1 + i * 63 + k * 3], hy = r[1 + i * 63 + k * 3 + 1];
                 if (rot180) { hx = 1f - hx; hy = 1f - hy; }
-                X[k] = (hx * 2f - 1f) * hwS; Y[k] = (1f - hy * 2f) * hhS;
+                X[k] = (hx * 2f - 1f) * hwS * camScale; Y[k] = (1f - hy * 2f) * hhS * camScale;
             }
             float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
             float hw = Math.max(3f, size * 0.115f);
@@ -798,7 +843,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             for (int k = 0; k < 21; k++) {
                 float hx = r[1 + i * 63 + k * 3], hy = r[1 + i * 63 + k * 3 + 1];
                 if (rot180) { hx = 1f - hx; hy = 1f - hy; }
-                float px = (hx * 2f - 1f) * hwS + hwS, py = (1f - hy * 2f) * hhS + hhS;
+                float px = (hx * 2f - 1f) * hwS * camScale + hwS, py = (1f - hy * 2f) * hhS * camScale + hhS;
                 bx0 = Math.min(bx0, px); bx1 = Math.max(bx1, px); by0 = Math.min(by0, py); by1 = Math.max(by1, py);
             }
             sz0 = Math.max(bx1 - bx0, by1 - by0);
@@ -883,7 +928,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             for (int k = 0; k < 21; k++) {
                 float hx = r[1 + i * 63 + k * 3], hy = r[1 + i * 63 + k * 3 + 1];
                 if (rot180) { hx = 1f - hx; hy = 1f - hy; }
-                X[k] = (hx * 2f - 1f) * hwS; Y[k] = (1f - hy * 2f) * hhS;
+                X[k] = (hx * 2f - 1f) * hwS * camScale; Y[k] = (1f - hy * 2f) * hhS * camScale;
             }
             aaBegin();
             for (int b = 0; b < BONES.length; b += 2) aaSeg(X[BONES[b]], Y[BONES[b]], X[BONES[b + 1]], Y[BONES[b + 1]], 5f * u);
@@ -966,7 +1011,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glClearColor(0.01f, 0.01f, 0.015f, 1f);          // the room goes dark: only the screen is left
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         } else {
+        if (camScale < 0.999f) { GLES20.glClearColor(0f, 0f, 0f, 1f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT); }      // smaller camera picture: dark border
         GLES20.glUseProgram(progCam);
+        GLES20.glUniform1f(ul(progCam, "zs"), camScale);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, camTex[0]);
         GLES20.glUniform1i(ul(progCam, "tex"), 0);
