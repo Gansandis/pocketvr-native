@@ -126,6 +126,19 @@ public class NvUi implements NvContent {
         return true;
     }
 
+    private Btn pressTgt = null;
+    private float pressX, pressY;
+    private long pressT = 0;
+    private boolean swiped = false;
+
+    /** turn the page (or move to the next category when there is just one page) */
+    private void flip(int dir) {
+        if (pages > 1) { page = (page + pages + dir) % pages; }
+        else { tab = Math.max(0, Math.min(tabs.size() - 1, tab + dir)); page = 0; }
+        layout();
+        dirty = true;
+    }
+
     private void layout() {
         float u = H / 540f;
         visible.clear();
@@ -288,25 +301,22 @@ public class NvUi implements NvContent {
             cv.drawRoundRect(bd, 14 * u, 14 * u, p);
             p.setShader(null);
             text(b.emoji, bd.centerX(), bd.centerY(), bs * 0.52f, 0xFFFFFFFF, 0);
-            float right = b.on != null ? 64 * u + 22 * u : 34 * u;
+            float right = 34 * u;
             float lx = bd.right + 14 * u, lw = r.right - lx - right;
             if (b.sub != null) {
                 textA(b.label.get(), lx, r.centerY() - h * 0.16f, 22 * u, 0xFFFFFFFF, lw, Paint.Align.LEFT);
                 textA(b.sub.get(), lx, r.centerY() + h * 0.22f, 15 * u, 0xFFB8BEC8, lw, Paint.Align.LEFT);
             } else textA(b.label.get(), lx, r.centerY(), 22 * u, 0xFFFFFFFF, lw, Paint.Align.LEFT);
-            if (b.on != null) {
-                RectF sw = new RectF(r.right - 16 * u - 64 * u, r.centerY() - 16 * u, r.right - 16 * u, r.centerY() + 16 * u);
-                round(sw, on ? 0xFF2E6BFF : 0xFF3A3E4A, 16 * u);
-                p.setColor(0xFFFFFFFF);
-                cv.drawCircle(on ? sw.right - 16 * u : sw.left + 16 * u, sw.centerY(), 12 * u, p);
-            } else text("›", r.right - 20 * u, r.centerY(), 32 * u, 0xFFB8BEC8, 0);
+            if (on) stroke(r, 0xCC4D8DFF, 2.5f * u, 18 * u);                   // opened / switched on: a blue outline, no switch
+            text("›", r.right - 20 * u, r.centerY(), 32 * u, on ? 0xFF9ED8FF : 0xFFB8BEC8, 0);
         }
         if (pages > 1) {
             for (Btn b : new Btn[]{prevB, nextB}) {
                 round(b.r, hover == b ? 0xFF22B8CF : 0xFF2B2E38, 15 * u);
                 text(b.label.get(), b.r.centerX(), b.r.centerY(), 22 * u, 0xFFFFFFFF, 0);
             }
-            text((page + 1) + "/" + pages, (prevB.r.right + nextB.r.left) / 2f, prevB.r.centerY(), 14 * u, 0xFFB8BEC8, 0);
+            float dx0 = (prevB.r.right + nextB.r.left) / 2f - (pages - 1) * 9 * u;
+            for (int i = 0; i < pages && i < 12; i++) { p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(i == page ? 0xFFFFFFFF : 0x66FFFFFF); cv.drawCircle(dx0 + i * 18 * u, prevB.r.centerY(), (i == page ? 5.5f : 4f) * u, p); }
         }
     }
 
@@ -328,15 +338,30 @@ public class NvUi implements NvContent {
         if (h != null) { lastH = h; lastHT = System.currentTimeMillis(); }
         if (h != hover) { hover = h; dirty = true; }
         boolean edge = pinch && !wasPinch;
+        boolean released = !pinch && wasPinch;
         wasPinch = pinch;
         long now = System.currentTimeMillis();
         // the pointer often slips a little just as the fingers close: use what was under it a moment ago
         Object tgt = h != null ? h : ((lastH != null && now - lastHT < 250) ? lastH : null);
-        if (edge && tgt != null && now - lastAct > 400) {
-            lastAct = now;
-            Btn b = (Btn) tgt;
-            try { if (b.act != null) b.act.run(); } catch (Throwable ignored) { }
-            dirty = true;
+        float u = H / 540f;
+        if (edge) { pressTgt = (Btn) tgt; pressX = x; pressY = y; pressT = now; swiped = false; }
+        if (pinch && valid && !swiped && open && pH > 0 && pressT != 0) {
+            // drag left / right with the fingers closed: next / previous page (or category when there is only one page)
+            float dx = x - pressX, dy = y - pressY;
+            if (Math.abs(dx) > 70 * u && Math.abs(dx) > 1.6f * Math.abs(dy)) {
+                swiped = true; pressTgt = null;
+                if (dx < 0) flip(1); else flip(-1);
+            }
         }
+        if (released) {
+            Btn b = pressTgt; pressTgt = null;
+            if (b != null && !swiped && (valid || now - lastHT < 300) && now - pressT < 1800 && now - lastAct > 300) {
+                lastAct = now;
+                try { if (b.act != null) b.act.run(); } catch (Throwable ignored) { }
+                dirty = true;
+            }
+            pressT = 0;
+        }
+        if (!valid && !pinch) pressTgt = null;
     }
 }

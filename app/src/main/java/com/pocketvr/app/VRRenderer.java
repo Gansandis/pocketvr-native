@@ -23,6 +23,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private final NvCam cam;
     public volatile boolean stereo = true;
     public volatile int lens = 1;
+    public volatile float chroma = 0f;                    // lens colour fringes (red / blue edges): the three colours are drawn a hair apart at the edges, the other way round
     public volatile float fps = 0;
     public volatile boolean predict = true;
     public volatile int skel = 1;           // 0 off, 1 skeleton, 2 glowing outline (like the web version)
@@ -383,9 +384,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "precision mediump float; uniform vec4 col; uniform float rnd; void main(){ if (rnd>0.5 && length(gl_PointCoord-0.5)>0.5) discard; gl_FragColor=col; }");
         progFin = prog(
             "attribute vec2 p; varying vec2 c; void main(){ gl_Position=vec4(p,0.,1.); c=p; }",
-            "precision mediump float; uniform sampler2D tex; uniform vec2 sc; uniform float k; uniform float sh; varying vec2 c;" +
+            "precision mediump float; uniform sampler2D tex; uniform vec2 sc; uniform float k; uniform float sh; uniform float ca; varying vec2 c;" +
             "void main(){ vec2 q=c; q.x+=sh; float r2=dot(q,q); q*=1.+k*r2; vec2 uv=0.5+0.5*q*sc;" +
-            " if(uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.){ gl_FragColor=vec4(0.,0.,0.,1.); } else { gl_FragColor=vec4(texture2D(tex,uv).rgb,1.); } }");
+            " if(uv.x<0.||uv.x>1.||uv.y<0.||uv.y>1.){ gl_FragColor=vec4(0.,0.,0.,1.); return; }" +
+            " if(abs(ca)<0.0005){ gl_FragColor=vec4(texture2D(tex,uv).rgb,1.); return; }" +
+            " vec2 ur=0.5+0.5*q*(1.+ca*r2)*sc, ub=0.5+0.5*q*(1.-ca*r2)*sc;" +
+            " gl_FragColor=vec4(texture2D(tex,clamp(ur,0.,1.)).r, texture2D(tex,uv).g, texture2D(tex,clamp(ub,0.,1.)).b, 1.); }");
         progUi = prog(
             "attribute vec2 p; varying vec2 uv; void main(){ gl_Position=vec4(p,0.,1.); uv=vec2(p.x*0.5+0.5, 0.5-p.y*0.5); }",
             "precision mediump float; uniform sampler2D tex; varying vec2 uv; void main(){ gl_FragColor=texture2D(tex,uv); }");
@@ -1101,6 +1105,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float scx = ea < sa ? ea / sa : 1f, scy = ea < sa ? 1f : sa / ea;
         GLES20.glUniform2f(ul(progFin, "sc"), scx, scy);
         GLES20.glUniform1f(ul(progFin, "k"), LENS_K[Math.max(0, Math.min(3, lens))]);
+        GLES20.glUniform1f(ul(progFin, "ca"), stereo ? chroma : 0f);
         int ush = ul(progFin, "sh");
         for (int e = 0; e < eyes; e++) {
             GLES20.glViewport(e * ew, 0, ew, vh);

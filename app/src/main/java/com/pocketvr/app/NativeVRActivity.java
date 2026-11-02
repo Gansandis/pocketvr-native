@@ -339,6 +339,9 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.step("🔭", "มุมมองต่อตา (ให้ตรงกับเลนส์แว่น)", () -> Math.round(rend.vrFov) + " °",
                 () -> rend.vrFov = Math.max(50f, rend.vrFov - 5f),
                 () -> rend.vrFov = Math.min(110f, rend.vrFov + 5f));
+        s.step("🌈", "แก้ขอบสีแดง/ฟ้า (สีเหลื่อมจากเลนส์)", () -> String.format("%+.3f", rend.chroma),
+                () -> rend.chroma = Math.max(-0.06f, Math.round((rend.chroma - 0.005f) * 1000f) / 1000f),
+                () -> rend.chroma = Math.min(0.06f, Math.round((rend.chroma + 0.005f) * 1000f) / 1000f));
         s.toggle("🎯", "ชดเชยภาพกล้องตามการหันหัว (ลดหน่วง)", () -> rend.reproj, () -> rend.reproj = !rend.reproj);
         s.step("🕐", "ความหน่วงของภาพกล้อง (ปรับให้ภาพนิ่งตอนหันหัว)", () -> rend.camLagMs + " ms",
                 () -> rend.camLagMs = Math.max(0, rend.camLagMs - 10),
@@ -379,13 +382,13 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     // ================= saved settings (kept when the app is closed) =================
-    private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand"};
+    private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma"};
     private double[] defaults;
     private double[] lastSaved;
 
     private double[] snapPrefs() {
         return new double[]{rend.sel, rend.pokeS, rend.predict ? 1 : 0, cam.detW, rend.floaty ? 1 : 0, NvUi.glass, rend.cursorSz, rend.skel, hudOn ? 1 : 0,
-                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs, rend.mainHand};
+                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs, rend.mainHand, rend.chroma};
     }
 
     private void applyPrefs(double[] v) {
@@ -393,7 +396,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         NvUi.glass = (int) v[5]; rend.cursorSz = (int) v[6]; rend.skel = (int) v[7]; hudOn = v[8] > 0.5;
         rend.sharpen = (float) v[9]; rend.stereo = v[10] > 0.5; rend.lens = (int) v[11]; rend.eyeShift = (float) v[12]; compass = v[13] > 0.5;
         motion.depthM = (float) v[14]; motion.lagMs = (int) v[15]; cam.handsN = Math.max(1, Math.min(2, (int) v[16])); rend.vrFov = (float) Math.max(50, Math.min(110, v[17]));
-        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19])); rend.mainHand = v[20] > 0.5 ? 1 : 0;
+        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19])); rend.mainHand = v[20] > 0.5 ? 1 : 0; rend.chroma = (float) Math.max(-0.06, Math.min(0.06, v[21]));
     }
 
     // ----- where the windows were left (turn, height, size, distance) -----
