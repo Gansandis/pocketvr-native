@@ -38,6 +38,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private final float[] mP = new float[16], mM = new float[16];
     private float tanH = 0.65f, tanV = 0.37f;           // what the windows are drawn with (the field of view you see)
     private float tanHc = 0.65f, tanVc = 0.37f;         // what the camera picture covers (hands, pointer)
+    private float winZoom = 1f;                          // windows are drawn this much bigger in the VR split view
     private float camScale = 1f;                        // camera picture size relative to the scene (below 1 = smaller, with a dark border)
     public volatile float vrFov = 80f;                  // VR split view: how wide each eye's view is in degrees; should match the headset lenses
     private static final float PANEL_D = 1.5f;
@@ -148,6 +149,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         tanH = (float) Math.tan(hf / 2f);
         tanV = tanH / aspect;
         tanHc = tanH; tanVc = tanV;
+        float tanBase = tanH;
+        winZoom = 1f;
         if (stereo && vw > 1 && vh > 1) {
             // in the VR box every eye looks through a lens with its own field of view. If the picture is drawn with a different one,
             // the world turns faster or slower than your head (that is what makes you dizzy). So the scene is drawn with the lens' field of view,
@@ -157,6 +160,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float fv = Math.max(40f, Math.min(120f, vrFov));
             tanH = (float) Math.tan(Math.toRadians(fv) / 2.0) / scx;
             tanV = tanH / aspect;
+            winZoom = Math.max(1f, Math.min(2.2f, tanH / tanBase)) * 1.2f;   // a wider view makes windows look smaller: make them bigger by the same amount
         }
         // the camera picture always fills the whole eye (a small picture with black borders is worse than a slight zoom),
         // so hands, cursor and pointer use the same mapping as the picture
@@ -280,7 +284,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float t = -oz / Dz;
         if (t <= 0) return false;
         float lx = ox + t * Dx, ly = oy + t * Dy;
-        float pw = w.widthM * w.scale;
+        float pw = w.widthM * w.scale * winZoom;
         float ph = pw * bm.getHeight() / bm.getWidth();
         float u = lx / pw + 0.5f, v = 0.5f - ly / ph;
         if (u < -0.05f || u > 1.05f || v < -0.05f || v > 1.05f) return false;
@@ -501,7 +505,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (v.vw <= 0 || v.vh <= 0) return;
         float wa = (float) NvVideo.W / NvVideo.VH, va = (float) v.vw / v.vh;
         float fx = va > wa ? 1f : wa / va, fy = va > wa ? va / wa : 1f;
-        float pw = w.widthM * w.scale;
+        float pw = w.widthM * w.scale * winZoom;
         float hh = pw * bm.getHeight() / bm.getWidth() / 2f;
         float fr = (float) NvVideo.VH / bm.getHeight();
         GLES20.glDisable(GLES20.GL_BLEND);
@@ -553,7 +557,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, w.tex);
             GLES20.glUniform1i(ul(progPanel, "tex"), 0);
             GLES20.glUniformMatrix4fv(ul(progPanel, "mvp"), 1, false, w.mvp, 0);
-            float pw = w.widthM * w.scale;
+            float pw = w.widthM * w.scale * winZoom;
             GLES20.glUniform2f(ul(progPanel, "hs"), pw / 2f, pw * bm.getHeight() / bm.getWidth() / 2f);
             drawQuad(progPanel);
             GLES20.glDisable(GLES20.GL_BLEND);
