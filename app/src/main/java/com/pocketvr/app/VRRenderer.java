@@ -53,7 +53,26 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     /** a whole-sky (equirectangular) picture to look around in; null = back to the camera */
     public void setPano(android.graphics.Bitmap b) { panoBmp = b; panoCmd = b == null ? 2 : 1; }
     private float cnx = 0, cny = 0;
-    public void setRotation(float[] m) { rotNow = m.clone(); }
+    public void setRotation(float[] m) {
+        float[] c = m.clone(); rotNow = c;
+        synchronized (rhLock) { rhT[rhI] = System.nanoTime(); rhM[rhI] = c; rhI = (rhI + 1) % rhT.length; }
+    }
+    // camera picture timewarp: the picture is ~100 ms old when it is shown, so it is turned by how far the head has turned since it was taken
+    public volatile boolean reproj = true;
+    public volatile int camLagMs = 80;
+    private final Object rhLock = new Object();
+    private final long[] rhT = new long[160];
+    private final float[][] rhM = new float[160][];
+    private int rhI = 0;
+    private float[] frameRot = null;
+    private final float[] dm3 = new float[9];
+    private float[] rotBefore(long t) {
+        synchronized (rhLock) {
+            float[] best = null; long bt = Long.MIN_VALUE;
+            for (int i = 0; i < rhT.length; i++) if (rhM[i] != null && rhT[i] <= t && rhT[i] > bt) { bt = rhT[i]; best = rhM[i]; }
+            return best;
+        }
+    }
     public float[] rotCopy() { return rotNow; }
     public volatile NvMotion motion;
     private final float[] tE = new float[16], tF = new float[16];
@@ -139,7 +158,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             tanH = (float) Math.tan(Math.toRadians(fv) / 2.0) / scx;
             tanV = tanH / aspect;
         }
-        camScale = tanHc / tanH;
+        // the camera picture always fills the whole eye (a small picture with black borders is worse than a slight zoom),
+        // so hands, cursor and pointer use the same mapping as the picture
+        tanHc = tanH; tanVc = tanV;
+        camScale = 1f;
         float fovy = (float) Math.toDegrees(2.0 * Math.atan(tanV));
         android.opengl.Matrix.perspectiveM(mP, 0, fovy, aspect, 0.05f, 20f);
     }
@@ -333,10 +355,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         panoTex = 0; panoOn = false;
         for (Win w : wins) if (w.c instanceof NvVideo) ((NvVideo) w.c).glLost();
         progCam = prog(
-            "attribute vec2 p; uniform mat4 stm; uniform float rf; uniform float zs; varying vec2 uv;" +
-            "void main(){ gl_Position=vec4(p*zs,0.,1.); vec2 t=p*0.5+0.5; t=mix(t,1.-t,rf); uv=vec2(t.x,1.-t.y); }",
-            "#extension GL_OES_EGL_image_external : require\nprecision mediump float; uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; varying vec2 uv;" +
-            "void main(){ vec4 c=texture2D(tex,uv); if(amt>0.){ vec4 b=(texture2D(tex,uv+vec2(px.x,0.))+texture2D(tex,uv-vec2(px.x,0.))+texture2D(tex,uv+vec2(0.,px.y))+texture2D(tex,uv-vec2(0.,px.y)))*0.25; c=clamp(c+(c-b)*amt,0.,1.); } gl_FragColor=c; }");
+            "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
+            "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
+            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; varying vec2 pp;" +
+            "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
+            " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.); return; }" +
+            " vec2 t=q*0.5+0.5; t=mix(t,1.-t,rf); vec2 uv=vec2(t.x,1.-t.y); vec4 c=texture2D(tex,uv);" +
+            " if(amt>0.){ vec4 b=(texture2D(tex,uv+vec2(px.x,0.))+texture2D(tex,uv-vec2(px.x,0.))+texture2D(tex,uv+vec2(0.,px.y))+texture2D(tex,uv-vec2(0.,px.y)))*0.25; c=clamp(c+(c-b)*amt,0.,1.); } gl_FragColor=c; }");
         progCol = prog(
             "attribute vec2 p; uniform float ps; void main(){ gl_Position=vec4(p,0.,1.); gl_PointSize=ps; }",
             "precision mediump float; uniform vec4 col; uniform float rnd; void main(){ if (rnd>0.5 && length(gl_PointCoord-0.5)>0.5) discard; gl_FragColor=col; }");
@@ -961,6 +986,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         synchronized (lock) { upd = newFrame; newFrame = false; }
         if (upd && st != null) {
             try { st.updateTexImage(); st.getTransformMatrix(stm); } catch (Throwable ignored) { }
+            frameRot = reproj ? rotBefore(System.nanoTime() - (long) camLagMs * 1_000_000L) : null;
         }
         int pc = panoCmd;
         if (pc != 0) {
@@ -1014,6 +1040,18 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (camScale < 0.999f) { GLES20.glClearColor(0f, 0f, 0f, 1f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT); }      // smaller camera picture: dark border
         GLES20.glUseProgram(progCam);
         GLES20.glUniform1f(ul(progCam, "zs"), camScale);
+        float[] fr = frameRot, rn0 = rotNow;
+        boolean wp = reproj && fr != null && rn0 != null;
+        if (wp) {
+            for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) {
+                float sum = 0f;
+                for (int k = 0; k < 3; k++) sum += fr[k * 4 + i] * rn0[k * 4 + j];
+                dm3[j * 3 + i] = sum;
+            }
+            GLES20.glUniformMatrix3fv(ul(progCam, "dm"), 1, false, dm3, 0);
+            GLES20.glUniform2f(ul(progCam, "tn"), tanH, tanV);
+        }
+        GLES20.glUniform1f(ul(progCam, "wp"), wp ? 1f : 0f);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, camTex[0]);
         GLES20.glUniform1i(ul(progCam, "tex"), 0);
