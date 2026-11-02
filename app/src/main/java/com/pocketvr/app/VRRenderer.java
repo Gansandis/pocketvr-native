@@ -101,6 +101,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         public final NvContent c;
         public final float widthM;
         public volatile boolean visible = false, placeReq = false, showInCinema = false;
+        public volatile boolean hasSaved = false;            // the user moved / resized it once: remember where, and put it back there next time
+        public volatile float svYaw = 0, svPitch = 0, svScale = 1f, svDist = 1.5f, placeDist = 0f;
         public volatile float wantScale = 0;                 // size to take when (re)placed in front of the user; 0 = normal
         int texW = 0, texH = 0;
         public volatile float offYaw = 0, offPitch = 0;      // where it appears, relative to the view centre (degrees)
@@ -128,6 +130,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     /** show / hide a window (it appears in front of you, shifted by the given angles) */
     public void setVisible(Win w, boolean v, float offYaw, float offPitch) {
         w.offYaw = offYaw; w.offPitch = offPitch;
+        if (v && !w.visible && w.hasSaved) { w.offYaw = w.svYaw; w.offPitch = w.svPitch; w.wantScale = w.svScale; w.placeDist = w.svDist; }
         if (v && !w.visible) w.placeReq = true;
         w.visible = v;
     }
@@ -137,7 +140,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void toggleMenuGL() {
         if (menuWin == null) return;
         if (menuWin.visible) { menuWin.visible = false; if (dragWin == menuWin) endDrag(); }
-        else { menuWin.offYaw = 0; menuWin.offPitch = 0; menuWin.placeReq = true; menuWin.visible = true; if (ui != null) ui.setOpen(true); }
+        else {
+            menuWin.offYaw = menuWin.hasSaved ? menuWin.svYaw : 0; menuWin.offPitch = menuWin.hasSaved ? menuWin.svPitch : 0;
+            if (menuWin.hasSaved) { menuWin.wantScale = menuWin.svScale; menuWin.placeDist = menuWin.svDist; }
+            menuWin.placeReq = true; menuWin.visible = true; if (ui != null) ui.setOpen(true); }
     }
 
     private boolean anyVisible() { for (Win w : wins) if (shown(w)) return true; return false; }
@@ -219,7 +225,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             w.rot = tA.clone();
             if (w.offYaw != 0f || w.offPitch != 0f) turnWin(w, rn, -w.offYaw, w.offPitch);
             w.scale = w.wantScale > 0 ? w.wantScale : 1f;
-            w.dist = PANEL_D;
+            w.dist = w.placeDist > 0f ? w.placeDist : PANEL_D;
             w.wx = ux; w.wy = uy; w.wz = uz;
             w.placeReq = false;
         }
@@ -261,8 +267,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float[] rn = rotNow;
         if (recenter) {
             recenter = false;
-            if (cinema) { for (Win w : wins) if (w.visible && w.showInCinema) w.placeReq = true; }
-            else if (menuWin != null) menuWin.placeReq = true;
+            if (cinema) { for (Win w : wins) if (w.visible && w.showInCinema) { w.placeReq = true; w.placeDist = 0f; } }
+            else if (menuWin != null) { menuWin.placeReq = true; menuWin.placeDist = 0f; }
         }
         computeProj();
         float t = (System.nanoTime() / 1e9f) % 600f;
@@ -294,7 +300,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     private void endDrag() {
-        if (dragWin != null) dragWin.c.setDragging(false);
+        if (dragWin != null) {
+            Win dw = dragWin;
+            if (dw.rot != null && !Float.isNaN(dw.yawA) && !Float.isNaN(dw.pitchA)) {
+                dw.svYaw = dw.yawA; dw.svPitch = dw.pitchA; dw.svScale = dw.scale; dw.svDist = dw.dist; dw.hasSaved = true;
+            }
+            dw.c.setDragging(false);
+        }
         dragWin = null;
         resizing = false;
     }
@@ -576,6 +588,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private float mpProg = 0, mpNx = 0, mpNy = 0;
 
     // with two hands in view, one of them drives the pointer: the one that is pinching / poking, otherwise the one nearest to where the pointer was
+    public volatile int mainHand = 0;                     // with two hands in view: 0 = the left hand drives the pointer, 1 = the right hand
     private int selHand = 0, handBase = 0;
     private float selTx = 0, selTy = 0;
     private final float[] oneHand = new float[64];
@@ -593,6 +606,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             boolean active = rp < 0.25f || rm < 0.25f;
             float score = (float) Math.hypot((tx - selTx) * ar, ty - selTy);
             if (active) score -= 10f;
+            if (i == (n == 2 ? ((mainHand == 0) != rot180 ? 0 : 1) : i)) score -= 0.5f;     // the chosen main hand (hands are sorted left to right in the picture)
             if (i == selHand) score -= 0.08f;                          // a little loyalty to the hand already in use
             if (i == selHand && active) score -= 10f;                  // keep the hand that is in the middle of a gesture
             if (score < bestScore) { bestScore = score; best = i; }
@@ -625,7 +639,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float kx = r[1 + 12 * 3], ky = r[1 + 12 * 3 + 1];
         float wx = r[1], wy = r[2], mx = r[1 + 9 * 3], my = r[1 + 9 * 3 + 1];
         float size = (float) Math.hypot((mx - wx) * ar, my - wy);
-        sizeEma = sizeEma <= 0f ? size : sizeEma + (size - sizeEma) * 0.15f;
+        sizeEma = sizeEma <= 0f ? size : sizeEma + (size - sizeEma) * (dragWin != null ? 0.35f : 0.15f);
         // while moving a window the pointer is the middle of the knuckles: it stays steady when the fingers pinch
         float kxn = (r[1 + 5 * 3] + r[1 + 9 * 3] + r[1 + 13 * 3]) / 3f, kyn = (r[1 + 5 * 3 + 1] + r[1 + 9 * 3 + 1] + r[1 + 13 * 3 + 1]) / 3f;
         if (rot180) { kxn = 1f - kxn; kyn = 1f - kyn; }
@@ -760,13 +774,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float tg = Math.max(0.5f, Math.min(2.5f, dragWin.dragS0 * rd / rsD0));
             dragWin.scale += (tg - dragWin.scale) * 0.3f;
         }
-        if (dragWin != null && !resizing && pinching && nowMs - dragT0 > 350) {
+        if (dragWin != null && !resizing && pinching && nowMs - dragT0 > 180) {
             // push / pull: the hand coming closer to the camera brings the window closer, the hand going away pushes it away.
             // Small changes are ignored (soft dead zone) and it moves gently, so it does not stutter or run away.
             float lr = (float) Math.log(Math.max(1e-3f, sizeEma) / dragWin.dragSize0);
-            float f = lr > 0.10f ? lr - 0.10f : (lr < -0.10f ? lr + 0.10f : 0f);
-            float tgD = Math.max(0.6f, Math.min(Math.max(4f, dragWin.dragD0), dragWin.dragD0 * (float) Math.exp(-1.8f * f)));
-            dragWin.dist += (tgD - dragWin.dist) * 0.12f;
+            float f = lr > 0.04f ? lr - 0.04f : (lr < -0.04f ? lr + 0.04f : 0f);
+            float tgD = Math.max(0.5f, Math.min(Math.max(6f, dragWin.dragD0), dragWin.dragD0 * (float) Math.exp(-2.8f * f)));
+            dragWin.dist += (tgD - dragWin.dist) * 0.25f;
         }
         // let go only when the pinch has been open for a moment (one bad detection must not drop the window)
         if (dragWin != null && !pinching && nowMs - lastPinchT > 250) endDrag();

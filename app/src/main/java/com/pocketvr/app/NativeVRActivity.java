@@ -130,6 +130,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         wMenu = rend.addWindow(menu, 0.95f);      // starts hidden: pinch thumb + middle finger and hold to bring it up
         buildWindows();
         buildMenu();
+        for (int i = 0; i < 7; i++) winApply(i);
         gl = new GLSurfaceView(this);
         gl.setEGLContextClientVersion(2);
         gl.setPreserveEGLContextOnPause(false);
@@ -284,6 +285,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         b.kbHost = s -> { kbd.sink = s; kbd.clear(); if (!wKeys.visible) rend.setVisible(wKeys, true, 0f, -28f); };
         final VRRenderer.Win w = rend.addWindow(b, 1.25f);
         w.showInCinema = true;
+        bws[i] = w; winApply(7 + i);
         b.onClose = () -> { b.close(); rend.setVisible(w, false, 0f, 0f); if (kbd != null) kbd.sink = null; };
         b.onNewWindow = () -> openBrowser(-1);
         brs[i] = b; bws[i] = w;
@@ -316,7 +318,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.cycle("🎚", "ความไวสัมผัสอากาศ", () -> rend.pokeS == 0 ? "ไว (เบา)" : rend.pokeS == 1 ? "กลาง" : "หนัก (ต้องดัน)", () -> rend.pokeS = (rend.pokeS + 1) % 3);
         s.toggle("✋", "คาดการณ์มือ (ตามมือทัน)", () -> rend.predict, () -> rend.predict = !rend.predict);
         s.cycle("🔍", "ความละเอียดตรวจมือ", () -> cam.detW + " px" + (cam.detW <= 320 ? " (เร็ว)" : cam.detW >= 640 ? " (แม่นสุด)" : ""), () -> cam.detW = cam.detW <= 320 ? 480 : (cam.detW <= 480 ? 640 : 320));
-        s.cycle("🙌", "จำนวนมือที่ตรวจ", () -> cam.handsN == 2 ? "2 ข้าง (หนักกว่า)" : "ข้างเดียว (เร็ว)", () -> cam.handsN = cam.handsN == 2 ? 1 : 2);
+        s.cycle("🙌", "จำนวนมือที่ตรวจ", () -> cam.handsN == 2 ? "2 ข้าง (เปลี่ยนเป็น 1 เองถ้าไม่ใช้)" : "ข้างเดียว (เร็ว)", () -> cam.handsN = cam.handsN == 2 ? 1 : 2);
+        s.cycle("🫱", "มือหลัก (ตอนยกสองมือ)", () -> rend.mainHand == 0 ? "มือซ้าย" : "มือขวา", () -> rend.mainHand = rend.mainHand == 0 ? 1 : 0);
         s.toggle("🎈", "หน้าต่างลอยเบาๆ", () -> rend.floaty, () -> rend.floaty = !rend.floaty);
 
         s.cat("🖥", "แสดงผล");
@@ -366,7 +369,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 () -> motion.lagMs = Math.min(200, motion.lagMs + 20));
 
         s.cat("⚙", "ระบบ");
-        s.action("♻", "คืนค่าตั้งต้นทั้งหมด", "รีเซ็ต", () -> { applyPrefs(defaults); refreshGlass(); savePrefsNow(); menu.toast("คืนค่าตั้งต้นแล้ว"); });
+        s.action("♻", "คืนค่าตั้งต้นทั้งหมด", "รีเซ็ต", () -> { applyPrefs(defaults); resetWins(); refreshGlass(); savePrefsNow(); menu.toast("คืนค่าตั้งต้นแล้ว"); });
         s.action("🕸", "เวอร์ชันเว็บ (สำรอง)", "เปิด", () -> runOnUiThread(() -> {
             try { startActivity(new android.content.Intent(this, MainActivity.class)); } catch (Throwable t) { err = "web: " + t; }
             finish();
@@ -376,13 +379,13 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     // ================= saved settings (kept when the app is closed) =================
-    private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs"};
+    private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand"};
     private double[] defaults;
     private double[] lastSaved;
 
     private double[] snapPrefs() {
         return new double[]{rend.sel, rend.pokeS, rend.predict ? 1 : 0, cam.detW, rend.floaty ? 1 : 0, NvUi.glass, rend.cursorSz, rend.skel, hudOn ? 1 : 0,
-                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs};
+                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs, rend.mainHand};
     }
 
     private void applyPrefs(double[] v) {
@@ -390,11 +393,44 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         NvUi.glass = (int) v[5]; rend.cursorSz = (int) v[6]; rend.skel = (int) v[7]; hudOn = v[8] > 0.5;
         rend.sharpen = (float) v[9]; rend.stereo = v[10] > 0.5; rend.lens = (int) v[11]; rend.eyeShift = (float) v[12]; compass = v[13] > 0.5;
         motion.depthM = (float) v[14]; motion.lagMs = (int) v[15]; cam.handsN = Math.max(1, Math.min(2, (int) v[16])); rend.vrFov = (float) Math.max(50, Math.min(110, v[17]));
-        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19]));
+        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19])); rend.mainHand = v[20] > 0.5 ? 1 : 0;
+    }
+
+    // ----- where the windows were left (turn, height, size, distance) -----
+    private final float[][] winSv = new float[10][5];
+    private double[] lastWin;
+    private VRRenderer.Win winAt(int i) {
+        switch (i) { case 0: return wMenu; case 1: return wClock; case 2: return wStats; case 3: return wKeys; case 4: return wSet; case 5: return wVideo; case 6: return wMedia; default: return i - 7 < bws.length ? bws[i - 7] : null; }
+    }
+    private void winApply(int i) {
+        VRRenderer.Win w = winAt(i); float[] s = winSv[i];
+        if (w == null || s[0] < 0.5f) return;
+        w.svYaw = s[1]; w.svPitch = s[2]; w.svScale = s[3]; w.svDist = s[4]; w.hasSaved = true;
+    }
+    private double[] winSnap() {
+        double[] o = new double[50];
+        for (int i = 0; i < 10; i++) {
+            VRRenderer.Win w = winAt(i);
+            if (w != null && w.hasSaved) { winSv[i][0] = 1f; winSv[i][1] = w.svYaw; winSv[i][2] = w.svPitch; winSv[i][3] = w.svScale; winSv[i][4] = w.svDist; }
+            for (int k = 0; k < 5; k++) o[i * 5 + k] = winSv[i][k];
+        }
+        return o;
+    }
+    private void resetWins() {
+        for (int i = 0; i < 10; i++) {
+            java.util.Arrays.fill(winSv[i], 0f);
+            VRRenderer.Win w = winAt(i);
+            if (w != null) { w.hasSaved = false; w.placeDist = 0f; w.wantScale = 0f; }
+        }
     }
 
     private void loadPrefs() {
         defaults = snapPrefs();
+        try {
+            android.content.SharedPreferences sp0 = getSharedPreferences("pocketvr_native", MODE_PRIVATE);
+            for (int i = 0; i < 10; i++) for (int k = 0; k < 5; k++) if (sp0.contains("w" + i + "_" + k)) winSv[i][k] = sp0.getFloat("w" + i + "_" + k, 0f);
+        } catch (Throwable ignored) { }
+        lastWin = winSnap();
         try {
             android.content.SharedPreferences sp = getSharedPreferences("pocketvr_native", MODE_PRIVATE);
             double[] v = defaults.clone();
@@ -409,13 +445,15 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             double[] v = snapPrefs();
             android.content.SharedPreferences.Editor ed = getSharedPreferences("pocketvr_native", MODE_PRIVATE).edit();
             for (int i = 0; i < PK.length; i++) ed.putFloat(PK[i], (float) v[i]);
+            double[] ws = winSnap();
+            for (int i = 0; i < 10; i++) for (int k = 0; k < 5; k++) ed.putFloat("w" + i + "_" + k, (float) ws[i * 5 + k]);
             ed.apply();
-            lastSaved = v;
+            lastSaved = v; lastWin = ws;
         } catch (Throwable ignored) { }
     }
 
     private void savePrefsIfChanged() {
-        if (lastSaved == null || !java.util.Arrays.equals(lastSaved, snapPrefs())) savePrefsNow();
+        if (lastSaved == null || !java.util.Arrays.equals(lastSaved, snapPrefs()) || lastWin == null || !java.util.Arrays.equals(lastWin, winSnap())) savePrefsNow();
     }
 
     private void buildMenu() {

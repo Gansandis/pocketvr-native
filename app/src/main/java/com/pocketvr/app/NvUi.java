@@ -54,7 +54,7 @@ public class NvUi implements NvContent {
     }
     public boolean handleRecent() { return hover == handle || (lastH == handle && System.currentTimeMillis() - lastHT < 300); }
 
-    private static class Tab { Btn b; List<Btn> items; String title; }
+    private static class Tab { Btn b; List<Btn> items; String title; boolean grid; }
     private final List<Tab> tabs = new ArrayList<>();
     private final List<Btn> visible = new ArrayList<>();
     private Btn prevB, nextB;
@@ -78,6 +78,7 @@ public class NvUi implements NvContent {
     public NvUi() {
         addTabInternal("🏠", "หน้าแรก", "หน้าแรก", home, false);
         addTabInternal("📱", "แอป", "แอปในเครื่อง", apps, false);
+        tabs.get(tabs.size() - 1).grid = true;
         prevB = new Btn("", () -> "‹", null, null, 0, 0, () -> { page = (page + pages - 1) % pages; layout(); });
         nextB = new Btn("", () -> "›", null, null, 0, 0, () -> { page = (page + 1) % pages; layout(); });
     }
@@ -147,21 +148,30 @@ public class NvUi implements NvContent {
         pX = (W - pW) / 2f;
         pY = H * 0.04f;
         pH = dy - 12 * u - pY;
-        sbW = 78 * u;
-        float tabStep = Math.min(70 * u, (pH - 66 * u) / Math.max(1, tabs.size()));
+        sbW = Math.min(214 * u, pW * 0.27f);
+        float tabH = Math.min(56 * u, (pH - 76 * u) / Math.max(1, tabs.size()) - 6 * u);
         for (int i = 0; i < tabs.size(); i++) {
-            float y = pY + 50 * u + i * tabStep;
-            tabs.get(i).b.r.set(pX + 8 * u, y, pX + sbW - 4 * u, y + tabStep - 6 * u);
+            float y = pY + 62 * u + i * (tabH + 6 * u);
+            tabs.get(i).b.r.set(pX + 12 * u, y, pX + sbW - 6 * u, y + tabH);
             visible.add(tabs.get(i).b);
         }
-        float cx0 = pX + sbW + 8 * u, cy0 = pY + 52 * u;
-        float cw = pW - sbW - 18 * u, ch = pH - 52 * u - 40 * u;
-        int cols = Math.max(2, (int) (cw / (122 * u)));
-        int rows = Math.max(1, (int) (ch / (114 * u)));
-        float gw = 8 * u;
-        float cardW = (cw - (cols - 1) * gw) / cols, cardH = Math.min(ch / rows - gw, 124 * u);
+        float cx0 = pX + sbW + 6 * u, cy0 = pY + 62 * u;
+        float cw = pW - sbW - 6 * u - 16 * u, ch = pH - 62 * u - 46 * u;
         if (tab >= tabs.size()) tab = 0;
-        List<Btn> list = tabs.get(tab).items;
+        Tab ct = tabs.get(tab);
+        List<Btn> list = ct.items;
+        float gw = 8 * u, cardW, cardH;
+        int cols, rows;
+        if (ct.grid) {
+            cols = Math.max(2, (int) (cw / (122 * u)));
+            rows = Math.max(1, (int) (ch / (114 * u)));
+            cardW = (cw - (cols - 1) * gw) / cols; cardH = Math.min(ch / rows - gw, 124 * u);
+        } else {
+            cols = cw > 560 * u ? 2 : 1;
+            float rowH = 64 * u;
+            rows = Math.max(1, (int) ((ch + gw) / (rowH + gw)));
+            cardW = (cw - (cols - 1) * gw) / cols; cardH = rowH;
+        }
         int per = cols * rows;
         pages = Math.max(1, (list.size() + per - 1) / per);
         if (page >= pages) page = 0;
@@ -196,12 +206,14 @@ public class NvUi implements NvContent {
         p.setStyle(Paint.Style.FILL);
     }
 
-    private void text(String s, float cx, float cy, float size, int color, float maxW) {
+    private void text(String s, float cx, float cy, float size, int color, float maxW) { textA(s, cx, cy, size, color, maxW, Paint.Align.CENTER); }
+
+    private void textA(String s, float cx, float cy, float size, int color, float maxW, Paint.Align al) {
         p.setShader(null);
         p.setStyle(Paint.Style.FILL);
         p.setColor(color);
         p.setTextSize(size);
-        p.setTextAlign(Paint.Align.CENTER);
+        p.setTextAlign(al);
         while (maxW > 0 && p.measureText(s) > maxW && size > 8) { size -= 1; p.setTextSize(size); }
         cv.drawText(s, cx, cy + size * 0.35f, p);
     }
@@ -231,41 +243,63 @@ public class NvUi implements NvContent {
         p.setShader(null);
         stroke(pr, 0x40FFFFFF, 1.5f * u, 28 * u);
         NvPanel.grips(cv, p, pr, 28 * u, u);
-        text(tabs.get(Math.min(tab, tabs.size() - 1)).title, pX + sbW + (pW - sbW) / 2f, pY + 28 * u, 22 * u, 0xFFFFFFFF, pW - sbW - 20 * u);
-        // sidebar
+        textA("🥽  PocketVR", pX + 24 * u, pY + 30 * u, 26 * u, 0xFFFFFFFF, sbW - 30 * u, Paint.Align.LEFT);
+        Tab ct = tabs.get(Math.min(tab, tabs.size() - 1));
+        textA(ct.title, pX + sbW + 14 * u, pY + 30 * u, 24 * u, 0xCCFFFFFF, pW - sbW - 40 * u, Paint.Align.LEFT);
+        // categories (same look as the settings window)
         for (int i = 0; i < tabs.size(); i++) {
             Btn t = tabs.get(i).b;
-            boolean act = i == tab;
-            if (act) round(t.r, 0x38FFFFFF, 16 * u);
-            if (hover == t) stroke(t.r, 0xFF22B8CF, 3 * u, 16 * u);
-            text(t.emoji, t.r.centerX(), t.r.top + 22 * u, 24 * u, 0xFFFFFFFF, 0);
-            text(t.label.get(), t.r.centerX(), t.r.bottom - 14 * u, 12 * u, act ? 0xFFFFFFFF : 0xFFB8BEC8, t.r.width() - 4 * u);
-            if (act) round(new RectF(pX + 3 * u, t.r.top + 14 * u, pX + 6.5f * u, t.r.bottom - 14 * u), 0xFF4D8DFF, 2 * u);
+            boolean act = i == tab, hv = hover == t;
+            int c1 = act ? 0xFF4D8DFF : 0x55454A58, c2 = act ? 0xFF2E6BFF : 0x552B2E38;
+            if (!act && hv) { c1 = 0xFF5F6675; c2 = 0xFF454B59; }
+            p.setShader(new LinearGradient(0, t.r.top, 0, t.r.bottom, c1, c2, Shader.TileMode.CLAMP));
+            p.setStyle(Paint.Style.FILL);
+            cv.drawRoundRect(t.r, 18 * u, 18 * u, p);
+            p.setShader(null);
+            if (hv) stroke(t.r, 0xFF22B8CF, 3 * u, 18 * u);
+            text(t.emoji, t.r.left + 28 * u, t.r.centerY(), 26 * u, 0xFFFFFFFF, 0);
+            textA(t.label.get(), t.r.left + 54 * u, t.r.centerY(), 22 * u, 0xFFFFFFFF, t.r.width() - 62 * u, Paint.Align.LEFT);
         }
-        // cards
-        List<Btn> list = tabs.get(Math.min(tab, tabs.size() - 1)).items;
+        // content
+        List<Btn> list = ct.items;
         for (Btn b : list) {
             if (b.r.isEmpty()) continue;
             boolean on = b.on != null && b.on.get();
+            boolean hv = hover == b;
             RectF r = b.r;
-            int c1 = b.c1, c2 = b.c2;
-            if (hover == b) { c1 = lighten(c1); c2 = lighten(c2); }
-            p.setShader(new LinearGradient(0, r.top, 0, r.bottom, c1, c2, Shader.TileMode.CLAMP));
-            p.setStyle(Paint.Style.FILL);
-            cv.drawRoundRect(r, 20 * u, 20 * u, p);
-            p.setShader(null);
-            if (on) stroke(r, 0xFF9ED8FF, 3 * u, 20 * u);
-            if (hover == b) stroke(r, 0xFFFFFFFF, 3 * u, 20 * u);
             float h = r.height();
-            if (b.icon != null) {
-                float s = h * 0.46f;
-                RectF d = new RectF(r.centerX() - s / 2, r.top + h * 0.10f, r.centerX() + s / 2, r.top + h * 0.10f + s);
-                cv.drawBitmap(b.icon, null, d, p);
-            } else {
-                text(b.emoji, r.centerX(), r.top + h * 0.34f, h * 0.34f, 0xFFFFFFFF, 0);
+            round(r, hv ? 0xAA262B38 : 0x66101218, 18 * u);
+            if (hv) stroke(r, 0xFF22B8CF, 3 * u, 18 * u);
+            if (ct.grid) {
+                if (b.icon != null) {
+                    float s2 = h * 0.46f;
+                    RectF d = new RectF(r.centerX() - s2 / 2, r.top + h * 0.10f, r.centerX() + s2 / 2, r.top + h * 0.10f + s2);
+                    cv.drawBitmap(b.icon, null, d, p);
+                } else text(b.emoji, r.centerX(), r.top + h * 0.34f, h * 0.34f, 0xFFFFFFFF, 0);
+                text(b.label.get(), r.centerX(), r.top + h * 0.74f, 14 * u, 0xFFFFFFFF, r.width() - 10 * u);
+                continue;
             }
-            text(b.label.get(), r.centerX(), r.top + h * 0.70f, 14 * u, 0xFFFFFFFF, r.width() - 10 * u);
-            if (b.sub != null) text(b.sub.get(), r.centerX(), r.top + h * 0.87f, 11 * u, 0xCCFFFFFF, r.width() - 10 * u);
+            // list row: coloured badge, name + hint, switch or arrow
+            float bs = h - 14 * u;
+            RectF bd = new RectF(r.left + 8 * u, r.top + 7 * u, r.left + 8 * u + bs, r.top + 7 * u + bs);
+            int c1 = on ? 0xFF4D8DFF : b.c1, c2 = on ? 0xFF2E6BFF : b.c2;
+            p.setShader(new LinearGradient(0, bd.top, 0, bd.bottom, c1, c2, Shader.TileMode.CLAMP));
+            p.setStyle(Paint.Style.FILL);
+            cv.drawRoundRect(bd, 14 * u, 14 * u, p);
+            p.setShader(null);
+            text(b.emoji, bd.centerX(), bd.centerY(), bs * 0.52f, 0xFFFFFFFF, 0);
+            float right = b.on != null ? 64 * u + 22 * u : 34 * u;
+            float lx = bd.right + 14 * u, lw = r.right - lx - right;
+            if (b.sub != null) {
+                textA(b.label.get(), lx, r.centerY() - h * 0.16f, 22 * u, 0xFFFFFFFF, lw, Paint.Align.LEFT);
+                textA(b.sub.get(), lx, r.centerY() + h * 0.22f, 15 * u, 0xFFB8BEC8, lw, Paint.Align.LEFT);
+            } else textA(b.label.get(), lx, r.centerY(), 22 * u, 0xFFFFFFFF, lw, Paint.Align.LEFT);
+            if (b.on != null) {
+                RectF sw = new RectF(r.right - 16 * u - 64 * u, r.centerY() - 16 * u, r.right - 16 * u, r.centerY() + 16 * u);
+                round(sw, on ? 0xFF2E6BFF : 0xFF3A3E4A, 16 * u);
+                p.setColor(0xFFFFFFFF);
+                cv.drawCircle(on ? sw.right - 16 * u : sw.left + 16 * u, sw.centerY(), 12 * u, p);
+            } else text("›", r.right - 20 * u, r.centerY(), 32 * u, 0xFFB8BEC8, 0);
         }
         if (pages > 1) {
             for (Btn b : new Btn[]{prevB, nextB}) {

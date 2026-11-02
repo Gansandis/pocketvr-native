@@ -56,6 +56,8 @@ public class NvCam {
     public volatile float hFov = 1.15f;           // horizontal field of view of the camera, radians
     public volatile NvMotion motion;
     public volatile long detPaceMs = 0;           // shortest time between two looks for hands
+    private volatile boolean autoDown = false;       // two hands were asked for but only one is in use: look for one (faster) until the hands are lowered
+    private volatile long lastTwoT = 0, sessionT = 0;
     public volatile int handsN = 1;               // how many hands to look for (1 or 2; two is slower)
     private int openedN = 1;
     public volatile int detW = 320;               // width of the picture given to the hand model (bigger = steadier points, slower conversion)
@@ -203,9 +205,10 @@ public class NvCam {
             if (ex == null) { detBusy.set(false); return; }
             ex.execute(() -> {
                 try {
-                    if (handsOpened && openedN != handsN) { hands.close(); handsOpened = false; }      // the number of hands was changed
+                    int want = (handsN >= 2 && !autoDown) ? 2 : 1;
+                    if (handsOpened && openedN != want) { hands.close(); handsOpened = false; }      // the number of hands was changed
                     if (!handsOpened) {
-                        openedN = Math.max(1, Math.min(2, handsN));
+                        openedN = want;
                         handsOpened = hands.open(act.getApplicationContext(), true, openedN);
                         if (!handsOpened) { handsFailed = true; lis.onError("hands: " + hands.error); return; }
                     }
@@ -213,7 +216,13 @@ public class NvCam {
                     bmp.recycle();
                     if (res != null) {
                         long tn = System.nanoTime() / 1000000L;
-                        if (res[0] >= 1) lastHandT = tn;
+                        if (res[0] >= 1) {
+                            if (tn - lastHandT > 1000) { sessionT = tn; lastTwoT = tn; }       // a new time with hands in view
+                            if (res[0] >= 2) lastTwoT = tn;
+                            lastHandT = tn;
+                            // a second hand has not shown up for a while: keep looking for one hand only (much faster)
+                            if (handsN >= 2 && !autoDown && tn - lastTwoT > 5000) autoDown = true;
+                        } else if (tn - lastHandT > 1000 && autoDown) autoDown = false;          // hands were lowered: look for two again next time
                         // one or two empty answers in a row (a blink of the model) must not drop the hand: keep the last good points for a moment
                         if (res[0] < 1 && result.length > 0 && result[0] >= 1 && tn - lastHandT < 260) res = result;
                         result = res;
