@@ -7,6 +7,10 @@
     <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
 
+    <!-- SHIZUKU-BEGIN -->
+    <uses-permission android:name="moe.shizuku.manager.permission.API_V23" />
+    <!-- SHIZUKU-END -->
+
     <uses-feature android:name="android.hardware.camera" android:required="false" />
     <uses-feature android:name="android.hardware.sensor.gyroscope" android:required="false" />
 
@@ -24,6 +28,16 @@
         android:allowBackup="false"
         android:hardwareAccelerated="true"
         android:theme="@android:style/Theme.Black.NoTitleBar.Fullscreen">
+
+        <!-- SHIZUKU-BEGIN -->
+        <provider
+            android:name="rikka.shizuku.ShizukuProvider"
+            android:authorities="${applicationId}.shizuku"
+            android:multiprocess="false"
+            android:enabled="true"
+            android:exported="true"
+            android:permission="android.permission.INTERACT_ACROSS_USERS_FULL" />
+        <!-- SHIZUKU-END -->
 
         <activity
             android:name=".MainActivity"
