@@ -126,6 +126,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         cam.motion = motion;
         rend.motion = motion;
         loadPrefs();
+        try { NvShizuku.init(); } catch (Throwable ignored) { }
         rend.ui = menu;
         wMenu = rend.addWindow(menu, 0.95f);      // starts hidden: pinch thumb + middle finger and hold to bring it up
         buildWindows();
@@ -340,6 +341,38 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.toast("เปิดหน้าต่างลอยแล้ว");
     }
 
+    // ---- real apps in floating windows (through Shizuku) ----
+    private final NvAppWin[] aps = new NvAppWin[2];
+    private final VRRenderer.Win[] aws = new VRRenderer.Win[2];
+    private static final float[] AYAW = {0f, 55f};
+
+    private NvAppWin appSlot(final int i) {
+        if (aps[i] != null) return aps[i];
+        final NvAppWin a = new NvAppWin(this, ui);
+        a.kbHost = s -> { kbd.sink = s; kbd.clear(); if (!wKeys.visible) rend.setVisible(wKeys, true, 0f, -28f); };
+        final VRRenderer.Win w = rend.addWindow(a, 0.80f);
+        w.showInCinema = true;
+        aws[i] = w; winApply(10 + i);
+        a.onClose = () -> { a.close(); rend.setVisible(w, false, 0f, 0f); if (kbd != null) kbd.sink = null; };
+        aps[i] = a;
+        return a;
+    }
+
+    /** open an installed app inside a floating window; false = Shizuku is not ready, nothing was done */
+    private boolean openRealApp(String pkg, String comp, String name) {
+        if (!NvShizuku.ready()) return false;
+        int i = -1;
+        for (int k = 0; k < aps.length; k++) if (aps[k] != null && aps[k].isOpen() && pkg.equals(aps[k].pkg())) { i = k; break; }      // already open: bring it up again
+        if (i < 0) for (int k = 0; k < aps.length; k++) if (aws[k] == null || !aws[k].visible) { i = k; break; }
+        if (i < 0) { menu.toast("เปิดแอปลอยได้สูงสุด 2 หน้าต่าง"); return true; }
+        NvAppWin a = appSlot(i);
+        rend.setVisible(aws[i], true, AYAW[i], 0f);
+        a.open(pkg, comp, name);
+        a.setActive(true);
+        menu.toast("กำลังเปิด " + name);
+        return true;
+    }
+
     private int browsersShown() { int n = 0; for (VRRenderer.Win w : bws) if (w != null && w.visible) n++; return n; }
 
     // ================= settings window =================
@@ -407,6 +440,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 () -> motion.lagMs = Math.min(200, motion.lagMs + 20));
 
         s.cat("⚙", "ระบบ");
+        s.cycle("🔌", "Shizuku (เปิดแอปจริงแบบลอย)", () -> NvShizuku.statusText(), () -> { NvShizuku.request(); menu.toast("Shizuku: " + NvShizuku.statusText()); });
         s.action("♻", "คืนค่าตั้งต้นทั้งหมด", "รีเซ็ต", () -> { applyPrefs(defaults); resetWins(); refreshGlass(); savePrefsNow(); menu.toast("คืนค่าตั้งต้นแล้ว"); });
         s.action("🕸", "เวอร์ชันเว็บ (สำรอง)", "เปิด", () -> runOnUiThread(() -> {
             try { startActivity(new android.content.Intent(this, MainActivity.class)); } catch (Throwable t) { err = "web: " + t; }
@@ -435,10 +469,10 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     // ----- where the windows were left (turn, height, size, distance) -----
-    private final float[][] winSv = new float[10][5];
+    private final float[][] winSv = new float[12][5];
     private double[] lastWin;
     private VRRenderer.Win winAt(int i) {
-        switch (i) { case 0: return wMenu; case 1: return wClock; case 2: return wStats; case 3: return wKeys; case 4: return wSet; case 5: return wVideo; case 6: return wMedia; default: return i - 7 < bws.length ? bws[i - 7] : null; }
+        switch (i) { case 0: return wMenu; case 1: return wClock; case 2: return wStats; case 3: return wKeys; case 4: return wSet; case 5: return wVideo; case 6: return wMedia; case 10: return aws[0]; case 11: return aws[1]; default: return i - 7 < bws.length ? bws[i - 7] : null; }
     }
     private void winApply(int i) {
         VRRenderer.Win w = winAt(i); float[] s = winSv[i];
@@ -446,8 +480,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         w.svYaw = s[1]; w.svPitch = s[2]; w.svScale = s[3]; w.svDist = s[4]; w.hasSaved = true;
     }
     private double[] winSnap() {
-        double[] o = new double[50];
-        for (int i = 0; i < 10; i++) {
+        double[] o = new double[60];
+        for (int i = 0; i < 12; i++) {
             VRRenderer.Win w = winAt(i);
             if (w != null && w.hasSaved) { winSv[i][0] = 1f; winSv[i][1] = w.svYaw; winSv[i][2] = w.svPitch; winSv[i][3] = w.svScale; winSv[i][4] = w.svDist; }
             else if (w != null) java.util.Arrays.fill(winSv[i], 0f);                 // it was put back to the standard place
@@ -456,7 +490,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         return o;
     }
     private void resetWins() {
-        for (int i = 0; i < 10; i++) {
+        for (int i = 0; i < 12; i++) {
             java.util.Arrays.fill(winSv[i], 0f);
             VRRenderer.Win w = winAt(i);
             if (w != null) { w.hasSaved = false; w.placeDist = 0f; w.wantScale = 0f; }
@@ -467,7 +501,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         defaults = snapPrefs();
         try {
             android.content.SharedPreferences sp0 = getSharedPreferences("pocketvr_native", MODE_PRIVATE);
-            for (int i = 0; i < 10; i++) for (int k = 0; k < 5; k++) if (sp0.contains("w" + i + "_" + k)) winSv[i][k] = sp0.getFloat("w" + i + "_" + k, 0f);
+            for (int i = 0; i < 12; i++) for (int k = 0; k < 5; k++) if (sp0.contains("w" + i + "_" + k)) winSv[i][k] = sp0.getFloat("w" + i + "_" + k, 0f);
         } catch (Throwable ignored) { }
         lastWin = winSnap();
         try {
@@ -485,7 +519,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             android.content.SharedPreferences.Editor ed = getSharedPreferences("pocketvr_native", MODE_PRIVATE).edit();
             for (int i = 0; i < PK.length; i++) ed.putFloat(PK[i], (float) v[i]);
             double[] ws = winSnap();
-            for (int i = 0; i < 10; i++) for (int k = 0; k < 5; k++) ed.putFloat("w" + i + "_" + k, (float) ws[i * 5 + k]);
+            for (int i = 0; i < 12; i++) for (int k = 0; k < 5; k++) ed.putFloat("w" + i + "_" + k, (float) ws[i * 5 + k]);
             ed.apply();
             lastSaved = v; lastWin = ws;
         } catch (Throwable ignored) { }
@@ -554,12 +588,20 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 final String label = String.valueOf(ri.loadLabel(pm));
                 final String pkg = ri.activityInfo.packageName;
                 final String webUrl = webFor(pkg);
-                NvUi.Btn b = new NvUi.Btn("", () -> label, webUrl != null ? () -> "🌐 เปิดลอย" : () -> "เปิดนอก VR", null, 0xFF3A3F4B, 0xFF262932, webUrl != null ? () -> openWebFloating(webUrl) : () -> runOnUiThread(() -> {
+                final String comp = ri.activityInfo.packageName + "/" + ri.activityInfo.name;
+                final Runnable outside = () -> runOnUiThread(() -> {
                     try {
                         android.content.Intent li = getPackageManager().getLaunchIntentForPackage(pkg);
                         if (li != null) startActivity(li);
                     } catch (Throwable ignored) { }
-                }));
+                });
+                NvUi.Btn b = new NvUi.Btn("", () -> label,
+                        () -> NvShizuku.ready() ? "📱 เปิดลอย" : (webUrl != null ? "🌐 เปิดลอย" : "เปิดนอก VR"),
+                        null, 0xFF3A3F4B, 0xFF262932, () -> {
+                    if (openRealApp(pkg, comp, label)) return;                          // the real app, in a floating window
+                    if (NvShizuku.alive()) { NvShizuku.request(); menu.toast("กดอนุญาต PocketVR ในหน้าต่าง Shizuku แล้วลองใหม่"); return; }
+                    if (webUrl != null) openWebFloating(webUrl); else outside.run();
+                });
                 b.icon = iconOf(ri.loadIcon(pm));
                 menu.apps.add(b);
             }
