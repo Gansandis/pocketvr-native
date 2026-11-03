@@ -314,8 +314,6 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     private void buildSettings() {
         final NvSettings s = settings;
         s.cat("🎛", "ควบคุม");
-        s.cycle("👆", "เลือกด้วย", () -> rend.sel == 0 ? "จีบนิ้ว" : rend.sel == 1 ? "สัมผัสอากาศ" : "ทั้งสองแบบ", () -> rend.sel = (rend.sel + 1) % 3);
-        s.cycle("🎚", "ความไวสัมผัสอากาศ", () -> rend.pokeS == 0 ? "ไว (เบา)" : rend.pokeS == 1 ? "กลาง" : "หนัก (ต้องดัน)", () -> rend.pokeS = (rend.pokeS + 1) % 3);
         s.toggle("✋", "คาดการณ์มือ (ตามมือทัน)", () -> rend.predict, () -> rend.predict = !rend.predict);
         s.cycle("🔍", "ความละเอียดตรวจมือ", () -> cam.detW + " px" + (cam.detW <= 320 ? " (เร็ว)" : cam.detW >= 640 ? " (แม่นสุด)" : ""), () -> cam.detW = cam.detW <= 320 ? 480 : (cam.detW <= 480 ? 640 : 320));
         s.cycle("🙌", "จำนวนมือที่ตรวจ", () -> cam.handsN == 2 ? "2 ข้าง (เปลี่ยนเป็น 1 เองถ้าไม่ใช้)" : "ข้างเดียว (เร็ว)", () -> cam.handsN = cam.handsN == 2 ? 1 : 2);
@@ -415,6 +413,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         for (int i = 0; i < 10; i++) {
             VRRenderer.Win w = winAt(i);
             if (w != null && w.hasSaved) { winSv[i][0] = 1f; winSv[i][1] = w.svYaw; winSv[i][2] = w.svPitch; winSv[i][3] = w.svScale; winSv[i][4] = w.svDist; }
+            else if (w != null) java.util.Arrays.fill(winSv[i], 0f);                 // it was put back to the standard place
             for (int k = 0; k < 5; k++) o[i * 5 + k] = winSv[i][k];
         }
         return o;

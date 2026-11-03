@@ -103,6 +103,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         public final float widthM;
         public volatile boolean visible = false, placeReq = false, showInCinema = false;
         public volatile boolean hasSaved = false;            // the user moved / resized it once: remember where, and put it back there next time
+        public volatile float defYaw = 0, defPitch = 0;      // where it appears by default (before the user moved it)
         public volatile float svYaw = 0, svPitch = 0, svScale = 1f, svDist = 1.5f, placeDist = 0f;
         public volatile float wantScale = 0;                 // size to take when (re)placed in front of the user; 0 = normal
         int texW = 0, texH = 0;
@@ -130,7 +131,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     /** show / hide a window (it appears in front of you, shifted by the given angles) */
     public void setVisible(Win w, boolean v, float offYaw, float offPitch) {
-        w.offYaw = offYaw; w.offPitch = offPitch;
+        w.offYaw = offYaw; w.offPitch = offPitch; w.defYaw = offYaw; w.defPitch = offPitch;
         if (v && !w.visible && w.hasSaved) { w.offYaw = w.svYaw; w.offPitch = w.svPitch; w.wantScale = w.svScale; w.placeDist = w.svDist; }
         if (v && !w.visible) w.placeReq = true;
         w.visible = v;
@@ -268,8 +269,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float[] rn = rotNow;
         if (recenter) {
             recenter = false;
-            if (cinema) { for (Win w : wins) if (w.visible && w.showInCinema) { w.placeReq = true; w.placeDist = 0f; } }
-            else if (menuWin != null) { menuWin.placeReq = true; menuWin.placeDist = 0f; }
+            if (resetLayoutReq) {                                    // the OK sign: forget where the windows were left, back to the standard places and sizes
+                resetLayoutReq = false;
+                for (Win w : wins) { w.hasSaved = false; w.wantScale = 0f; w.placeDist = 0f; w.offYaw = w.defYaw; w.offPitch = w.defPitch; }
+                if (menuWin != null) { menuWin.offYaw = 0f; menuWin.offPitch = 0f; }
+                if (ui != null) ui.toast("จัดหน้าต่างและขนาดใหม่แล้ว");
+            }
+            // every window that is up goes back in front of you (keeping the place the user gave it, relative to where you look now)
+            for (Win w : wins) if (w.visible) {
+                w.placeReq = true;
+                if (w.hasSaved) { w.offYaw = w.svYaw; w.offPitch = w.svPitch; w.wantScale = w.svScale; w.placeDist = w.svDist; } else w.placeDist = 0f;
+            }
         }
         computeProj();
         float t = (System.nanoTime() / 1e9f) % 600f;
@@ -593,6 +603,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     // with two hands in view, one of them drives the pointer: the one that is pinching / poking, otherwise the one nearest to where the pointer was
     public volatile int mainHand = 0;                     // with two hands in view: 0 = the left hand drives the pointer, 1 = the right hand
+    private volatile boolean resetLayoutReq = false;
+    private long okT0 = 0; private float okProg = 0; private boolean okDone = false;
     private int selHand = 0, handBase = 0;
     private float selTx = 0, selTy = 0;
     private final float[] oneHand = new float[64];
@@ -658,7 +670,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // air touch (as in the web version): the index finger is out and is pushed forward = the hand gets smaller in the picture.
         // Made calmer: the depth is smoothed, the pose has to be steady for a moment, a fast-moving hand does not count as a push,
         // the push must last a moment, and there is a short pause after a press.
-        int selM = sel;
+        int selM = 0;                                   // air touch was taken out (too hard to use): pinching is the only way to press
         {
             float z8 = r[1 + 8 * 3 + 2], z0 = r[1 + 2];
             float sz = Math.max(1e-3f, size);
@@ -747,6 +759,22 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
         }
         gripHot = gripWin != null || (dragWin != null && resizing);
+        // OK sign (thumb and index in a ring, the other three fingers stretched out) held for a moment over empty space:
+        // all windows go back to the standard places and sizes
+        {
+            boolean ext = true;
+            int[] tp = {12, 16, 20}, pp = {10, 14, 18};
+            for (int q = 0; q < 3; q++) {
+                float dt = (float) Math.hypot((r[1 + tp[q] * 3] - wx) * ar, r[1 + tp[q] * 3 + 1] - wy);
+                float dp = (float) Math.hypot((r[1 + pp[q] * 3] - wx) * ar, r[1 + pp[q] * 3 + 1] - wy);
+                if (!(dt > dp * 1.12f)) ext = false;
+            }
+            if (pinching && ext && target == null && gripWin == null && dragWin == null && !mpOn) {
+                if (okT0 == 0) okT0 = nowMs;
+                okProg = Math.min(1f, (nowMs - okT0) / 1500f);
+                if (okProg >= 1f && !okDone) { okDone = true; resetLayoutReq = true; recenter = true; }
+            } else { okT0 = 0; okProg = 0; if (!pinching) okDone = false; }
+        }
         if (gripWin != null && pinching && !prevPinch) {
             if (motion != null && motion.enabled) rebase(gripWin, sux, suy, suz);
             dragWin = gripWin; resizing = true;
@@ -803,6 +831,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             aaBegin();
             aaSeg(x, y, x, y, (8f + 20f * mpProg) * u);
             aaFlush(1f, 0.7f, 0.15f);
+        }
+        if (okProg > 0f && curOk) {                           // growing green ring while the OK sign is held
+            float ox = cnx * sceneW / 2f * camScale, oy = cny * sceneH / 2f * camScale;
+            aaBegin();
+            aaSeg(ox, oy, ox, oy, (10f + 26f * okProg) * u);
+            aaFlush(0.2f, 0.85f, 0.4f);
         }
         if (!curOk || !anyVisible()) return;
         float x = cnx * sceneW / 2f * camScale, y = cny * sceneH / 2f * camScale;
