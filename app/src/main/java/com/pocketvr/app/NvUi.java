@@ -289,7 +289,8 @@ public class NvUi implements NvContent {
                     RectF d = new RectF(r.centerX() - s2 / 2, r.top + h * 0.10f, r.centerX() + s2 / 2, r.top + h * 0.10f + s2);
                     cv.drawBitmap(b.icon, null, d, p);
                 } else text(b.emoji, r.centerX(), r.top + h * 0.34f, h * 0.34f, 0xFFFFFFFF, 0);
-                text(b.label.get(), r.centerX(), r.top + h * 0.74f, 14 * u, 0xFFFFFFFF, r.width() - 10 * u);
+                text(b.label.get(), r.centerX(), r.top + h * (b.sub != null ? 0.70f : 0.76f), 14 * u, 0xFFFFFFFF, r.width() - 10 * u);
+                if (b.sub != null) text(b.sub.get(), r.centerX(), r.top + h * 0.89f, 11 * u, 0xFF8FD0FF, r.width() - 10 * u);
                 continue;
             }
             // list row: coloured badge, name + hint, switch or arrow

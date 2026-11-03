@@ -118,6 +118,8 @@ public class NvBrowser implements NvContent {
         } catch (Throwable ignored) { }
     }
 
+    public void navigate(String url) { go(url); }
+
     private void go(String text) {
         String s = text.trim();
         if (s.isEmpty()) return;

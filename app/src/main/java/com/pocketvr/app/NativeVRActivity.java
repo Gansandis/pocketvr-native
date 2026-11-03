@@ -303,6 +303,43 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         b.setActive(true);
     }
 
+    // Android does not let a normal app put another app's screen into its own window, so for the apps that have a website version
+    // the floating browser opens that website instead. (package, address, name, icon)
+    private static final String[][] WEB = {
+        {"com.google.android.youtube", "https://m.youtube.com", "YouTube", "▶"},
+        {"com.facebook.katana", "https://m.facebook.com", "Facebook", "📘"},
+        {"com.zhiliaoapp.musically", "https://www.tiktok.com", "TikTok", "🎵"},
+        {"com.ss.android.ugc.trill", "https://www.tiktok.com", "TikTok", "🎵"},
+        {"com.instagram.android", "https://www.instagram.com", "Instagram", "📷"},
+        {"com.twitter.android", "https://x.com", "X (Twitter)", "🐦"},
+        {"com.netflix.mediaclient", "https://www.netflix.com", "Netflix", "🎬"},
+        {"com.spotify.music", "https://open.spotify.com", "Spotify", "🎧"},
+        {"com.google.android.apps.maps", "https://www.google.com/maps", "แผนที่", "🗺"},
+        {"com.google.android.gm", "https://mail.google.com", "Gmail", "✉"},
+        {"com.discord", "https://discord.com/app", "Discord", "💬"},
+        {"com.whatsapp", "https://web.whatsapp.com", "WhatsApp", "🟢"},
+        {"org.telegram.messenger", "https://web.telegram.org", "Telegram", "✈"},
+        {"com.reddit.frontpage", "https://www.reddit.com", "Reddit", "👽"},
+        {"tv.twitch.android.app", "https://www.twitch.tv", "Twitch", "🎮"},
+        {"com.shopee.th", "https://shopee.co.th", "Shopee", "🛍"},
+        {"com.lazada.android", "https://www.lazada.co.th", "Lazada", "🛒"},
+        {"com.google.android.apps.photos", "https://photos.google.com", "Google Photos", "🖼"},
+        {"com.android.chrome", "https://www.google.com", "Chrome", "🌐"},
+    };
+    private static String webFor(String pkg) { for (String[] w : WEB) if (w[0].equals(pkg)) return w[1]; return null; }
+
+    /** open a website in a floating browser window (a free one if there is one) */
+    private void openWebFloating(String url) {
+        int i = -1;
+        for (int k = 0; k < brs.length; k++) if (bws[k] == null || !bws[k].visible) { i = k; break; }
+        if (i < 0) i = 0;
+        NvBrowser b = browserSlot(i);
+        rend.setVisible(bws[i], true, BYAW[i], 4f);
+        if (!b.isOpen()) b.open(url); else b.navigate(url);
+        b.setActive(true);
+        menu.toast("เปิดหน้าต่างลอยแล้ว");
+    }
+
     private int browsersShown() { int n = 0; for (VRRenderer.Win w : bws) if (w != null && w.visible) n++; return n; }
 
     // ================= settings window =================
@@ -462,6 +499,13 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         buildSettings();
         final int GA = 0xFF5A5A63, GB = 0xFF38383E;
         final java.util.List<NvUi.Btn> tools = menu.addTab("🧰", "เครื่องมือ", "เครื่องมือและระบบ");
+        final java.util.List<NvUi.Btn> webs = menu.addTab("🌐", "เว็บแอป", "เว็บแอปยอดนิยม (เปิดเป็นหน้าต่างลอย)");
+        java.util.Set<String> shownW = new java.util.HashSet<>();
+        for (String[] w : WEB) {
+            if (!shownW.add(w[2])) continue;
+            final String url = w[1];
+            webs.add(new NvUi.Btn(w[3], () -> w[2], () -> "เปิดลอย", null, 0xFF3A6FD8, 0xFF2547A0, () -> openWebFloating(url)));
+        }
         menu.home.add(new NvUi.Btn("🌐", () -> "เบราว์เซอร์", () -> browsersShown() > 0 ? browsersShown() + " หน้าต่าง" : "ปิดอยู่", () -> browsersShown() > 0, GA, GB, () -> {
             if (browsersShown() > 0) {                                     // hide them all (they keep their pages and rest quietly)
                 for (int k = 0; k < brs.length; k++) if (brs[k] != null && bws[k].visible) { brs[k].setActive(false); rend.setVisible(bws[k], false, 0f, 0f); }
@@ -509,7 +553,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 final android.content.pm.ResolveInfo ri = keep.get(i);
                 final String label = String.valueOf(ri.loadLabel(pm));
                 final String pkg = ri.activityInfo.packageName;
-                NvUi.Btn b = new NvUi.Btn("", () -> label, null, null, 0xFF3A3F4B, 0xFF262932, () -> runOnUiThread(() -> {
+                final String webUrl = webFor(pkg);
+                NvUi.Btn b = new NvUi.Btn("", () -> label, webUrl != null ? () -> "🌐 เปิดลอย" : () -> "เปิดนอก VR", null, 0xFF3A3F4B, 0xFF262932, webUrl != null ? () -> openWebFloating(webUrl) : () -> runOnUiThread(() -> {
                     try {
                         android.content.Intent li = getPackageManager().getLaunchIntentForPackage(pkg);
                         if (li != null) startActivity(li);
