@@ -114,7 +114,16 @@ public final class NvShizuku {
     private static volatile boolean inReady = false;
     private static final ExecutorService inEx = Executors.newSingleThreadExecutor();
 
+    public static volatile String inputNote = "";
     public static boolean inputReady() { return inReady && inProc != null; }
+    public static String inputInfo() { return inputReady() ? "สัมผัสเร็ว ✓" : "สัมผัสช้า" + (inputNote.isEmpty() ? "" : " (" + inputNote + ")"); }
+
+    /** start it again (after an error, or when it was never started) */
+    public static void restartInput(String apk) {
+        try { if (inProc != null) inProc.destroy(); } catch (Throwable ignored) { }
+        inProc = null; inReady = false; inputNote = "";
+        startInput(apk);
+    }
 
     private static Process spawn(String[] cmd) throws Exception {
         Method m = Shizuku.class.getDeclaredMethod("newProcess", String[].class, String[].class, String.class);
@@ -138,20 +147,24 @@ public final class NvShizuku {
                     try {
                         java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(pr.getInputStream()));
                         String l;
-                        while ((l = r.readLine()) != null) { if (l.contains("PVR-READY")) inReady = true; else addLog(l); }
+                        while ((l = r.readLine()) != null) {
+                            if (l.contains("PVR-READY")) { inReady = true; inputNote = ""; }
+                            else { addLog(l); if (l.contains("PVR-ERR")) inputNote = l.replace("PVR-ERR ", ""); }
+                        }
                     } catch (Throwable ignored) { }
                     inReady = false;
+                    if (inputNote.isEmpty()) inputNote = "ตัวช่วยหยุดทำงาน";
                 });
                 o.setDaemon(true); o.start();
                 Thread e = new Thread(() -> {
                     try {
                         java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(pr.getErrorStream()));
                         String l;
-                        while ((l = r.readLine()) != null) addLog(l);
+                        while ((l = r.readLine()) != null) { addLog(l); if (inputNote.isEmpty() && l.length() > 3) inputNote = l.length() > 60 ? l.substring(0, 60) : l; }
                     } catch (Throwable ignored) { }
                 });
                 e.setDaemon(true); e.start();
-            } catch (Throwable t) { addLog("input: " + t); inProc = null; inReady = false; }
+            } catch (Throwable t) { addLog("input: " + t); inputNote = String.valueOf(t); inProc = null; inReady = false; }
         });
     }
 

@@ -391,7 +391,7 @@ public class NvAppWin implements NvContent {
             text(b.label, b.r.centerX(), b.r.centerY(), 28, 0xFFFFFFFF, Paint.Align.CENTER, b.r.width() - 8);
         }
         float tl = 10 + 66 * 4 + 6, tr = W - 70 - 66 - 6;
-        text(label.isEmpty() ? "แอป" : label, (tl + tr) / 2f, TB / 2f, 24, 0xFFFFFFFF, Paint.Align.CENTER, tr - tl);
+        text((label.isEmpty() ? "แอป" : label) + (NvShizuku.inputReady() ? "  ⚡" : "  🐢"), (tl + tr) / 2f, TB / 2f, 24, 0xFFFFFFFF, Paint.Align.CENTER, tr - tl);
 
         RectF pg = new RectF(0, TB, PW, TB + PH);
         synchronized (lock) {

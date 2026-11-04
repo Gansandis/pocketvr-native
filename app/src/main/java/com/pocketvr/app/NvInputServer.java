@@ -19,13 +19,27 @@ import java.lang.reflect.Method;
  * It prints PVR-READY when it can inject events. It stops by itself when PocketVR closes its end of the pipe.
  */
 public class NvInputServer {
-    private static Object im;
+    private static Object target;
     private static Method inject, setDisplay;
+    private static int injectArgs = 2;
     private static long downTime = 0;
+
+    private static Method findInject(Class<?> c) {
+        Method three = null;
+        for (Method m : c.getMethods()) {
+            if (!m.getName().equals("injectInputEvent")) continue;
+            Class<?>[] pt = m.getParameterTypes();
+            if (pt.length == 2 && pt[0].isAssignableFrom(MotionEvent.class) && pt[1] == int.class) { injectArgs = 2; return m; }
+            if (pt.length == 3 && pt[0].isAssignableFrom(MotionEvent.class) && pt[1] == int.class && pt[2] == int.class) three = m;
+        }
+        if (three != null) injectArgs = 3;
+        return three;
+    }
 
     private static void send(InputEvent e, int display) throws Exception {
         setDisplay.invoke(e, display);
-        inject.invoke(im, e, 0);                           // 0 = do not wait for the app to take it
+        if (injectArgs == 2) inject.invoke(target, e, 0);          // 0 = do not wait for the app to take it
+        else inject.invoke(target, e, 0, -1);
     }
 
     private static void touch(int action, float x, float y, int display) throws Exception {
@@ -47,19 +61,31 @@ public class NvInputServer {
     }
 
     public static void main(String[] args) {
+        String how = "";
         try {
-            Method gi = InputManager.class.getDeclaredMethod("getInstance");
-            gi.setAccessible(true);
-            im = gi.invoke(null);
-            inject = InputManager.class.getDeclaredMethod("injectInputEvent", InputEvent.class, int.class);
-            inject.setAccessible(true);
             setDisplay = InputEvent.class.getDeclaredMethod("setDisplayId", int.class);
             setDisplay.setAccessible(true);
+            try {                                              // way A: the InputManager object
+                Method gi = InputManager.class.getDeclaredMethod("getInstance");
+                gi.setAccessible(true);
+                target = gi.invoke(null);
+                inject = findInject(InputManager.class);
+                if (target == null || inject == null) throw new IllegalStateException("no InputManager");
+                how = "A";
+            } catch (Throwable a) {                            // way B: straight to the input service
+                Object binder = Class.forName("android.os.ServiceManager").getMethod("getService", String.class).invoke(null, "input");
+                target = Class.forName("android.hardware.input.IInputManager$Stub").getMethod("asInterface", android.os.IBinder.class).invoke(null, binder);
+                inject = findInject(target.getClass());
+                if (target == null || inject == null) throw new IllegalStateException("no input service (" + a + ")");
+                how = "B";
+            }
+            inject.setAccessible(true);
         } catch (Throwable t) {
             System.out.println("PVR-ERR setup " + t);
             System.out.flush();
             return;
         }
+        System.out.println("PVR-INFO way " + how);
         System.out.println("PVR-READY");
         System.out.flush();
         try {

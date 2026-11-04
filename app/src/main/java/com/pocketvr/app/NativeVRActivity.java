@@ -440,7 +440,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 () -> motion.lagMs = Math.min(200, motion.lagMs + 20));
 
         s.cat("⚙", "ระบบ");
-        s.cycle("🔌", "Shizuku (เปิดแอปจริงแบบลอย)", () -> NvShizuku.statusText(), () -> { NvShizuku.request(); menu.toast("Shizuku: " + NvShizuku.statusText()); });
+        s.cycle("🔌", "Shizuku (เปิดแอปจริงแบบลอย)", () -> NvShizuku.statusText() + (NvShizuku.ready() ? " | " + NvShizuku.inputInfo() : ""), () -> {
+            NvShizuku.request();
+            if (NvShizuku.ready()) { NvShizuku.restartInput(getPackageCodePath()); menu.toast("ตัวช่วยสัมผัสเร็ว: เริ่มใหม่"); }
+            else menu.toast("Shizuku: " + NvShizuku.statusText());
+        });
         s.action("♻", "คืนค่าตั้งต้นทั้งหมด", "รีเซ็ต", () -> { applyPrefs(defaults); resetWins(); refreshGlass(); savePrefsNow(); menu.toast("คืนค่าตั้งต้นแล้ว"); });
         s.action("🕸", "เวอร์ชันเว็บ (สำรอง)", "เปิด", () -> runOnUiThread(() -> {
             try { startActivity(new android.content.Intent(this, MainActivity.class)); } catch (Throwable t) { err = "web: " + t; }
