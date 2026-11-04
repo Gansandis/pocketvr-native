@@ -547,6 +547,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // the hand model answers 20-30 times a second but the screen is drawn 60 times a second: between answers the points are moved on
     // by their measured speed. Times are the moments the pictures were TAKEN (from the camera thread), not the moments this loop noticed
     // them, so the speed is not shaken by the 16 ms steps of the draw loop and the lead covers the real delay of the picture.
+    private float rfX = 0, rfY = 0;
     private void predictNow(long now) {
         float[] r = cam.result;
         if (r != lastRes) {
@@ -555,6 +556,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             long tc = cam.resultCapT;
             if (tc <= 0 || tc > now) tc = now;
             lastRes = r; handT = tc;
+            rfX = cam.resFlowX; rfY = cam.resFlowY;
             if (vel.length != r.length) vel = new float[r.length];
             if (prev != null && prev.length == r.length && r[0] >= 1 && tc - tPrev >= 8 && tc - tPrev < 350) {
                 float dt = (tc - tPrev) / 1000f;
@@ -569,14 +571,26 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
         }
         if (disp.length != r.length) disp = new float[r.length];
-        System.arraycopy(r, 0, disp, 0, r.length);
+        // how far the whole hand has moved since the picture the model answered about (seen by the camera-rate follower): the points are moved on by that,
+        // so the hand is drawn where it is now, not where it was ~100 ms ago
+        boolean fo = cam.flowOn && cam.flowOk && r[0] >= 1 && now - cam.flowT < 150;
+        float shx = 0f, shy = 0f;
+        if (fo) {
+            shx = Math.max(-0.35f, Math.min(0.35f, cam.flowX - rfX));
+            shy = Math.max(-0.35f, Math.min(0.35f, cam.flowY - rfY));
+        }
+        for (int i = 0; i < r.length; i++) {
+            float v = r[i];
+            if (i > 0) { int m = (i - 1) % 3; if (m == 0) v += shx; else if (m == 1) v += shy; }
+            disp[i] = v;
+        }
         if (predict && r[0] >= 1) {
-            // from the moment of the picture to the moment this frame is shown (+ about one frame on the screen)
-            float lead = Math.max(0, Math.min(now - handT + 18, 140)) / 1000f;
+            // from the moment of the newest picture that was followed (or of the model's picture) to the moment this frame is shown
+            float lead = fo ? Math.max(0, Math.min(now - cam.flowT + 18, 90)) / 1000f : Math.max(0, Math.min(now - handT + 18, 140)) / 1000f;
             predMs = lead * 1000f;
             for (int i = 1; i < r.length; i++) {
                 if ((i - 1) % 3 == 2) continue;
-                disp[i] = r[i] + vel[i] * lead * 0.9f;
+                disp[i] += vel[i] * lead * 0.9f;
             }
         } else predMs = 0;
     }

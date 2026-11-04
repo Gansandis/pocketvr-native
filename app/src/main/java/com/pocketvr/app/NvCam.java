@@ -52,6 +52,13 @@ public class NvCam {
     private boolean handsOpened = false, handsFailed = false;
 
     public volatile float[] result = new float[]{0};
+    public volatile boolean flowOn = true;         // follow the hand between the model's answers by looking at how the picture moved (NvFlow)
+    public volatile boolean flowOk = false;
+    public volatile float flowX = 0, flowY = 0, resFlowX = 0, resFlowY = 0;     // moves added up now / at the time of the picture behind `result`
+    public volatile long flowT = 0;
+    private final NvFlow flow = new NvFlow();
+    private final byte[] gray = new byte[NvFlow.GW * NvFlow.GH];
+    private final float[] cat = new float[2];
     public volatile long resultCapT = 0;           // time (ms, System.nanoTime based) the picture behind `result` was taken
     public volatile boolean filt = true;           // steady the points: little shake when the hand is slow, almost no delay when it is quick
     private float[] fx = new float[127], fd = new float[127];
@@ -66,6 +73,35 @@ public class NvCam {
     private volatile int sensorOri = -1, prevW = 0, prevH = 0;
     private volatile boolean curRot180 = false;
     private android.hardware.display.DisplayManager.DisplayListener dispLis;
+
+    // look at how the picture inside the hand's box moved since the last frame (see NvFlow)
+    private void feedFlow(Image img, long now) {
+        float[] rr = result;
+        float[] box = null;
+        if (rr != null && rr.length > 0 && rr[0] >= 1) {
+            float sx = flow.cumX() - resFlowX, sy = flow.cumY() - resFlowY;           // the hand is where the model saw it plus what moved since
+            float x0 = 1f, y0 = 1f, x1 = 0f, y1 = 0f;
+            int n = Math.min(2, (int) rr[0]);
+            for (int hnd = 0; hnd < n && rr.length >= 1 + (hnd + 1) * 63; hnd++) {
+                for (int k = 0; k < 21; k++) {
+                    float x = rr[1 + hnd * 63 + k * 3] + sx, y = rr[1 + hnd * 63 + k * 3 + 1] + sy;
+                    if (x < x0) x0 = x; if (x > x1) x1 = x;
+                    if (y < y0) y0 = y; if (y > y1) y1 = y;
+                }
+            }
+            if (x1 > x0 && y1 > y0) box = new float[]{Math.max(0f, x0 - 0.02f), Math.max(0f, y0 - 0.02f), Math.min(1f, x1 + 0.02f), Math.min(1f, y1 + 0.02f)};
+        }
+        Image.Plane yp = img.getPlanes()[0];
+        ByteBuffer yb = yp.getBuffer();
+        int w = img.getWidth(), h = img.getHeight(), rs = yp.getRowStride();
+        for (int gy = 0; gy < NvFlow.GH; gy++) {
+            int row = Math.min(h - 1, (2 * gy + 1) * h / (2 * NvFlow.GH)) * rs;
+            for (int gx = 0; gx < NvFlow.GW; gx++) gray[gy * NvFlow.GW + gx] = yb.get(row + Math.min(w - 1, (2 * gx + 1) * w / (2 * NvFlow.GW)));
+        }
+        flow.feed(gray, now, box);
+        flowX = flow.cumX(); flowY = flow.cumY(); flowT = now;
+        flowOk = box != null && flow.valid();
+    }
 
     private void applyRotation() {
         try {
@@ -135,7 +171,7 @@ public class NvCam {
         }
         handsOpened = false;
         detBusy.set(false);
-        detBmp = null; fOk = false;
+        detBmp = null; fOk = false; flow.reset(); flowOk = false;
     }
 
     private static Size pick(Size[] list, int tw, int th, double aspect) {
@@ -245,6 +281,7 @@ public class NvCam {
             if (now - camT0 >= 1000) { camFps = camCount * 1000f / (now - camT0); camCount = 0; camT0 = now; }
             NvMotion mo = motion;
             if (mo != null && mo.enabled) { try { mo.hands = result; mo.feed(img, hFov); } catch (Throwable t) { mo.err = String.valueOf(t); } }
+            if (flowOn) { try { feedFlow(img, now); } catch (Throwable t) { flowOk = false; } } else flowOk = false;
             float[] rr = result;
             if (rr != null && rr.length > 0 && rr[0] >= 1) lastSeenHand = now;
             long pace = detPaceMs;
@@ -280,7 +317,10 @@ public class NvCam {
                         } else if (tn - lastHandT > 1000 && autoDown) autoDown = false;          // hands were lowered: look for two again next time
                         // one or two empty answers in a row (a blink of the model) must not drop the hand: keep the last good points for a moment
                         if (res[0] < 1 && result.length > 0 && result[0] >= 1 && tn - lastHandT < 260) res = result;
-                        else resultCapT = ts;                       // when the picture the points belong to was taken (written before the points, so a reader of the new points sees this time)
+                        else {
+                            resultCapT = ts;
+                            flow.cumAt(ts, cat); resFlowX = cat[0]; resFlowY = cat[1];     // where the moves stood when that picture was taken (set before the points)
+                        }                       // when the picture the points belong to was taken (written before the points, so a reader of the new points sees this time)
                         result = res;
                         long t = System.nanoTime() / 1000000L;
                         detCount++;

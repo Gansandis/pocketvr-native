@@ -1,0 +1,119 @@
+package com.pocketvr.app;
+
+/**
+ * Follows the hand between two answers of the hand model, at the camera's own rate.
+ * The hand model needs ~70-100 ms per picture on this kind of phone, so its answers are old when they arrive and come only ~10 times a second.
+ * This class looks at how the little grey picture inside the hand's box moved from one camera frame to the next (block matching, to a fraction of a pixel),
+ * and adds the moves up (cumX, cumY, as a fraction of the picture size). The renderer then moves the model's points on by "moves since the picture
+ * that answer belongs to": the hand shows up where it is NOW, not where it was 70+ ms ago. Only a shift of the whole hand is followed
+ * (finger bending still waits for the model).
+ * No Android classes here, so it can be tested anywhere.
+ */
+final class NvFlow {
+    static final int GW = 192, GH = 108;
+    private static final int R = 10;               // largest move per frame that is looked for, in grey pixels (about 5 % of the picture width)
+    private static final int HN = 96;
+
+    private byte[] prev = new byte[GW * GH];
+    private boolean havePrev = false;
+    private float cumX = 0f, cumY = 0f;
+    private final long[] ht = new long[HN];
+    private final float[] hx = new float[HN], hy = new float[HN];
+    private int hn = 0, hi = 0;
+    private int fails = 0;
+    private boolean valid = false;
+    private long lastT = 0;
+
+    synchronized boolean valid() { return valid; }
+    synchronized long lastTime() { return lastT; }
+    synchronized float cumX() { return cumX; }
+    synchronized float cumY() { return cumY; }
+
+    synchronized void reset() { havePrev = false; hn = 0; hi = 0; fails = 0; valid = false; }
+
+    /** the moves added up as they were at time t (between two frames: in between). Out of range: the nearest one. */
+    synchronized void cumAt(long t, float[] out) {
+        if (hn == 0) { out[0] = cumX; out[1] = cumY; return; }
+        int newest = (hi - 1 + HN) % HN, oldest = hn < HN ? 0 : hi;
+        if (t >= ht[newest]) { out[0] = hx[newest]; out[1] = hy[newest]; return; }
+        if (t <= ht[oldest]) { out[0] = hx[oldest]; out[1] = hy[oldest]; return; }
+        int a = oldest;
+        for (int k = 0; k < hn - 1; k++) {
+            int i0 = (oldest + k) % HN, i1 = (oldest + k + 1) % HN;
+            if (ht[i1] >= t) { a = i0; break; }
+        }
+        int b = (a + 1) % HN;
+        float f = ht[b] == ht[a] ? 0f : (float) (t - ht[a]) / (ht[b] - ht[a]);
+        out[0] = hx[a] + (hx[b] - hx[a]) * f;
+        out[1] = hy[a] + (hy[b] - hy[a]) * f;
+    }
+
+    private void push(long t) {
+        ht[hi] = t; hx[hi] = cumX; hy[hi] = cumY;
+        hi = (hi + 1) % HN;
+        if (hn < HN) hn++;
+    }
+
+    /**
+     * gray: GW*GH picture of this frame; t: when the frame was taken (ms);
+     * box: the hand's box {x0, y0, x1, y1} as fractions of the picture, or null when there is no hand (then nothing is measured).
+     */
+    synchronized void feed(byte[] gray, long t, float[] box) {
+        lastT = t;
+        boolean ok = false;
+        if (havePrev && box != null) {
+            int x0 = Math.max(R + 1, (int) (box[0] * GW)), x1 = Math.min(GW - R - 2, (int) (box[2] * GW));
+            int y0 = Math.max(R + 1, (int) (box[1] * GH)), y1 = Math.min(GH - R - 2, (int) (box[3] * GH));
+            if (x1 - x0 >= 18 && y1 - y0 >= 18) {
+                // is there enough to look at in the box? (a flat patch cannot be followed)
+                int n = 0, sum = 0;
+                for (int y = y0; y < y1; y += 2) for (int x = x0; x < x1; x += 2) { sum += prev[y * GW + x] & 0xFF; n++; }
+                int mean = sum / Math.max(1, n), dev = 0;
+                for (int y = y0; y < y1; y += 2) for (int x = x0; x < x1; x += 2) dev += Math.abs((prev[y * GW + x] & 0xFF) - mean);
+                float texture = (float) dev / Math.max(1, n);
+                if (texture > 3.5f) {
+                    final int S = 2 * R + 1;
+                    int[] sad = new int[S * S];
+                    int best = Integer.MAX_VALUE, bi = 0;
+                    long tot = 0;
+                    for (int dy = -R; dy <= R; dy++) {
+                        for (int dx = -R; dx <= R; dx++) {
+                            int s = 0;
+                            for (int y = y0; y < y1; y += 2) {
+                                int rp = y * GW, rc = (y + dy) * GW + dx;
+                                for (int x = x0; x < x1; x += 2) s += Math.abs((prev[rp + x] & 0xFF) - (gray[rc + x] & 0xFF));
+                            }
+                            int idx = (dy + R) * S + (dx + R);
+                            sad[idx] = s; tot += s;
+                            if (s < best) { best = s; bi = idx; }
+                        }
+                    }
+                    int bx = bi % S, by = bi / S;
+                    float mean2 = (float) tot / (S * S);
+                    // clear single minimum, and not on the edge of what is searched (a bigger move than that cannot be told)
+                    if (bx > 0 && bx < S - 1 && by > 0 && by < S - 1 && best < 0.8f * mean2) {
+                        float sx = sub(sad[by * S + bx - 1], sad[bi], sad[by * S + bx + 1]);
+                        float sy = sub(sad[(by - 1) * S + bx], sad[bi], sad[(by + 1) * S + bx]);
+                        cumX += ((bx - R) + sx) / GW;
+                        cumY += ((by - R) + sy) / GH;
+                        ok = true;
+                    }
+                }
+            }
+        }
+        if (box == null) { valid = false; fails = 0; }
+        else if (ok) { fails = 0; valid = true; }
+        else if (++fails > 6) valid = false;                  // lost for a while: say so, the renderer goes back to guessing from speed
+        System.arraycopy(gray, 0, prev, 0, GW * GH);
+        havePrev = true;
+        push(t);
+    }
+
+    /** where the lowest point of a parabola through three values lies (-0.5 .. 0.5) */
+    private static float sub(int a, int b, int c) {
+        float d = a - 2f * b + c;
+        if (d <= 1e-3f) return 0f;
+        float o = 0.5f * (a - c) / d;
+        return Math.max(-0.5f, Math.min(0.5f, o));
+    }
+}
