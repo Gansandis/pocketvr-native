@@ -62,6 +62,23 @@ public class NvCam {
     private byte[] yB = new byte[0], uB = new byte[0], vB = new byte[0];
     private int[] colX = new int[0], colU = new int[0], colV = new int[0];
     private int mapW = -1, mapOw = -1, mapUps = -1, mapVps = -1;
+    // the phone can be turned over (landscape the other way) while the app runs: the camera picture must then be turned 180 degrees as well
+    private volatile int sensorOri = -1, prevW = 0, prevH = 0;
+    private volatile boolean curRot180 = false;
+    private android.hardware.display.DisplayManager.DisplayListener dispLis;
+
+    private void applyRotation() {
+        try {
+            if (sensorOri < 0 || prevW <= 0) return;
+            int disp = act.getWindowManager().getDefaultDisplay().getRotation() * 90;
+            boolean r = ((sensorOri - disp + 360) % 360) == 180;
+            if (r != curRot180) {
+                curRot180 = r;
+                NvMotion mo = motion; if (mo != null) mo.rot180 = r;
+                lis.onImageSize(prevW, prevH, r);
+            }
+        } catch (Throwable ignored) { }
+    }
     public volatile float camFps = 0, detHz = 0, convMs = 0;
     public volatile float hFov = 1.15f;           // horizontal field of view of the camera, radians
     public volatile NvMotion motion;
@@ -87,10 +104,23 @@ public class NvCam {
         ht.start();
         h = new Handler(ht.getLooper());
         h.post(() -> open(st));
+        try {
+            final android.hardware.display.DisplayManager dm = (android.hardware.display.DisplayManager) act.getSystemService(Context.DISPLAY_SERVICE);
+            dispLis = new android.hardware.display.DisplayManager.DisplayListener() {
+                @Override public void onDisplayAdded(int id) { }
+                @Override public void onDisplayRemoved(int id) { }
+                @Override public void onDisplayChanged(int id) { applyRotation(); }
+            };
+            dm.registerDisplayListener(dispLis, h);
+        } catch (Throwable ignored) { dispLis = null; }
     }
 
     public void stop() {
         running = false;
+        try {
+            if (dispLis != null) ((android.hardware.display.DisplayManager) act.getSystemService(Context.DISPLAY_SERVICE)).unregisterDisplayListener(dispLis);
+        } catch (Throwable ignored) { }
+        dispLis = null;
         try { if (sess != null) sess.close(); } catch (Throwable ignored) { }
         try { if (dev != null) dev.close(); } catch (Throwable ignored) { }
         try { if (reader != null) reader.close(); } catch (Throwable ignored) { }
@@ -153,6 +183,7 @@ public class NvCam {
             previewSurface = new Surface(st);
             reader = ImageReader.newInstance(an.getWidth(), an.getHeight(), ImageFormat.YUV_420_888, 3);
             reader.setOnImageAvailableListener(r -> onImage(r), h);
+            sensorOri = so != null ? so : -1; prevW = prev.getWidth(); prevH = prev.getHeight(); curRot180 = rot180;
             lis.onImageSize(prev.getWidth(), prev.getHeight(), rot180);
 
             Range<Integer> fps = null, fps30 = null;
@@ -209,6 +240,7 @@ public class NvCam {
             if (img == null) return;
             long now = System.nanoTime() / 1000000L;
             camCount++;
+            if ((camCount & 15) == 0) applyRotation();                 // also checked now and then, in case the system did not tell us
             if (camT0 == 0) camT0 = now;
             if (now - camT0 >= 1000) { camFps = camCount * 1000f / (now - camT0); camCount = 0; camT0 = now; }
             NvMotion mo = motion;
