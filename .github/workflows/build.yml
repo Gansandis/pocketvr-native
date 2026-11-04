@@ -54,7 +54,7 @@ jobs:
           # safety net 1: if only the new native VR screen breaks the build, replace it with an empty stub
           echo "falling back: stub for the native VR screen"
           D=app/src/main/java/com/pocketvr/app
-          rm -f $D/NvCam.java $D/NvHands.java $D/VRRenderer.java $D/NvUi.java $D/NvContent.java $D/NvPanel.java $D/NvKeyboard.java $D/NvBrowser.java $D/NvMotion.java $D/NvMedia.java $D/NvVideo.java $D/NvSettings.java $D/NvShizuku.java $D/NvAppWin.java
+          rm -f $D/NvCam.java $D/NvHands.java $D/VRRenderer.java $D/NvUi.java $D/NvContent.java $D/NvPanel.java $D/NvKeyboard.java $D/NvBrowser.java $D/NvMotion.java $D/NvMedia.java $D/NvVideo.java $D/NvSettings.java $D/NvShizuku.java $D/NvAppWin.java $D/NvInputServer.java
           sed -i '/dev.rikka.shizuku/d' app/build.gradle
           sed -i '/SHIZUKU-BEGIN/,/SHIZUKU-END/d' app/src/main/AndroidManifest.xml
           cat > $D/NativeVRActivity.java <<'STUB'
