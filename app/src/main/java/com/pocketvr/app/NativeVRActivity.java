@@ -632,8 +632,12 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }
 
+    /** is the VR screen in front? (a floating app that jumps onto the phone's own screen makes this false) */
+    public static volatile boolean resumed = false;
+
     @Override protected void onResume() {
         super.onResume();
+        resumed = true;
         immersive();
         gl.onResume();
         try {
@@ -650,6 +654,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     @Override protected void onPause() {
+        resumed = false;
         savePrefsNow();
         ui.removeCallbacks(tick);
         try { if (sm != null) sm.unregisterListener(sl); } catch (Throwable ignored) { }

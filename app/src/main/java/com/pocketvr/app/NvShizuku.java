@@ -108,5 +108,63 @@ public final class NvShizuku {
         });
     }
 
+    // ---- fast touch / key injection: a small helper program (NvInputServer) running as the shell user, fed through a pipe ----
+    private static Process inProc;
+    private static OutputStream inOut;
+    private static volatile boolean inReady = false;
+    private static final ExecutorService inEx = Executors.newSingleThreadExecutor();
+
+    public static boolean inputReady() { return inReady && inProc != null; }
+
+    private static Process spawn(String[] cmd) throws Exception {
+        Method m = Shizuku.class.getDeclaredMethod("newProcess", String[].class, String[].class, String.class);
+        m.setAccessible(true);
+        return (Process) m.invoke(null, cmd, null, null);
+    }
+
+    private static void addLog(String t) {
+        synchronized (log) { log.append(t).append('\n'); if (log.length() > 700) log.delete(0, log.length() - 700); lastLog = log.toString(); }
+    }
+
+    /** start the helper (once). apk = this app's APK path. It says PVR-READY when it works; until then taps go through the slower "input" command. */
+    public static void startInput(final String apk) {
+        if (!ready()) return;
+        inEx.execute(() -> {
+            try {
+                if (inProc != null) { try { inProc.exitValue(); inProc = null; inReady = false; } catch (IllegalThreadStateException running) { return; } }
+                final Process pr = spawn(new String[]{"sh", "-c", "CLASSPATH='" + apk + "' exec app_process /system/bin com.pocketvr.app.NvInputServer"});
+                inProc = pr; inOut = pr.getOutputStream(); inReady = false;
+                Thread o = new Thread(() -> {
+                    try {
+                        java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(pr.getInputStream()));
+                        String l;
+                        while ((l = r.readLine()) != null) { if (l.contains("PVR-READY")) inReady = true; else addLog(l); }
+                    } catch (Throwable ignored) { }
+                    inReady = false;
+                });
+                o.setDaemon(true); o.start();
+                Thread e = new Thread(() -> {
+                    try {
+                        java.io.BufferedReader r = new java.io.BufferedReader(new java.io.InputStreamReader(pr.getErrorStream()));
+                        String l;
+                        while ((l = r.readLine()) != null) addLog(l);
+                    } catch (Throwable ignored) { }
+                });
+                e.setDaemon(true); e.start();
+            } catch (Throwable t) { addLog("input: " + t); inProc = null; inReady = false; }
+        });
+    }
+
+    /** one line for the helper: "d|m|u x y display" or "k keycode display" */
+    public static void sendInput(final String line) {
+        inEx.execute(() -> {
+            try {
+                if (inOut == null) return;
+                inOut.write((line + "\n").getBytes("UTF-8"));
+                inOut.flush();
+            } catch (Throwable t) { inReady = false; }
+        });
+    }
+
     public static void clearLog() { synchronized (log) { log.setLength(0); lastLog = ""; } }
 }

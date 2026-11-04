@@ -70,10 +70,12 @@ public class NvAppWin implements NvContent {
     private int displayId = -1;
     private volatile long gapMs = 50;
     private long lastFrame = 0, launchT = 0;
+    private volatile boolean jumped = false, framePending = false;
 
     // touch
     private boolean touching = false, moved = false;
-    private float tx0, ty0, tlx, tly;
+    private float tx0, ty0, tlx, tly, sx0, sy0;
+    private boolean streaming = false;
     private long tDown = 0;
     private static final int HN = 16;
     private final float[] hx = new float[HN], hy = new float[HN];
@@ -103,7 +105,7 @@ public class NvAppWin implements NvContent {
                     thread = new HandlerThread("pvr-app");
                     thread.start();
                     bg = new Handler(thread.getLooper());
-                    reader = ImageReader.newInstance(dw(), dh(), PixelFormat.RGBA_8888, 2);
+                    reader = ImageReader.newInstance(dw(), dh(), PixelFormat.RGBA_8888, 3);
                     reader.setOnImageAvailableListener(this::onFrame, bg);
                     DisplayManager dm = (DisplayManager) act.getSystemService(Context.DISPLAY_SERVICE);
                     int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY;
@@ -112,6 +114,7 @@ public class NvAppWin implements NvContent {
                     displayId = display.getDisplay().getDisplayId();
                 }
                 opened = true;
+                try { NvShizuku.startInput(act.getPackageCodePath()); } catch (Throwable ignored) { }
                 launch();
             } catch (Throwable t) {
                 err = String.valueOf(t);
@@ -130,6 +133,15 @@ public class NvAppWin implements NvContent {
         final int id = displayId;
         ui.postDelayed(() -> NvShizuku.run("am start --display " + id + " -n '" + comp + "'"), 400);
         launchT = System.currentTimeMillis();
+        jumped = false;
+        // if the app took over the phone's own screen instead of the window, PocketVR is no longer in front: bring it back (only then, so nothing blinks otherwise)
+        for (int ms : new int[]{2500, 6000}) ui.postDelayed(() -> {
+            if (opened && !NativeVRActivity.resumed) {
+                jumped = true;
+                NvShizuku.run("am start -f 0x20020000 -n " + act.getPackageName() + "/.NativeVRActivity");
+                dirty = true;
+            }
+        }, ms);
         dirty = true;
     }
 
@@ -154,13 +166,24 @@ public class NvAppWin implements NvContent {
         thread = null; bg = null;
     }
 
+    private final Runnable pollFrame = () -> {
+        framePending = false;
+        ImageReader r = reader;
+        if (r != null) onFrame(r);
+    };
+
     private void onFrame(ImageReader r) {
+        long now = SystemClock.uptimeMillis();
+        long wait = gapMs - (now - lastFrame);
+        if (wait > 0) {                                  // too soon: look again a little later (this may be the last change, and nothing else would follow it)
+            Handler h = bg;
+            if (!framePending && h != null) { framePending = true; h.postDelayed(pollFrame, wait); }
+            return;
+        }
         Image img = null;
         try {
             img = r.acquireLatestImage();
             if (img == null) return;
-            long now = SystemClock.uptimeMillis();
-            if (now - lastFrame < gapMs) return;
             lastFrame = now;
             Image.Plane pl = img.getPlanes()[0];
             ByteBuffer buf = pl.getBuffer();
@@ -192,7 +215,11 @@ public class NvAppWin implements NvContent {
     private void swipe(float x0, float y0, float x1, float y1, long ms) {
         NvShizuku.run("input -d " + displayId + " swipe " + Math.round(ax(x0)) + " " + Math.round(ay(y0)) + " " + Math.round(ax(x1)) + " " + Math.round(ay(y1)) + " " + Math.max(80, Math.min(600, ms)));
     }
-    private void key(int code) { NvShizuku.run("input -d " + displayId + " keyevent " + code); }
+    private void key(int code) {
+        if (NvShizuku.inputReady()) NvShizuku.sendInput("k " + code + " " + displayId);
+        else NvShizuku.run("input -d " + displayId + " keyevent " + code);
+    }
+    private void touchLine(char a, float x, float y) { NvShizuku.sendInput(a + " " + Math.round(ax(x)) + " " + Math.round(ay(y)) + " " + displayId); }
 
     public final NvKeyboard.Sink sink = new NvKeyboard.Sink() {
         @Override public void onText(final String s) {
@@ -218,7 +245,7 @@ public class NvAppWin implements NvContent {
         ui.post(() -> {
             try {
                 if (display != null) {
-                    ImageReader nr = ImageReader.newInstance(dw(), dh(), PixelFormat.RGBA_8888, 2);
+                    ImageReader nr = ImageReader.newInstance(dw(), dh(), PixelFormat.RGBA_8888, 3);
                     nr.setOnImageAvailableListener(this::onFrame, bg);
                     display.setSurface(nr.getSurface());
                     display.resize(dw(), dh(), 240);
@@ -286,17 +313,23 @@ public class NvAppWin implements NvContent {
                 if (ht[k] != 0 && now - ht[k] <= 300 && now - ht[k] >= 70 && Math.hypot(hx[k] - x, hy[k] - y) < 90) { sx = hx[k]; sy = hy[k]; break; }
             }
             touching = true; moved = false; tx0 = tlx = sx; ty0 = tly = sy - TB; tDown = now;
+            streaming = NvShizuku.inputReady();
+            if (streaming) touchLine('d', tx0, ty0);
             dirty = true;
         } else if (touching && pinch) {
-            // a tap is the default: only a clear move becomes a swipe
+            // a tap is the default: only a clear move starts a drag, and the drag is measured from where it began (no jump)
             float cx = x, cy = y - TB;
-            if (valid && !moved && Math.hypot(cx - tx0, cy - ty0) > 60) moved = true;
-            if (valid && moved) { tlx = Math.max(0, Math.min(PW, cx)); tly = Math.max(0, Math.min(PH, cy)); }
+            if (valid && !moved && Math.hypot(cx - tx0, cy - ty0) > (streaming ? 40 : 60)) { moved = true; sx0 = cx; sy0 = cy; }
+            if (valid && moved) {
+                tlx = Math.max(0, Math.min(PW, tx0 + (cx - sx0))); tly = Math.max(0, Math.min(PH, ty0 + (cy - sy0)));
+                if (streaming) touchLine('m', tlx, tly);
+            }
             dirty = true;
         } else if (touching && !pinch) {
             touching = false;
             long held = now - tDown;
-            if (moved) swipe(tx0, ty0, tlx, tly, Math.min(400, held));
+            if (streaming) touchLine('u', moved ? tlx : tx0, moved ? tly : ty0);
+            else if (moved) swipe(tx0, ty0, tlx, tly, Math.min(400, held));
             else if (held > 700) swipe(tx0, ty0, tx0 + 1, ty0 + 1, 800);       // held without moving: long press
             else tap(tx0, ty0);
             dirty = true;
@@ -367,6 +400,7 @@ public class NvAppWin implements NvContent {
                 round(pg, 0xFF101218, 0);
                 String m;
                 if (!err.isEmpty()) m = "เปิดไม่ได้: " + err;
+                else if (jumped) m = "แอปนี้ไม่ยอมอยู่ในหน้าต่างลอย (เด้งไปจอจริง)\nใช้แบบลอยไม่ได้ ลองแอปอื่น หรือกด ⟳";
                 else if (!NvShizuku.ready()) m = "Shizuku ยังไม่พร้อม";
                 else if (opened) {
                     m = "กำลังเปิดแอป…";
