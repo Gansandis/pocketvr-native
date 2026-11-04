@@ -55,8 +55,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     /** a whole-sky (equirectangular) picture to look around in; null = back to the camera */
     public void setPano(android.graphics.Bitmap b) { panoBmp = b; panoCmd = b == null ? 2 : 1; }
     private float cnx = 0, cny = 0;
+    private volatile float[] rotPrev = null;
+    private volatile long tPrev = 0, tLast = 0;
+    private volatile float[] rotView = new float[]{1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1};   // what the picture is drawn with (the turn, carried on to this very moment)
     public void setRotation(float[] m) {
-        float[] c = m.clone(); rotNow = c;
+        float[] c = m.clone();
+        rotPrev = rotNow; tPrev = tLast; tLast = System.nanoTime();
+        rotNow = c;
         synchronized (rhLock) { rhT[rhI] = System.nanoTime(); rhM[rhI] = c; rhI = (rhI + 1) % rhT.length; }
     }
     // camera picture timewarp: the picture is ~100 ms old when it is shown, so it is turned by how far the head has turned since it was taken
@@ -69,12 +74,61 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private int rhI = 0;
     private float[] frameRot = null;
     private final float[] dm3 = new float[9];
+    /** keep the turn a clean rotation (columns of length 1, at right angles) */
+    private static void ortho(float[] m) {
+        float a0 = m[0], a1 = m[1], a2 = m[2];
+        float l = (float) Math.sqrt(a0 * a0 + a1 * a1 + a2 * a2); if (l < 1e-6f) return;
+        a0 /= l; a1 /= l; a2 /= l;
+        float b0 = m[4], b1 = m[5], b2 = m[6];
+        float d = a0 * b0 + a1 * b1 + a2 * b2;
+        b0 -= d * a0; b1 -= d * a1; b2 -= d * a2;
+        l = (float) Math.sqrt(b0 * b0 + b1 * b1 + b2 * b2); if (l < 1e-6f) return;
+        b0 /= l; b1 /= l; b2 /= l;
+        m[0] = a0; m[1] = a1; m[2] = a2; m[4] = b0; m[5] = b1; m[6] = b2;
+        m[8] = a1 * b2 - a2 * b1; m[9] = a2 * b0 - a0 * b2; m[10] = a0 * b1 - a1 * b0;
+        m[3] = m[7] = m[11] = m[12] = m[13] = m[14] = 0f; m[15] = 1f;
+    }
+
+    /** the head's turn at a moment in the past, in between the two readings around it (smooth even when the sensor is slow) */
     private float[] rotBefore(long t) {
         synchronized (rhLock) {
-            float[] best = null; long bt = Long.MIN_VALUE;
-            for (int i = 0; i < rhT.length; i++) if (rhM[i] != null && rhT[i] <= t && rhT[i] > bt) { bt = rhT[i]; best = rhM[i]; }
-            return best;
+            float[] a = null, b = null; long ta = Long.MIN_VALUE, tb = Long.MAX_VALUE;
+            for (int i = 0; i < rhT.length; i++) {
+                if (rhM[i] == null) continue;
+                if (rhT[i] <= t && rhT[i] > ta) { ta = rhT[i]; a = rhM[i]; }
+                if (rhT[i] > t && rhT[i] < tb) { tb = rhT[i]; b = rhM[i]; }
+            }
+            if (a == null || b == null || tb - ta > 100_000_000L) return a;
+            float f = (float) (t - ta) / (float) (tb - ta);
+            float[] o = new float[16];
+            for (int i = 0; i < 16; i++) o[i] = a[i] + (b[i] - a[i]) * f;
+            ortho(o);
+            return o;
         }
+    }
+
+    /** once per picture: carry the last two readings on to this moment, so the view turns smoothly even if the sensor is slower than the screen */
+    private void updateView() {
+        float[] r1 = rotNow, r0 = rotPrev; long t1 = tLast, t0 = tPrev;
+        long now = System.nanoTime();
+        if (r1 == null) return;
+        float span = (t1 - t0) / 1e9f, dt = (now - t1) / 1e9f;
+        if (r0 == null || span < 0.002f || span > 0.1f || dt <= 0f) { rotView = r1; return; }
+        float k = Math.min(dt, 0.025f) / span;                 // never look further ahead than 25 ms
+        float[] e = new float[9];
+        for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) {
+            float dl = 0f;
+            for (int j = 0; j < 3; j++) dl += r1[j * 4 + r] * r0[j * 4 + c];          // R1 * R0^T
+            e[r * 3 + c] = (r == c ? 1f : 0f) + k * (dl - (r == c ? 1f : 0f));
+        }
+        float[] o = new float[16];
+        for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) {
+            float s = 0f;
+            for (int j = 0; j < 3; j++) s += e[r * 3 + j] * r1[c * 4 + j];
+            o[c * 4 + r] = s;
+        }
+        ortho(o);
+        rotView = o;
     }
     public float[] rotCopy() { return rotNow; }
     public volatile NvMotion motion;
@@ -222,7 +276,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (mo != null && mo.enabled) { mux += (mo.px - mux) * 0.18f; muy += (mo.py - muy) * 0.18f; muz += (mo.pz - muz) * 0.18f; }
         else { mux = muy = muz = 0f; }
         float nx = 0f, ny = 0f, nz = 0f;
-        float[] rn = rotNow;
+        float[] rn = rotView;
         if (neck && rn != null) {
             // the eyes are 9 cm above and 10 cm in front of the point the head turns around (the neck): where they are in the room = that offset turned by the head's turn
             final float ey = 0.09f, ez = -0.10f;
@@ -277,7 +331,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     private void computePanel() {
-        float[] rn = rotNow;
+        float[] rn = rotView;
         if (recenter) {
             recenter = false;
             if (resetLayoutReq) {                                    // the OK sign: forget where the windows were left, back to the standard places and sizes
@@ -1040,6 +1094,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (ft0 == 0) ft0 = now;
         if (now - ft0 >= 1000) { fps = fc * 1000f / (now - ft0); fc = 0; ft0 = now; }
 
+        updateView();
         int iw = imgW, ih = imgH;
         if (iw <= 0 || ih <= 0) {
             GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0);
@@ -1087,7 +1142,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                         GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
                         android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, pb, 0);
                         pb.recycle();
-                        float[] m = rotNow;                              // the picture's middle is where you are looking now
+                        float[] m = rotView;                              // the picture's middle is where you are looking now
                         panoLon0 = -(float) Math.atan2(-m[2], -m[6]);
                         panoOn = true;
                     } catch (Throwable t) { panoOn = false; }
@@ -1099,7 +1154,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glViewport(0, 0, sceneW, sceneH);
         GLES20.glDisable(GLES20.GL_BLEND);
         if (panoOn && panoTex != 0) {
-            float[] m = rotNow;
+            float[] m = rotView;
             rm3[0] = m[0]; rm3[1] = m[1]; rm3[2] = m[2]; rm3[3] = m[4]; rm3[4] = m[5]; rm3[5] = m[6]; rm3[6] = m[8]; rm3[7] = m[9]; rm3[8] = m[10];
             GLES20.glUseProgram(progPano);
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
@@ -1116,7 +1171,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (camScale < 0.999f) { GLES20.glClearColor(0f, 0f, 0f, 1f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT); }      // smaller camera picture: dark border
         GLES20.glUseProgram(progCam);
         GLES20.glUniform1f(ul(progCam, "zs"), camScale);
-        float[] fr = frameRot, rn0 = rotNow;
+        float[] fr = frameRot, rn0 = rotView;
         boolean wp = reproj && fr != null && rn0 != null;
         if (wp) {
             for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) {

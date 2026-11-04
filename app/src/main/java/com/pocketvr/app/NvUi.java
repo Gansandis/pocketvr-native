@@ -59,6 +59,9 @@ public class NvUi implements NvContent {
     private final List<Btn> visible = new ArrayList<>();
     private Btn prevB, nextB;
     private int tab = 0, page = 0, pages = 1;
+    private float scroll = 0f, maxScroll = 0f, pressScroll = 0f;
+    private boolean scrolling = false;
+    private final RectF cRect = new RectF();                // where the list of this category is shown (what is scrolled out of it is cut off)
 
     private int W = 0, H = 0;
     public Bitmap bmp;
@@ -86,7 +89,7 @@ public class NvUi implements NvContent {
     private void addTabInternal(String emoji, final String name, String title, List<Btn> items, boolean beforeLast) {
         final Tab t = new Tab();
         t.items = items; t.title = title;
-        t.b = new Btn(emoji, () -> name, null, null, 0, 0, () -> { tab = tabs.indexOf(t); page = 0; layout(); });
+        t.b = new Btn(emoji, () -> name, null, null, 0, 0, () -> { tab = tabs.indexOf(t); page = 0; scroll = 0f; layout(); });
         if (beforeLast && !tabs.isEmpty()) tabs.add(tabs.size() - 1, t); else tabs.add(t);
     }
 
@@ -126,6 +129,11 @@ public class NvUi implements NvContent {
         return true;
     }
 
+    private boolean isItem(Btn b) {
+        for (Tab t : tabs) if (t.items.contains(b)) return true;
+        return false;
+    }
+
     private Btn pressTgt = null;
     private float pressX, pressY;
     private long pressT = 0;
@@ -133,8 +141,7 @@ public class NvUi implements NvContent {
 
     /** turn the page (or move to the next category when there is just one page) */
     private void flip(int dir) {
-        if (pages > 1) { page = (page + pages + dir) % pages; }
-        else { tab = Math.max(0, Math.min(tabs.size() - 1, tab + dir)); page = 0; }
+        tab = Math.max(0, Math.min(tabs.size() - 1, tab + dir)); page = 0; scroll = 0f;
         layout();
         dirty = true;
     }
@@ -185,22 +192,22 @@ public class NvUi implements NvContent {
             rows = Math.max(1, (int) ((ch + gw) / (rowH + gw)));
             cardW = (cw - (cols - 1) * gw) / cols; cardH = rowH;
         }
-        int per = cols * rows;
-        pages = Math.max(1, (list.size() + per - 1) / per);
-        if (page >= pages) page = 0;
+        pages = 1;
+        cRect.set(cx0, cy0, cx0 + cw, cy0 + ch);
         for (Tab tt : tabs) for (Btn b : tt.items) b.r.setEmpty();
-        for (int i = 0; i < per && page * per + i < list.size(); i++) {
+        int nrows = (list.size() + cols - 1) / cols;
+        float total = nrows * (cardH + gw) - gw;
+        maxScroll = Math.max(0f, total - ch);
+        scroll = Math.max(0f, Math.min(maxScroll, scroll));
+        for (int i = 0; i < list.size(); i++) {
             int c = i % cols, rw = i / cols;
-            float x = cx0 + c * (cardW + gw), y = cy0 + rw * (cardH + gw);
-            Btn b = list.get(page * per + i);
+            float x = cx0 + c * (cardW + gw), y = cy0 + rw * (cardH + gw) - scroll;
+            if (y + cardH < cy0 - 2 || y > cy0 + ch + 2) continue;           // out of sight: neither drawn nor pointed at
+            Btn b = list.get(i);
             b.r.set(x, y, x + cardW, y + cardH);
             visible.add(b);
         }
-        float fy = pY + pH - 36 * u;
-        float mx = cx0 + cw / 2f;
-        prevB.r.set(mx - 70 * u, fy, mx - 34 * u, fy + 30 * u);
-        nextB.r.set(mx + 34 * u, fy, mx + 70 * u, fy + 30 * u);
-        if (pages > 1) { visible.add(prevB); visible.add(nextB); } else { prevB.r.setEmpty(); nextB.r.setEmpty(); }
+        prevB.r.setEmpty(); nextB.r.setEmpty();
     }
 
     private void round(RectF r, int color, float rad) {
@@ -273,8 +280,10 @@ public class NvUi implements NvContent {
             text(t.emoji, t.r.left + 28 * u, t.r.centerY(), 26 * u, 0xFFFFFFFF, 0);
             textA(t.label.get(), t.r.left + 54 * u, t.r.centerY(), 22 * u, 0xFFFFFFFF, t.r.width() - 62 * u, Paint.Align.LEFT);
         }
-        // content
+        // content (cut off at the edges of the list, so it can be scrolled)
         List<Btn> list = ct.items;
+        cv.save();
+        cv.clipRect(cRect);
         for (Btn b : list) {
             if (b.r.isEmpty()) continue;
             boolean on = b.on != null && b.on.get();
@@ -311,13 +320,11 @@ public class NvUi implements NvContent {
             if (on) stroke(r, 0xCC4D8DFF, 2.5f * u, 18 * u);                   // opened / switched on: a blue outline, no switch
             text("›", r.right - 20 * u, r.centerY(), 32 * u, on ? 0xFF9ED8FF : 0xFFB8BEC8, 0);
         }
-        if (pages > 1) {
-            for (Btn b : new Btn[]{prevB, nextB}) {
-                round(b.r, hover == b ? 0xFF22B8CF : 0xFF2B2E38, 15 * u);
-                text(b.label.get(), b.r.centerX(), b.r.centerY(), 22 * u, 0xFFFFFFFF, 0);
-            }
-            float dx0 = (prevB.r.right + nextB.r.left) / 2f - (pages - 1) * 9 * u;
-            for (int i = 0; i < pages && i < 12; i++) { p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(i == page ? 0xFFFFFFFF : 0x66FFFFFF); cv.drawCircle(dx0 + i * 18 * u, prevB.r.centerY(), (i == page ? 5.5f : 4f) * u, p); }
+        cv.restore();
+        if (maxScroll > 0f) {                                       // a thin bar shows where you are in a long list
+            float th = Math.max(36 * u, cRect.height() * cRect.height() / (cRect.height() + maxScroll));
+            float ty = cRect.top + (cRect.height() - th) * (scroll / maxScroll);
+            round(new RectF(cRect.right + 4 * u, ty, cRect.right + 9 * u, ty + th), scrolling ? 0xFF22B8CF : 0x88FFFFFF, 3 * u);
         }
     }
 
@@ -333,7 +340,9 @@ public class NvUi implements NvContent {
         if (valid) {
             for (int i = visible.size() - 1; i >= 0; i--) {
                 Btn b = visible.get(i);
-                if (!b.r.isEmpty() && b.r.contains(x, y)) { h = b; break; }
+                if (b.r.isEmpty() || !b.r.contains(x, y)) continue;
+                if (isItem(b) && !cRect.contains(x, y)) continue;                 // the part of a card cut off by the list edge is not there
+                h = b; break;
             }
         }
         if (h != null) { lastH = h; lastHT = System.currentTimeMillis(); }
@@ -345,17 +354,25 @@ public class NvUi implements NvContent {
         // the pointer often slips a little just as the fingers close: use what was under it a moment ago
         Object tgt = h != null ? h : ((lastH != null && now - lastHT < 250) ? lastH : null);
         float u = H / 540f;
-        if (edge) { pressTgt = (Btn) tgt; pressX = x; pressY = y; pressT = now; swiped = false; }
+        if (edge) { pressTgt = (Btn) tgt; pressX = x; pressY = y; pressT = now; swiped = false; scrolling = false; pressScroll = scroll; }
         if (pinch && valid && !swiped && open && pH > 0 && pressT != 0) {
             // drag left / right with the fingers closed: next / previous page (or category when there is only one page)
             float dx = x - pressX, dy = y - pressY;
-            if (Math.abs(dx) > 70 * u && Math.abs(dx) > 1.6f * Math.abs(dy)) {
+            if (!scrolling && Math.abs(dx) > 70 * u && Math.abs(dx) > 1.6f * Math.abs(dy)) {
                 swiped = true; pressTgt = null;
                 if (dx < 0) flip(1); else flip(-1);
+            } else if (!swiped && cRect.contains(pressX, pressY) && maxScroll > 0f) {
+                // drag up / down: the list follows the hand
+                if (!scrolling && Math.abs(dy) > 30 * u && Math.abs(dy) > 1.2f * Math.abs(dx)) { scrolling = true; pressTgt = null; }
+                if (scrolling) {
+                    float ns = Math.max(0f, Math.min(maxScroll, pressScroll + (pressY - y)));
+                    if (Math.abs(ns - scroll) > 0.5f) { scroll = ns; layout(); dirty = true; }
+                }
             }
         }
         if (released) {
             Btn b = pressTgt; pressTgt = null;
+            scrolling = false; dirty = true;
             if (b != null && !swiped && (valid || now - lastHT < 300) && now - pressT < 1800 && now - lastAct > 300) {
                 lastAct = now;
                 try { if (b.act != null) b.act.run(); } catch (Throwable ignored) { }

@@ -651,7 +651,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             rotSensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_GAME_ROTATION_VECTOR);
             if (rotSensor == null) rotSensor = sm.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR);
             magSensor = rotSensor != null && rotSensor.getType() == android.hardware.Sensor.TYPE_GAME_ROTATION_VECTOR ? sm.getDefaultSensor(android.hardware.Sensor.TYPE_ROTATION_VECTOR) : null;
-            if (rotSensor != null) sm.registerListener(sl, rotSensor, android.hardware.SensorManager.SENSOR_DELAY_GAME);
+            if (rotSensor != null) {                                 // fast readings (200 per second) so turning the head looks smooth
+                boolean okFast = false;
+                try { okFast = sm.registerListener(sl, rotSensor, 5000); } catch (Throwable ignored) { }
+                if (!okFast) sm.registerListener(sl, rotSensor, android.hardware.SensorManager.SENSOR_DELAY_GAME);
+            }
             if (magSensor != null) sm.registerListener(sl, magSensor, android.hardware.SensorManager.SENSOR_DELAY_UI);
             else err = "no turn sensor";
         } catch (Throwable t) { err = "sensor: " + t; }

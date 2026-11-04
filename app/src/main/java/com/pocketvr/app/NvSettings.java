@@ -36,6 +36,10 @@ public class NvSettings implements NvContent {
     private final RectF handle = new RectF(W / 2f - 120, H - 34, W / 2f + 120, H - 4);
     private final RectF closeR = new RectF(W - 14 - 70, 10, W - 14, 66);
     private int sel = 0;
+    private float scroll = 0f, maxScroll = 0f, pressScroll = 0f, pressY = 0f;
+    private boolean scrolling = false, pressInContent = false;
+    private B pressTgt = null;
+    private static final float BAND_BOTTOM = H - 46;
 
     private boolean dirty = true, dragging = false, wasPinch = false;
     private B hover = null, lastH = null, pressed = null;
@@ -66,14 +70,16 @@ public class NvSettings implements NvContent {
         for (int i = 0; i < cats.size(); i++) {
             final Cat c = cats.get(i);
             c.r.set(14, y, 252, y + 64);
-            B b = mk(c.r.left, c.r.top, c.r.width(), c.r.height(), () -> { sel = cats.indexOf(c); layout(); });
+            B b = mk(c.r.left, c.r.top, c.r.width(), c.r.height(), () -> { sel = cats.indexOf(c); scroll = 0f; layout(); });
             b.cat = c;
             y += 72;
         }
         if (sel >= cats.size()) sel = 0;
         if (cats.isEmpty()) { dirty = true; return; }
         Cat cur = cats.get(sel);
-        float ry = ROWS_TOP, rx = 270, rw = W - 14 - rx;
+        maxScroll = Math.max(0f, cur.rows.size() * (ROW_H + ROW_GAP) - (BAND_BOTTOM - ROWS_TOP));
+        scroll = Math.max(0f, Math.min(maxScroll, scroll));
+        float ry = ROWS_TOP - scroll, rx = 270, rw = W - 14 - rx;
         for (Row r : cur.rows) {
             float rr = rx + rw - 16;
             switch (r.kind) {
@@ -108,7 +114,11 @@ public class NvSettings implements NvContent {
     @Override public void update(boolean valid, float x, float y, boolean pinch) {
         B h = null; boolean hh = false, hc = false;
         if (valid) {
-            for (B b : btns) if (b.r.contains(x, y)) { h = b; break; }
+            for (B b : btns) {
+                if (!b.r.contains(x, y)) continue;
+                if (b.cat == null && (y < ROWS_TOP - 6 || y > BAND_BOTTOM)) continue;        // rows scrolled out of the list are not there
+                h = b; break;
+            }
             if (h == null && closeR.contains(x, y)) hc = true;
             if (h == null && !hc && handle.contains(x, y)) hh = true;
         }
@@ -117,13 +127,31 @@ public class NvSettings implements NvContent {
         else if (hh) { lastHandle = true; lastHT = now; }
         if (h != hover || hh != hoverHandle || hc != hoverClose) { hover = h; hoverHandle = hh; hoverClose = hc; dirty = true; }
         boolean edge = pinch && !wasPinch;
+        boolean released = !pinch && wasPinch;
         wasPinch = pinch;
         if (edge && hc && now - lastAct > 300) { lastAct = now; if (onClose != null) onClose.run(); return; }
         B tgt = h != null ? h : ((lastH != null && !lastHandle && now - lastHT < 250 && btns.contains(lastH)) ? lastH : null);
-        if (edge && tgt != null && now - lastAct > 250) {
-            lastAct = now; pressed = tgt; pressT = now; dirty = true;
-            try { if (tgt.act != null) tgt.act.run(); } catch (Throwable ignored) { }
+        if (edge) {
+            pressTgt = tgt; pressY = y; pressScroll = scroll; scrolling = false;
+            pressInContent = valid && x >= 262 && y >= ROWS_TOP - 6 && y <= BAND_BOTTOM;
         }
+        // drag up / down with the fingers closed: scroll the list (the list follows the hand)
+        if (pinch && valid && pressInContent && maxScroll > 0f) {
+            if (!scrolling && Math.abs(y - pressY) > 30) { scrolling = true; pressTgt = null; }
+            if (scrolling) {
+                float ns = Math.max(0f, Math.min(maxScroll, pressScroll + (pressY - y)));
+                if (Math.abs(ns - scroll) > 0.5f) { scroll = ns; layout(); }
+            }
+        }
+        if (released) {
+            B t = pressTgt; pressTgt = null;
+            if (!scrolling && t != null && (valid || now - lastHT < 300) && now - lastAct > 250) {
+                lastAct = now; pressed = t; pressT = now; dirty = true;
+                try { if (t.act != null) t.act.run(); } catch (Throwable ignored) { }
+            }
+            scrolling = false; pressInContent = false; dirty = true;
+        }
+        if (!valid && !pinch) pressTgt = null;
     }
 
     // ---------- drawing ----------
@@ -193,8 +221,10 @@ public class NvSettings implements NvContent {
 
         // rows
         if (cur != null) {
-            float ry = ROWS_TOP, rx = 270, rw = W - 14 - rx;
-            int bi = cats.size();                                         // the row buttons come after the category buttons in btns
+            float ry = ROWS_TOP - scroll, rx = 270, rw = W - 14 - rx;
+            int bi = cats.size();
+            cv.save();
+            cv.clipRect(rx - 6, ROWS_TOP - 6, W - 6, BAND_BOTTOM);                                         // the row buttons come after the category buttons in btns
             for (Row r : cur.rows) {
                 RectF rowR = new RectF(rx, ry, rx + rw, ry + ROW_H);
                 round(rowR, 0x66101218, 18);
@@ -234,6 +264,12 @@ public class NvSettings implements NvContent {
                     }
                 } catch (Throwable ignored) { }
                 ry += ROW_H + ROW_GAP;
+            }
+            cv.restore();
+            if (maxScroll > 0f) {                                       // a thin bar on the right shows where you are in the list
+                float tr = BAND_BOTTOM - ROWS_TOP, th = Math.max(40f, tr * tr / (tr + maxScroll));
+                float ty = ROWS_TOP + (tr - th) * (scroll / maxScroll);
+                round(new RectF(W - 12, ty, W - 7, ty + th), scrolling ? 0xFF22B8CF : 0x88FFFFFF, 3);
             }
         }
         float hp = 6;
