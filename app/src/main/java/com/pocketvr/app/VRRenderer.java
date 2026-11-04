@@ -388,7 +388,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     private float[] lastRes, vel = new float[1];
-    private long tLast = 0;
+    private long tLastHand = 0;
     private float[] disp = new float[]{0};
     private float curX = 0, curY = 0;
     private boolean curOk = false;
@@ -549,8 +549,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float[] r = cam.result;
         if (r != lastRes) {
             float[] prev = lastRes;
-            long tPrev = tLast;
-            lastRes = r; tLast = now;
+            long tPrev = tLastHand;
+            lastRes = r; tLastHand = now;
             if (vel.length != r.length) vel = new float[r.length];
             if (prev != null && prev.length == r.length && r[0] >= 1 && now - tPrev > 10 && now - tPrev < 350) {
                 float dt = (now - tPrev) / 1000f;
@@ -567,7 +567,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (disp.length != r.length) disp = new float[r.length];
         System.arraycopy(r, 0, disp, 0, r.length);
         if (predict && r[0] >= 1) {
-            float lead = Math.min(now - tLast + 40, 130) / 1000f;
+            float lead = Math.min(now - tLastHand + 40, 130) / 1000f;
             predMs = lead * 1000f;
             for (int i = 1; i < r.length; i++) {
                 if ((i - 1) % 3 == 2) continue;
