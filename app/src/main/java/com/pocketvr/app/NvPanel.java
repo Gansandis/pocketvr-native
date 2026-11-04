@@ -88,7 +88,7 @@ public class NvPanel implements NvContent {
         p.setStyle(Paint.Style.STROKE);
         p.setStrokeCap(Paint.Cap.ROUND);
         p.setStrokeWidth(4f * u);
-        p.setColor(0xC8CFEFFF);
+        p.setColor(0xB3FFFFFF);
         float in = 3f * u;
         cv.drawArc(new RectF(pr.left + in, pr.bottom - 2 * r + in, pr.left + 2 * r - in, pr.bottom - in), 105f, 60f, false, p);
         cv.drawArc(new RectF(pr.right - 2 * r + in, pr.bottom - 2 * r + in, pr.right - in, pr.bottom - in), 15f, 60f, false, p);
@@ -99,15 +99,13 @@ public class NvPanel implements NvContent {
         cv.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
         float u = H / 300f;
         RectF pr = new RectF(2, 2, W - 2, H - 2);
-        p.setShader(new LinearGradient(0, 0, 0, H, (NvUi.glass << 24) | 0x2A2C36, (NvUi.glass << 24) | 0x121319, Shader.TileMode.CLAMP));
-        p.setStyle(Paint.Style.FILL);
-        cv.drawRoundRect(pr, 26 * u, 26 * u, p);
-        p.setShader(null);
-        stroke(pr, 0x40FFFFFF, 1.5f * u, 26 * u);
-        grips(cv, p, pr, 26 * u, u);
-        text(title, 24 * u, 29 * u, 20 * u, 0xFFFFFFFF, Paint.Align.LEFT, W - 100 * u);
-        round(closeB.r, hover == closeB ? 0xFFE5484D : 0xFF2B2E38, closeB.r.width() / 2);
-        text("✕", closeB.r.centerX(), closeB.r.centerY(), 17 * u, 0xFFFFFFFF, Paint.Align.CENTER, 0);
+        NvGlass.panel(cv, p, pr, 30 * u, u);
+        grips(cv, p, pr, 30 * u, u);
+        NvGlass.font(p, true);
+        text(title, 26 * u, 30 * u, 20 * u, NvGlass.TEXT, Paint.Align.LEFT, W - 100 * u);
+        NvGlass.fill(cv, p, closeB.r, hover == closeB ? 0xFFE5484D : 0x33FFFFFF, closeB.r.width() / 2);
+        if (hover == closeB) NvGlass.ring(cv, p, closeB.r, NvGlass.RING, 2.4f * u, closeB.r.width() / 2);
+        text("✕", closeB.r.centerX(), closeB.r.centerY(), 17 * u, NvGlass.TEXT, Paint.Align.CENTER, 0);
         if (body != null) { try { body.draw(cv, p, W, H); } catch (Throwable ignored) { } }
         for (NvUi.Btn b : btns) {
             if (b.r.isEmpty()) continue;
@@ -117,10 +115,10 @@ public class NvPanel implements NvContent {
             RectF r = b.r;
             p.setShader(new LinearGradient(0, r.top, 0, r.bottom, c1, c2, Shader.TileMode.CLAMP));
             p.setStyle(Paint.Style.FILL);
-            cv.drawRoundRect(r, 18 * u, 18 * u, p);
+            cv.drawRoundRect(r, 24 * u, 24 * u, p);
             p.setShader(null);
-            if (on) stroke(r, 0xFF9ED8FF, 3 * u, 18 * u);
-            if (hover == b) stroke(r, 0xFFFFFFFF, 3 * u, 18 * u);
+            NvGlass.ring(cv, p, r, hover == b ? NvGlass.RING : 0x33FFFFFF, (hover == b ? 2.4f : 1.2f) * u, 24 * u);
+            if (on) stroke(r, 0xFF9ED8FF, 2.5f * u, 24 * u);
             float h = r.height();
             if (b.icon != null || !b.emoji.isEmpty()) {
                 if (b.icon != null) {
@@ -136,7 +134,7 @@ public class NvPanel implements NvContent {
         }
         float hp = 6 * u;
         RectF hb = new RectF(handleB.r.left + hp, handleB.r.centerY() - 5 * u, handleB.r.right - hp, handleB.r.centerY() + 5 * u);
-        round(hb, dragging ? 0xFFFFA24D : (hover == handleB ? 0xFF22B8CF : 0xE6FFFFFF), hb.height() / 2);
+        round(hb, dragging ? 0xFFFFA24D : (hover == handleB ? 0xFFFFFFFF : 0xA6FFFFFF), hb.height() / 2);
     }
 
     @Override public void update(boolean valid, float x, float y, boolean pinch) {

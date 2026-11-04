@@ -388,7 +388,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     private float[] lastRes, vel = new float[1];
-    private long tLastHand = 0;
+    private long tLast = 0;
     private float[] disp = new float[]{0};
     private float curX = 0, curY = 0;
     private boolean curOk = false;
@@ -544,34 +544,39 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (uiTex != 0) { GLES20.glDeleteTextures(1, new int[]{uiTex}, 0); uiTex = 0; }
     }
 
-    // the hand model answers about 10 times a second; between answers the points are moved on by their last measured speed
+    // the hand model answers 20-30 times a second but the screen is drawn 60 times a second: between answers the points are moved on
+    // by their measured speed. Times are the moments the pictures were TAKEN (from the camera thread), not the moments this loop noticed
+    // them, so the speed is not shaken by the 16 ms steps of the draw loop and the lead covers the real delay of the picture.
     private void predictNow(long now) {
         float[] r = cam.result;
         if (r != lastRes) {
             float[] prev = lastRes;
-            long tPrev = tLastHand;
-            lastRes = r; tLastHand = now;
+            long tPrev = tLast;
+            long tc = cam.resultCapT;
+            if (tc <= 0 || tc > now) tc = now;
+            lastRes = r; tLast = tc;
             if (vel.length != r.length) vel = new float[r.length];
-            if (prev != null && prev.length == r.length && r[0] >= 1 && now - tPrev > 10 && now - tPrev < 350) {
-                float dt = (now - tPrev) / 1000f;
+            if (prev != null && prev.length == r.length && r[0] >= 1 && tc - tPrev >= 8 && tc - tPrev < 350) {
+                float dt = (tc - tPrev) / 1000f;
                 for (int i = 1; i < r.length; i++) {
                     if ((i - 1) % 3 == 2) continue;
                     float v = (r[i] - prev[i]) / dt;
                     v = Math.max(-3f, Math.min(3f, v));
-                    vel[i] = vel[i] * 0.5f + v * 0.5f;
+                    vel[i] = vel[i] * 0.4f + v * 0.6f;
                 }
-            } else {
+            } else if (prev == null || prev.length != r.length || r[0] < 1 || tc - tPrev >= 350) {
                 java.util.Arrays.fill(vel, 0f);
             }
         }
         if (disp.length != r.length) disp = new float[r.length];
         System.arraycopy(r, 0, disp, 0, r.length);
         if (predict && r[0] >= 1) {
-            float lead = Math.min(now - tLastHand + 40, 130) / 1000f;
+            // from the moment of the picture to the moment this frame is shown (+ about one frame on the screen)
+            float lead = Math.max(0, Math.min(now - tLast + 18, 140)) / 1000f;
             predMs = lead * 1000f;
             for (int i = 1; i < r.length; i++) {
                 if ((i - 1) % 3 == 2) continue;
-                disp[i] = r[i] + vel[i] * lead * 0.8f;
+                disp[i] = r[i] + vel[i] * lead * 0.9f;
             }
         } else predMs = 0;
     }
@@ -797,7 +802,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (!curOk) { cnx = nx; cny = ny; } else if (!hold) {
             // adaptive follow: a slow, shaky fingertip is calmed down, a quick one is followed almost exactly (sticks to the hand)
             float sp = (float) Math.hypot(nx - cnx, ny - cny);
-            float al = Math.max(0.30f, Math.min(0.90f, 0.30f + sp * 9f));
+            float al = Math.max(0.50f, Math.min(0.95f, 0.50f + sp * 9f));      // the points are already steadied at the source, so this only needs to calm the last bit
             cnx += (nx - cnx) * al; cny += (ny - cny) * al;
         }
         curOk = true;

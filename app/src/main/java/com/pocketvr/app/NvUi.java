@@ -241,44 +241,48 @@ public class NvUi implements NvContent {
     private void draw() {
         cv.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
         float u = H / 540f;
-        if (!toast.isEmpty()) text(toast, W / 2f, H * 0.05f, 20 * u, 0xFFFFFFFF, 0);
+        NvGlass.font(p, true);
+        if (!toast.isEmpty()) {
+            p.setTextSize(20 * u);
+            float tw = Math.min(W * 0.8f, p.measureText(toast) + 44 * u);
+            RectF tr = new RectF(W / 2f - tw / 2f, H * 0.05f - 22 * u, W / 2f + tw / 2f, H * 0.05f + 22 * u);
+            NvGlass.fill(cv, p, tr, 0xD0262932, tr.height() / 2);
+            NvGlass.ring(cv, p, tr, 0x55FFFFFF, 1.2f * u, tr.height() / 2);
+            text(toast, W / 2f, H * 0.05f, 20 * u, NvGlass.TEXT, tw - 24 * u);
+        }
         // handle bar (grab it with a pinch and move the whole menu)
         float hp = 6 * u;
-        RectF hb = new RectF(handle.r.left + hp, handle.r.centerY() - 5 * u, handle.r.right - hp, handle.r.centerY() + 5 * u);
-        round(hb, dragging ? 0xFFFFA24D : (hover == handle ? 0xFF22B8CF : 0xE6FFFFFF), hb.height() / 2);
-        // dock
-        round(dockR, 0xD0161820, dockR.height() / 2);
-        stroke(dockR, 0x33FFFFFF, 1.5f * u, dockR.height() / 2);
+        RectF hb = new RectF(handle.r.left + hp, handle.r.centerY() - 4.5f * u, handle.r.right - hp, handle.r.centerY() + 4.5f * u);
+        NvGlass.fill(cv, p, hb, dragging ? 0xFFFFA24D : (hover == handle ? 0xFFFFFFFF : 0xA6FFFFFF), hb.height() / 2);
+        // dock: a glass capsule with round buttons
+        NvGlass.panel(cv, p, dockR, dockR.height() / 2, 0.8f * u);
         for (Btn b : dock) {
             boolean on = b.on != null && b.on.get();
-            round(b.r, hover == b ? 0xFF22B8CF : (on ? 0xFF2E6BFF : 0xFF2B2E38), b.r.width() / 2);
+            boolean hv = hover == b;
+            NvGlass.fill(cv, p, b.r, on ? 0xF2FFFFFF : (hv ? 0x59FFFFFF : 0x26FFFFFF), b.r.width() / 2);
+            if (hv) NvGlass.ring(cv, p, b.r, NvGlass.RING, 2.4f * u, b.r.width() / 2);
             text(b.emoji, b.r.centerX(), b.r.centerY(), 24 * u, 0xFFFFFFFF, 0);
         }
         if (!open) return;
         // glass panel
         RectF pr = new RectF(pX, pY, pX + pW, pY + pH);
-        p.setShader(new LinearGradient(0, pY, 0, pY + pH, (NvUi.glass << 24) | 0x2A2C36, (NvUi.glass << 24) | 0x121319, Shader.TileMode.CLAMP));
-        p.setStyle(Paint.Style.FILL);
-        cv.drawRoundRect(pr, 28 * u, 28 * u, p);
-        p.setShader(null);
-        stroke(pr, 0x40FFFFFF, 1.5f * u, 28 * u);
-        NvPanel.grips(cv, p, pr, 28 * u, u);
-        textA("🥽  PocketVR", pX + 24 * u, pY + 30 * u, 26 * u, 0xFFFFFFFF, sbW - 30 * u, Paint.Align.LEFT);
+        NvGlass.panel(cv, p, pr, 34 * u, u);
+        NvPanel.grips(cv, p, pr, 34 * u, u);
+        NvGlass.font(p, true);
+        textA("🥽  PocketVR", pX + 26 * u, pY + 32 * u, 25 * u, NvGlass.TEXT, sbW - 34 * u, Paint.Align.LEFT);
         Tab ct = tabs.get(Math.min(tab, tabs.size() - 1));
-        textA(ct.title, pX + sbW + 14 * u, pY + 30 * u, 24 * u, 0xCCFFFFFF, pW - sbW - 40 * u, Paint.Align.LEFT);
-        // categories (same look as the settings window)
+        textA(ct.title, pX + sbW + 16 * u, pY + 32 * u, 26 * u, NvGlass.TEXT, pW - sbW - 44 * u, Paint.Align.LEFT);
+        // a thin line between the side bar and the content
+        NvGlass.fill(cv, p, new RectF(pX + sbW - 1 * u, pY + 56 * u, pX + sbW + 0.5f * u, pY + pH - 24 * u), 0x1FFFFFFF, 1);
+        // categories: capsules; the chosen one is a brighter piece of glass
         for (int i = 0; i < tabs.size(); i++) {
             Btn t = tabs.get(i).b;
             boolean act = i == tab, hv = hover == t;
-            int c1 = act ? 0xFF4D8DFF : 0x55454A58, c2 = act ? 0xFF2E6BFF : 0x552B2E38;
-            if (!act && hv) { c1 = 0xFF5F6675; c2 = 0xFF454B59; }
-            p.setShader(new LinearGradient(0, t.r.top, 0, t.r.bottom, c1, c2, Shader.TileMode.CLAMP));
-            p.setStyle(Paint.Style.FILL);
-            cv.drawRoundRect(t.r, 18 * u, 18 * u, p);
-            p.setShader(null);
-            if (hv) stroke(t.r, 0xFF22B8CF, 3 * u, 18 * u);
-            text(t.emoji, t.r.left + 28 * u, t.r.centerY(), 26 * u, 0xFFFFFFFF, 0);
-            textA(t.label.get(), t.r.left + 54 * u, t.r.centerY(), 22 * u, 0xFFFFFFFF, t.r.width() - 62 * u, Paint.Align.LEFT);
+            float rad = t.r.height() / 2f;
+            if (act || hv) NvGlass.control(cv, p, t.r, rad, u, act, hv, false);
+            NvGlass.font(p, act);
+            text(t.emoji, t.r.left + 30 * u, t.r.centerY(), 25 * u, 0xFFFFFFFF, 0);
+            textA(t.label.get(), t.r.left + 56 * u, t.r.centerY(), 21 * u, act ? NvGlass.TEXT : 0xCCFFFFFF, t.r.width() - 70 * u, Paint.Align.LEFT);
         }
         // content (cut off at the edges of the list, so it can be scrolled)
         List<Btn> list = ct.items;
@@ -290,41 +294,40 @@ public class NvUi implements NvContent {
             boolean hv = hover == b;
             RectF r = b.r;
             float h = r.height();
-            round(r, hv ? 0xAA262B38 : 0x66101218, 18 * u);
-            if (hv) stroke(r, 0xFF22B8CF, 3 * u, 18 * u);
+            float cr = ct.grid ? 24 * u : h / 2.6f;
+            NvGlass.control(cv, p, r, cr, u, on, hv, false);
             if (ct.grid) {
                 if (b.icon != null) {
                     float s2 = h * 0.46f;
                     RectF d = new RectF(r.centerX() - s2 / 2, r.top + h * 0.10f, r.centerX() + s2 / 2, r.top + h * 0.10f + s2);
                     cv.drawBitmap(b.icon, null, d, p);
                 } else text(b.emoji, r.centerX(), r.top + h * 0.34f, h * 0.34f, 0xFFFFFFFF, 0);
-                text(b.label.get(), r.centerX(), r.top + h * (b.sub != null ? 0.70f : 0.76f), 14 * u, 0xFFFFFFFF, r.width() - 10 * u);
-                if (b.sub != null) text(b.sub.get(), r.centerX(), r.top + h * 0.89f, 11 * u, 0xFF8FD0FF, r.width() - 10 * u);
+                NvGlass.font(p, true);
+                text(b.label.get(), r.centerX(), r.top + h * (b.sub != null ? 0.70f : 0.76f), 14 * u, NvGlass.TEXT, r.width() - 10 * u);
+                NvGlass.font(p, false);
+                if (b.sub != null) text(b.sub.get(), r.centerX(), r.top + h * 0.89f, 11 * u, 0xFFA9D4FF, r.width() - 10 * u);
                 continue;
             }
-            // list row: coloured badge, name + hint, switch or arrow
-            float bs = h - 14 * u;
-            RectF bd = new RectF(r.left + 8 * u, r.top + 7 * u, r.left + 8 * u + bs, r.top + 7 * u + bs);
-            int c1 = on ? 0xFF4D8DFF : b.c1, c2 = on ? 0xFF2E6BFF : b.c2;
-            p.setShader(new LinearGradient(0, bd.top, 0, bd.bottom, c1, c2, Shader.TileMode.CLAMP));
-            p.setStyle(Paint.Style.FILL);
-            cv.drawRoundRect(bd, 14 * u, 14 * u, p);
-            p.setShader(null);
-            text(b.emoji, bd.centerX(), bd.centerY(), bs * 0.52f, 0xFFFFFFFF, 0);
+            // list row: round coloured badge, name + hint, arrow
+            float bs = h - 16 * u;
+            RectF bd = new RectF(r.left + 9 * u, r.top + 8 * u, r.left + 9 * u + bs, r.top + 8 * u + bs);
+            NvGlass.badge(cv, p, bd, on ? 0xFF4DA3FF : b.c1, on ? 0xFF0A84FF : b.c2);
+            text(b.emoji, bd.centerX(), bd.centerY(), bs * 0.5f, 0xFFFFFFFF, 0);
             float right = 34 * u;
-            float lx = bd.right + 14 * u, lw = r.right - lx - right;
+            float lx = bd.right + 16 * u, lw = r.right - lx - right;
+            NvGlass.font(p, true);
             if (b.sub != null) {
-                textA(b.label.get(), lx, r.centerY() - h * 0.16f, 22 * u, 0xFFFFFFFF, lw, Paint.Align.LEFT);
-                textA(b.sub.get(), lx, r.centerY() + h * 0.22f, 15 * u, 0xFFB8BEC8, lw, Paint.Align.LEFT);
-            } else textA(b.label.get(), lx, r.centerY(), 22 * u, 0xFFFFFFFF, lw, Paint.Align.LEFT);
-            if (on) stroke(r, 0xCC4D8DFF, 2.5f * u, 18 * u);                   // opened / switched on: a blue outline, no switch
-            text("›", r.right - 20 * u, r.centerY(), 32 * u, on ? 0xFF9ED8FF : 0xFFB8BEC8, 0);
+                textA(b.label.get(), lx, r.centerY() - h * 0.16f, 22 * u, NvGlass.TEXT, lw, Paint.Align.LEFT);
+                NvGlass.font(p, false);
+                textA(b.sub.get(), lx, r.centerY() + h * 0.22f, 15 * u, NvGlass.TEXT2, lw, Paint.Align.LEFT);
+            } else textA(b.label.get(), lx, r.centerY(), 22 * u, NvGlass.TEXT, lw, Paint.Align.LEFT);
+            text("›", r.right - 22 * u, r.centerY(), 30 * u, on ? 0xFFA9D4FF : NvGlass.TEXT2, 0);
         }
         cv.restore();
         if (maxScroll > 0f) {                                       // a thin bar shows where you are in a long list
             float th = Math.max(36 * u, cRect.height() * cRect.height() / (cRect.height() + maxScroll));
             float ty = cRect.top + (cRect.height() - th) * (scroll / maxScroll);
-            round(new RectF(cRect.right + 4 * u, ty, cRect.right + 9 * u, ty + th), scrolling ? 0xFF22B8CF : 0x88FFFFFF, 3 * u);
+            NvGlass.fill(cv, p, new RectF(cRect.right + 4 * u, ty, cRect.right + 8 * u, ty + th), scrolling ? 0xFFFFFFFF : 0x80FFFFFF, 3 * u);
         }
     }
 

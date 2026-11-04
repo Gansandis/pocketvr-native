@@ -52,6 +52,16 @@ public class NvCam {
     private boolean handsOpened = false, handsFailed = false;
 
     public volatile float[] result = new float[]{0};
+    public volatile long resultCapT = 0;           // time (ms, System.nanoTime based) the picture behind `result` was taken
+    public volatile boolean filt = true;           // steady the points: little shake when the hand is slow, almost no delay when it is quick
+    private float[] fx = new float[127], fd = new float[127];
+    private boolean fOk = false;
+    private long fT = 0;
+    private int fN = 0;
+    private android.graphics.Bitmap detBmp;
+    private byte[] yB = new byte[0], uB = new byte[0], vB = new byte[0];
+    private int[] colX = new int[0], colU = new int[0], colV = new int[0];
+    private int mapW = -1, mapOw = -1, mapUps = -1, mapVps = -1;
     public volatile float camFps = 0, detHz = 0, convMs = 0;
     public volatile float hFov = 1.15f;           // horizontal field of view of the camera, radians
     public volatile NvMotion motion;
@@ -95,6 +105,7 @@ public class NvCam {
         }
         handsOpened = false;
         detBusy.set(false);
+        detBmp = null; fOk = false;
     }
 
     private static Size pick(Size[] list, int tw, int th, double aspect) {
@@ -144,14 +155,17 @@ public class NvCam {
             reader.setOnImageAvailableListener(r -> onImage(r), h);
             lis.onImageSize(prev.getWidth(), prev.getHeight(), rot180);
 
-            Range<Integer> fps = null;
+            Range<Integer> fps = null, fps30 = null;
             Range<Integer>[] rs = cc.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
             if (rs != null) {
                 for (Range<Integer> r : rs) {
-                    if (r.getUpper() == 30 && (fps == null || r.getLower() > fps.getLower())) fps = r;
+                    if (r.getUpper() == 30 && (fps30 == null || r.getLower() > fps30.getLower())) fps30 = r;
+                    // a range that reaches 60 (and may drop to 30 in dim light): the camera then gives up to 60 pictures a second, so the hand and the passthrough are fresher
+                    if (r.getUpper() == 60 && r.getLower() <= 30 && (fps == null || r.getLower() < fps.getLower())) fps = r;
                 }
             }
-            final Range<Integer> fpsF = fps;
+            if (fps == null) fps = fps30;
+            final Range<Integer> fpsF = fps, fps30F = fps30;
             cm.openCamera(id, new CameraDevice.StateCallback() {
                 @Override public void onOpened(CameraDevice camera) {
                     if (!running) { camera.close(); return; }
@@ -167,7 +181,13 @@ public class NvCam {
                                     b.addTarget(reader.getSurface());
                                     b.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
                                     if (fpsF != null) b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsF);
-                                    s.setRepeatingRequest(b.build(), null, h);
+                                    try {
+                                        s.setRepeatingRequest(b.build(), null, h);
+                                    } catch (Throwable hi) {                  // the 60 range was refused: go back to 30
+                                        if (fps30F == null || fps30F == fpsF) throw hi;
+                                        b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fps30F);
+                                        s.setRepeatingRequest(b.build(), null, h);
+                                    }
                                 } catch (Throwable t) { lis.onError("session: " + t); }
                             }
                             @Override public void onConfigureFailed(CameraCaptureSession s) { lis.onError("camera session failed"); }
@@ -215,9 +235,9 @@ public class NvCam {
                         handsOpened = hands.open(act.getApplicationContext(), openedGpu, openedN);
                         if (!handsOpened) { handsFailed = true; lis.onError("hands: " + hands.error); return; }
                     }
-                    float[] res = hands.detect(bmp, ts);
-                    bmp.recycle();
+                    float[] res = hands.detect(bmp, ts);          // the picture is reused for the next look, so it is not recycled here
                     if (res != null) {
+                        if (res[0] >= 1 && filt) smooth(res, ts);
                         long tn = System.nanoTime() / 1000000L;
                         if (res[0] >= 1) {
                             if (tn - lastHandT > 1000) { sessionT = tn; lastTwoT = tn; }       // a new time with hands in view
@@ -228,6 +248,7 @@ public class NvCam {
                         } else if (tn - lastHandT > 1000 && autoDown) autoDown = false;          // hands were lowered: look for two again next time
                         // one or two empty answers in a row (a blink of the model) must not drop the hand: keep the last good points for a moment
                         if (res[0] < 1 && result.length > 0 && result[0] >= 1 && tn - lastHandT < 260) res = result;
+                        else resultCapT = ts;                       // when the picture the points belong to was taken (written before the points, so a reader of the new points sees this time)
                         result = res;
                         long t = System.nanoTime() / 1000000L;
                         detCount++;
@@ -247,33 +268,78 @@ public class NvCam {
         }
     }
 
-    // the camera gives YUV; the hand model wants colour pixels. Every second pixel is used (half size is plenty for the model).
+    // One Euro filter on every point: the cut-off frequency rises with the speed of the point, so a still hand is calm
+    // and a moving hand is followed with almost no delay. dt comes from the real picture times, not from when we happened to look.
+    private static final float F_MIN = 3.0f, F_BETA = 7.0f, F_D = 1.5f;
+    private static float lpA(float dt, float fc) { float tau = 1f / (6.2831853f * fc); return 1f / (1f + tau / dt); }
+
+    private void smooth(float[] res, long ts) {
+        int n = (int) res[0];
+        int len = 1 + n * 63;
+        float dt = (ts - fT) / 1000f;
+        if (!fOk || n != fN || dt <= 0f || dt > 0.25f || res.length < len || len > fx.length) {      // a new hand, or a long gap: start from the raw points
+            for (int i = 1; i < len && i < fx.length; i++) { fx[i] = res[i]; fd[i] = 0f; }
+            fOk = true; fN = n; fT = ts;
+            return;
+        }
+        dt = Math.max(0.004f, dt);
+        float aD = lpA(dt, F_D);
+        for (int i = 1; i < len; i++) {
+            float v = (res[i] - fx[i]) / dt;
+            fd[i] += (v - fd[i]) * aD;
+            float fc = F_MIN + F_BETA * Math.abs(fd[i]);
+            fx[i] += (res[i] - fx[i]) * lpA(dt, fc);
+            res[i] = fx[i];
+        }
+        fT = ts;
+    }
+
+    // the camera gives YUV; the hand model wants colour pixels. The planes are copied in one piece and the column positions are worked out once,
+    // so the loop only does array reads (much faster than reading the buffers pixel by pixel). The picture object is reused every time.
     private static Bitmap yuvToBitmap(Image img, NvCam self) {
         int w = img.getWidth(), hh = img.getHeight();
         Image.Plane[] p = img.getPlanes();
         ByteBuffer yb = p[0].getBuffer(), ub = p[1].getBuffer(), vb = p[2].getBuffer();
         int yrs = p[0].getRowStride(), urs = p[1].getRowStride(), ups = p[1].getPixelStride(), vrs = p[2].getRowStride(), vps = p[2].getPixelStride();
         int ow = Math.max(64, Math.min(w, self.detW)), oh = Math.max(36, ow * hh / w);
-        int sxm = w, sym = hh;
+        int yn = yb.remaining(), un = ub.remaining(), vn = vb.remaining();
+        if (self.yB.length < yn) self.yB = new byte[yn];
+        if (self.uB.length < un) self.uB = new byte[un];
+        if (self.vB.length < vn) self.vB = new byte[vn];
+        yb.get(self.yB, 0, yn); ub.get(self.uB, 0, un); vb.get(self.vB, 0, vn);
+        if (self.mapW != w || self.mapOw != ow || self.mapUps != ups || self.mapVps != vps || self.colX.length != ow) {
+            self.colX = new int[ow]; self.colU = new int[ow]; self.colV = new int[ow];
+            for (int ox = 0; ox < ow; ox++) {
+                int sx = Math.min(w - 1, ox * w / ow);
+                self.colX[ox] = sx; self.colU[ox] = (sx >> 1) * ups; self.colV[ox] = (sx >> 1) * vps;
+            }
+            self.mapW = w; self.mapOw = ow; self.mapUps = ups; self.mapVps = vps;
+        }
+        final byte[] Y = self.yB, U = self.uB, V = self.vB;
+        final int[] cx = self.colX, cu = self.colU, cv = self.colV;
         int[] px = self.pxBuf;
         if (px == null || px.length != ow * oh) px = self.pxBuf = new int[ow * oh];
         for (int oy = 0; oy < oh; oy++) {
-            int srcY = Math.min(hh - 1, oy * sym / oh);
-            int yRow = srcY * yrs, uRow = (srcY >> 1) * urs, vRow = (srcY >> 1) * vrs;
+            int srcY = Math.min(hh - 1, oy * hh / oh);
+            int yRow = srcY * yrs, uRow = (srcY >> 1) * urs, vRow = (srcY >> 1) * vrs, o = oy * ow;
             for (int ox = 0; ox < ow; ox++) {
-                int srcX = Math.min(w - 1, ox * sxm / ow);
-                int y = yb.get(yRow + srcX) & 0xFF;
-                int u = (ub.get(uRow + (srcX >> 1) * ups) & 0xFF) - 128;
-                int v = (vb.get(vRow + (srcX >> 1) * vps) & 0xFF) - 128;
+                int y = Y[yRow + cx[ox]] & 0xFF;
+                int u = (U[uRow + cu[ox]] & 0xFF) - 128;
+                int v = (V[vRow + cv[ox]] & 0xFF) - 128;
                 int r = y + ((1436 * v) >> 10);
                 int g = y - ((352 * u + 731 * v) >> 10);
                 int b = y + ((1815 * u) >> 10);
                 r = r < 0 ? 0 : (r > 255 ? 255 : r);
                 g = g < 0 ? 0 : (g > 255 ? 255 : g);
                 b = b < 0 ? 0 : (b > 255 ? 255 : b);
-                px[oy * ow + ox] = 0xFF000000 | (r << 16) | (g << 8) | b;
+                px[o + ox] = 0xFF000000 | (r << 16) | (g << 8) | b;
             }
         }
-        return Bitmap.createBitmap(px, ow, oh, Bitmap.Config.ARGB_8888);
+        Bitmap bm = self.detBmp;
+        if (bm == null || bm.getWidth() != ow || bm.getHeight() != oh || bm.isRecycled()) {
+            bm = self.detBmp = Bitmap.createBitmap(ow, oh, Bitmap.Config.ARGB_8888);
+        }
+        bm.setPixels(px, 0, ow, 0, 0, ow, oh);
+        return bm;
     }
 }

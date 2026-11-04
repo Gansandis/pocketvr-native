@@ -298,12 +298,8 @@ public class NvMedia implements NvContent {
     private void draw() {
         cv.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
         RectF pr = new RectF(2, 2, W - 2, H - 2);
-        p.setShader(new LinearGradient(0, 0, 0, H, (NvUi.glass << 24) | 0x2A2C36, (NvUi.glass << 24) | 0x121319, Shader.TileMode.CLAMP));
-        p.setStyle(Paint.Style.FILL);
-        cv.drawRoundRect(pr, 30, 30, p);
-        p.setShader(null);
-        stroke(pr, 0x40FFFFFF, 2f, 30);
-        NvPanel.grips(cv, p, pr, 30, 1.4f);
+        NvGlass.panel(cv, p, pr, 36, 1.6f);
+        NvPanel.grips(cv, p, pr, 36, 1.4f);
 
         List<Item> l = cur();
         int pages = Math.max(1, (l.size() + PER - 1) / PER);

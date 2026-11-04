@@ -173,16 +173,11 @@ public class NvSettings implements NvContent {
     }
 
     private void button(RectF r, String label, boolean active, boolean isHover, boolean isPressed, float size) {
-        int c1 = 0xFF454A58, c2 = 0xFF2B2E38;
-        if (active) { c1 = 0xFF4D8DFF; c2 = 0xFF2E6BFF; }
-        if (isPressed) { c1 = 0xFF6FA8FF; c2 = 0xFF4D8DFF; }
-        else if (isHover) { c1 = 0xFF5F6675; c2 = 0xFF454B59; }
-        p.setShader(new LinearGradient(0, r.top, 0, r.bottom, c1, c2, Shader.TileMode.CLAMP));
-        p.setStyle(Paint.Style.FILL);
-        cv.drawRoundRect(r, 16, 16, p);
-        p.setShader(null);
-        if (isHover) stroke(r, 0xFF22B8CF, 3f, 16);
-        text(label, r.centerX(), r.centerY(), size, 0xFFFFFFFF, Paint.Align.CENTER, r.width() - 14);
+        float rad = r.height() / 2f;
+        if (active) NvGlass.fill(cv, p, r, 0xF2FFFFFF, rad);
+        else NvGlass.control(cv, p, r, rad, 1.3f, false, isHover, isPressed);
+        NvGlass.font(p, true);
+        text(label, r.centerX(), r.centerY(), size, active ? 0xFF1C1E26 : NvGlass.TEXT, Paint.Align.CENTER, r.width() - 22);
     }
 
     private B btnAt(float x, float y) { for (B b : btns) if (b.r.contains(x, y)) return b; return null; }
@@ -190,33 +185,27 @@ public class NvSettings implements NvContent {
     private void draw() {
         cv.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
         RectF pr = new RectF(2, 2, W - 2, H - 2);
-        p.setShader(new LinearGradient(0, 0, 0, H, (NvUi.glass << 24) | 0x2A2C36, (NvUi.glass << 24) | 0x121319, Shader.TileMode.CLAMP));
-        p.setStyle(Paint.Style.FILL);
-        cv.drawRoundRect(pr, 30, 30, p);
-        p.setShader(null);
-        stroke(pr, 0x40FFFFFF, 2f, 30);
-        NvPanel.grips(cv, p, pr, 30, 1.4f);
+        NvGlass.panel(cv, p, pr, 36, 1.6f);
+        NvPanel.grips(cv, p, pr, 36, 1.4f);
+        NvGlass.font(p, true);
 
-        text("⚙  ตั้งค่า", 30, 38, 34, 0xFFFFFFFF, Paint.Align.LEFT, 400);
+        text("⚙  ตั้งค่า", 34, 40, 33, NvGlass.TEXT, Paint.Align.LEFT, 400);
         Cat cur = cats.isEmpty() ? null : cats.get(Math.min(sel, cats.size() - 1));
-        if (cur != null) text(cur.emoji + "  " + cur.name, 270, 38, 28, 0xCCFFFFFF, Paint.Align.LEFT, 500);
-        round(closeR, hoverClose ? 0xFF8A3E46 : 0xFF6A3036, 16);
-        if (hoverClose) stroke(closeR, 0xFF22B8CF, 3f, 16);
-        text("✕", closeR.centerX(), closeR.centerY(), 30, 0xFFFFFFFF, Paint.Align.CENTER, 0);
+        if (cur != null) text(cur.emoji + "  " + cur.name, 284, 40, 29, NvGlass.TEXT, Paint.Align.LEFT, 500);
+        NvGlass.fill(cv, p, closeR, hoverClose ? 0xFFE5484D : 0x33FFFFFF, closeR.height() / 2);
+        if (hoverClose) NvGlass.ring(cv, p, closeR, NvGlass.RING, 2.4f, closeR.height() / 2);
+        text("✕", closeR.centerX(), closeR.centerY(), 28, NvGlass.TEXT, Paint.Align.CENTER, 0);
+        NvGlass.fill(cv, p, new RectF(262, 74, 263.5f, H - 40), 0x1FFFFFFF, 1);
 
-        // categories
+        // categories: capsules; the chosen one is a brighter piece of glass
         for (Cat c : cats) {
             boolean active = cur == c;
             boolean hv = hover != null && hover.cat == c;
-            int c1 = active ? 0xFF4D8DFF : 0x55454A58, c2 = active ? 0xFF2E6BFF : 0x552B2E38;
-            if (!active && hv) { c1 = 0xFF5F6675; c2 = 0xFF454B59; }
-            p.setShader(new LinearGradient(0, c.r.top, 0, c.r.bottom, c1, c2, Shader.TileMode.CLAMP));
-            p.setStyle(Paint.Style.FILL);
-            cv.drawRoundRect(c.r, 18, 18, p);
-            p.setShader(null);
-            if (hv) stroke(c.r, 0xFF22B8CF, 3f, 18);
-            text(c.emoji, c.r.left + 34, c.r.centerY(), 32, 0xFFFFFFFF, Paint.Align.CENTER, 0);
-            text(c.name, c.r.left + 70, c.r.centerY(), 26, 0xFFFFFFFF, Paint.Align.LEFT, c.r.width() - 80);
+            float rad = c.r.height() / 2f;
+            if (active || hv) NvGlass.control(cv, p, c.r, rad, 1.4f, active, hv, false);
+            NvGlass.font(p, active);
+            text(c.emoji, c.r.left + 34, c.r.centerY(), 30, 0xFFFFFFFF, Paint.Align.CENTER, 0);
+            text(c.name, c.r.left + 66, c.r.centerY(), 25, active ? NvGlass.TEXT : 0xCCFFFFFF, Paint.Align.LEFT, c.r.width() - 78);
         }
 
         // rows
@@ -227,8 +216,9 @@ public class NvSettings implements NvContent {
             cv.clipRect(rx - 6, ROWS_TOP - 6, W - 6, BAND_BOTTOM);                                         // the row buttons come after the category buttons in btns
             for (Row r : cur.rows) {
                 RectF rowR = new RectF(rx, ry, rx + rw, ry + ROW_H);
-                round(rowR, 0x66101218, 18);
+                NvGlass.control(cv, p, rowR, 28, 1.2f, false, false, false);
                 text(r.emoji, rowR.left + 36, rowR.centerY(), 32, 0xFFFFFFFF, Paint.Align.CENTER, 0);
+                NvGlass.font(p, true);
                 float labelMax = rw - 36 - 70 - (r.kind == TOGGLE ? 150 : r.kind == CYCLE ? 360 : r.kind == STEP ? 360 : 280);
                 text(r.label, rowR.left + 72, rowR.centerY(), 26, 0xFFFFFFFF, Paint.Align.LEFT, Math.max(120, labelMax));
                 try {
@@ -237,10 +227,11 @@ public class NvSettings implements NvContent {
                             B b = btns.get(bi++);
                             boolean on = r.on != null && r.on.get();
                             boolean hv = hover == b, pr2 = pressed == b;
-                            round(b.r, on ? (pr2 ? 0xFF6FA8FF : 0xFF2E6BFF) : (hv ? 0xFF5F6675 : 0xFF3A3E4A), 23);
-                            float kx = on ? b.r.right - 25 : b.r.left + 25;
-                            p.setColor(0xFFFFFFFF); cv.drawCircle(kx, b.r.centerY(), 18, p);
-                            if (hv) stroke(b.r, 0xFF22B8CF, 3f, 23);
+                            // switch like Apple's: green track when on, glass track when off, white round knob
+                            NvGlass.fill(cv, p, b.r, on ? (pr2 ? 0xFF5BD97A : NvGlass.GREEN) : (hv ? 0x66FFFFFF : 0x4DFFFFFF), 23);
+                            float kx = on ? b.r.right - 24 : b.r.left + 24;
+                            p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(0xFFFFFFFF); cv.drawCircle(kx, b.r.centerY(), 19, p);
+                            if (hv) NvGlass.ring(cv, p, b.r, NvGlass.RING, 2.4f, 23);
                             break;
                         }
                         case CYCLE: {
@@ -269,11 +260,11 @@ public class NvSettings implements NvContent {
             if (maxScroll > 0f) {                                       // a thin bar on the right shows where you are in the list
                 float tr = BAND_BOTTOM - ROWS_TOP, th = Math.max(40f, tr * tr / (tr + maxScroll));
                 float ty = ROWS_TOP + (tr - th) * (scroll / maxScroll);
-                round(new RectF(W - 12, ty, W - 7, ty + th), scrolling ? 0xFF22B8CF : 0x88FFFFFF, 3);
+                round(new RectF(W - 12, ty, W - 7, ty + th), scrolling ? 0xFFFFFFFF : 0x80FFFFFF, 3);
             }
         }
         float hp = 6;
         RectF hb = new RectF(handle.left + hp, handle.centerY() - 5, handle.right - hp, handle.centerY() + 5);
-        round(hb, dragging ? 0xFFFFA24D : (hoverHandle ? 0xFF22B8CF : 0xE6FFFFFF), 5);
+        NvGlass.fill(cv, p, hb, dragging ? 0xFFFFA24D : (hoverHandle ? 0xFFFFFFFF : 0xA6FFFFFF), 5);
     }
 }
