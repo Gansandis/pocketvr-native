@@ -129,8 +129,6 @@ public class NvAppWin implements NvContent {
         NvShizuku.run("am force-stop " + pkg);
         final int id = displayId;
         ui.postDelayed(() -> NvShizuku.run("am start --display " + id + " -n '" + comp + "'"), 400);
-        // safety net: if the app still jumps onto the phone's own screen, bring PocketVR back in front
-        for (int ms : new int[]{2500, 6000}) ui.postDelayed(() -> NvShizuku.run("am start -f 0x20020000 -n " + act.getPackageName() + "/.NativeVRActivity"), ms);
         launchT = System.currentTimeMillis();
         dirty = true;
     }
