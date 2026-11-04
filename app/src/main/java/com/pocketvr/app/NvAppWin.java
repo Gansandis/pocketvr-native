@@ -35,8 +35,13 @@ public class NvAppWin implements NvContent {
     public Runnable onClose;
     public String err = "";
 
-    static final int PW = 540, PH = 960, TB = 72, W = PW, H = TB + PH + 44;
-    private static final int BACK = 0, HOMEK = 1, RESTART = 2, KEYB = 3, CLOSE = 4;
+    static final int PW = 960, PH = 540, TB = 72, W = PW, H = TB + PH + 44;          // the window shows the app like a small wide screen
+    private static final int BACK = 0, HOMEK = 1, RESTART = 2, KEYB = 3, CLOSE = 4, ROTATE = 5;
+    private boolean land = true;                                   // the app's screen is wide (960x540); false = tall (540x960, shown smaller in the middle)
+    private int dw() { return land ? 960 : 540; }
+    private int dh() { return land ? 540 : 960; }
+    private float dscale() { return land ? 1f : (float) PH / 960f; }                 // picture pixels per app-screen pixel
+    private float doffX() { return land ? 0f : (PW - 540f * dscale()) / 2f; }
 
     private static class B { int type; String label; final RectF r = new RectF(); }
 
@@ -64,7 +69,7 @@ public class NvAppWin implements NvContent {
     private Handler bg;
     private int displayId = -1;
     private volatile long gapMs = 50;
-    private long lastFrame = 0;
+    private long lastFrame = 0, launchT = 0;
 
     // touch
     private boolean touching = false, moved = false;
@@ -78,7 +83,7 @@ public class NvAppWin implements NvContent {
     public NvAppWin(Activity a, Handler uiHandler) {
         act = a; ui = uiHandler;
         float x = 10;
-        mk(BACK, "◀", x); x += 66; mk(HOMEK, "⌂", x); x += 66; mk(RESTART, "⟳", x);
+        mk(BACK, "◀", x); x += 66; mk(HOMEK, "⌂", x); x += 66; mk(RESTART, "⟳", x); x += 66; mk(ROTATE, "⟲", x);
         x = W - 70;
         mk(CLOSE, "✕", x); x -= 66; mk(KEYB, "⌨", x);
     }
@@ -98,11 +103,11 @@ public class NvAppWin implements NvContent {
                     thread = new HandlerThread("pvr-app");
                     thread.start();
                     bg = new Handler(thread.getLooper());
-                    reader = ImageReader.newInstance(PW, PH, PixelFormat.RGBA_8888, 2);
+                    reader = ImageReader.newInstance(dw(), dh(), PixelFormat.RGBA_8888, 2);
                     reader.setOnImageAvailableListener(this::onFrame, bg);
                     DisplayManager dm = (DisplayManager) act.getSystemService(Context.DISPLAY_SERVICE);
                     int flags = DisplayManager.VIRTUAL_DISPLAY_FLAG_PUBLIC | DisplayManager.VIRTUAL_DISPLAY_FLAG_OWN_CONTENT_ONLY;
-                    display = dm.createVirtualDisplay("PocketVR-app", PW, PH, 240, reader.getSurface(), flags);
+                    display = dm.createVirtualDisplay("PocketVR-app", dw(), dh(), 240, reader.getSurface(), flags);
                     if (display == null) throw new IllegalStateException("createVirtualDisplay returned null");
                     displayId = display.getDisplay().getDisplayId();
                 }
@@ -120,7 +125,13 @@ public class NvAppWin implements NvContent {
     private void launch() {
         NvShizuku.clearLog();
         NvShizuku.run("settings put global force_resizable_activities 1");              // lets apps that are not made for a small window run in one
-        NvShizuku.run("am start --display " + displayId + " -n " + comp);
+        // stop the app first: if it is already running on the phone's own screen, starting it again would only bring that one to the front
+        NvShizuku.run("am force-stop " + pkg);
+        final int id = displayId;
+        ui.postDelayed(() -> NvShizuku.run("am start --display " + id + " -n '" + comp + "'"), 400);
+        // safety net: if the app still jumps onto the phone's own screen, bring PocketVR back in front
+        for (int ms : new int[]{2500, 6000}) ui.postDelayed(() -> NvShizuku.run("am start -f 0x20020000 -n " + act.getPackageName() + "/.NativeVRActivity"), ms);
+        launchT = System.currentTimeMillis();
         dirty = true;
     }
 
@@ -161,7 +172,13 @@ public class NvAppWin implements NvContent {
             frameBmp.copyPixelsFromBuffer(buf);
             synchronized (lock) {
                 if (page == null || page.getWidth() != PW || page.getHeight() != PH) page = Bitmap.createBitmap(PW, PH, Bitmap.Config.ARGB_8888);
-                new Canvas(page).drawBitmap(frameBmp, 0, 0, null);
+                Canvas pc = new Canvas(page);
+                if (land) pc.drawBitmap(frameBmp, 0, 0, null);
+                else {
+                    pc.drawColor(0xFF000000);
+                    float sc = dscale(), ox = doffX();
+                    pc.drawBitmap(frameBmp, new android.graphics.Rect(0, 0, Math.min(iw, 540), ih), new RectF(ox, 0, ox + 540 * sc, 960 * sc), null);
+                }
             }
             frameDirty = true;
         } catch (Throwable ignored) {
@@ -171,9 +188,11 @@ public class NvAppWin implements NvContent {
     }
 
     // ---------- sending input to the app's display ----------
-    private void tap(float x, float y) { NvShizuku.run("input -d " + displayId + " tap " + Math.round(x) + " " + Math.round(y)); }
+    private float ax(float x) { return (x - doffX()) / dscale(); }
+    private float ay(float y) { return y / dscale(); }
+    private void tap(float x, float y) { NvShizuku.run("input -d " + displayId + " tap " + Math.round(ax(x)) + " " + Math.round(ay(y))); }
     private void swipe(float x0, float y0, float x1, float y1, long ms) {
-        NvShizuku.run("input -d " + displayId + " swipe " + Math.round(x0) + " " + Math.round(y0) + " " + Math.round(x1) + " " + Math.round(y1) + " " + Math.max(80, Math.min(600, ms)));
+        NvShizuku.run("input -d " + displayId + " swipe " + Math.round(ax(x0)) + " " + Math.round(ay(y0)) + " " + Math.round(ax(x1)) + " " + Math.round(ay(y1)) + " " + Math.max(80, Math.min(600, ms)));
     }
     private void key(int code) { NvShizuku.run("input -d " + displayId + " keyevent " + code); }
 
@@ -194,8 +213,29 @@ public class NvAppWin implements NvContent {
         @Override public void onEnter(String all) { if (displayId >= 0) key(66); }
     };
 
+    /** turn the app's screen between wide and tall */
+    private void rotate() {
+        land = !land;
+        synchronized (lock) { page = null; }
+        ui.post(() -> {
+            try {
+                if (display != null) {
+                    ImageReader nr = ImageReader.newInstance(dw(), dh(), PixelFormat.RGBA_8888, 2);
+                    nr.setOnImageAvailableListener(this::onFrame, bg);
+                    display.setSurface(nr.getSurface());
+                    display.resize(dw(), dh(), 240);
+                    ImageReader old = reader;
+                    reader = nr;
+                    try { if (old != null) old.close(); } catch (Throwable ignored) { }
+                }
+            } catch (Throwable t) { err = "หมุนไม่ได้: " + t; }
+            dirty = true;
+        });
+    }
+
     private void act(B b) {
         switch (b.type) {
+            case ROTATE: rotate(); break;
             case BACK: if (displayId >= 0) key(4); break;
             case HOMEK: if (displayId >= 0) launch(); break;                       // bring the app's first screen back
             case RESTART: if (!pkg.isEmpty()) { NvShizuku.run("am force-stop " + pkg); ui.postDelayed(this::launch, 500); } break;
@@ -238,7 +278,7 @@ public class NvAppWin implements NvContent {
 
     @Override public void update(boolean valid, float x, float y, boolean pinch) {
         long now = System.currentTimeMillis();
-        boolean inPage = valid && y >= TB && y < TB + PH && x >= 0 && x < PW;
+        boolean inPage = valid && y >= TB && y < TB + PH && x >= doffX() && x < PW - doffX();
         boolean edge = pinch && !wasPinch;
         if (valid && !pinch) { hx[hi] = x; hy[hi] = y; ht[hi] = now; hi = (hi + 1) % HN; }
         if (!touching && edge && inPage && opened) {
@@ -319,7 +359,7 @@ public class NvAppWin implements NvContent {
             if (hover == b) stroke(b.r, 0xFF22B8CF, 3f, 16);
             text(b.label, b.r.centerX(), b.r.centerY(), 28, 0xFFFFFFFF, Paint.Align.CENTER, b.r.width() - 8);
         }
-        float tl = 10 + 66 * 3 + 6, tr = W - 70 - 66 - 6;
+        float tl = 10 + 66 * 4 + 6, tr = W - 70 - 66 - 6;
         text(label.isEmpty() ? "แอป" : label, (tl + tr) / 2f, TB / 2f, 24, 0xFFFFFFFF, Paint.Align.CENTER, tr - tl);
 
         RectF pg = new RectF(0, TB, PW, TB + PH);
@@ -330,7 +370,12 @@ public class NvAppWin implements NvContent {
                 String m;
                 if (!err.isEmpty()) m = "เปิดไม่ได้: " + err;
                 else if (!NvShizuku.ready()) m = "Shizuku ยังไม่พร้อม";
-                else if (opened) { m = "กำลังเปิดแอป…"; String lg = NvShizuku.lastLog.trim(); if (!lg.isEmpty()) m += "\n" + lg; }
+                else if (opened) {
+                    m = "กำลังเปิดแอป…";
+                    String lg = NvShizuku.lastLog.trim();
+                    if (!lg.isEmpty()) m += "\n" + lg;
+                    if (System.currentTimeMillis() - launchT > 6000) m += "\nถ้ายังไม่ขึ้น: แอปนี้อาจไม่ยอมเปิดบนจอเสมือน หรือเด้งไปจอจริง";
+                }
                 else m = "ยังไม่ได้เปิดแอป";
                 float yy = TB + PH / 2f - 20;
                 for (String line : m.split("\n")) { text(line, PW / 2f, yy, 24, 0xCCFFFFFF, Paint.Align.CENTER, PW - 40); yy += 34; if (yy > TB + PH - 30) break; }

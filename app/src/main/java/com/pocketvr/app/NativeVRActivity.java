@@ -344,13 +344,13 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     // ---- real apps in floating windows (through Shizuku) ----
     private final NvAppWin[] aps = new NvAppWin[2];
     private final VRRenderer.Win[] aws = new VRRenderer.Win[2];
-    private static final float[] AYAW = {0f, 55f};
+    private static final float[] AYAW = {0f, 50f};
 
     private NvAppWin appSlot(final int i) {
         if (aps[i] != null) return aps[i];
         final NvAppWin a = new NvAppWin(this, ui);
         a.kbHost = s -> { kbd.sink = s; kbd.clear(); if (!wKeys.visible) rend.setVisible(wKeys, true, 0f, -28f); };
-        final VRRenderer.Win w = rend.addWindow(a, 0.80f);
+        final VRRenderer.Win w = rend.addWindow(a, 1.25f);
         w.showInCinema = true;
         aws[i] = w; winApply(10 + i);
         a.onClose = () -> { a.close(); rend.setVisible(w, false, 0f, 0f); if (kbd != null) kbd.sink = null; };
