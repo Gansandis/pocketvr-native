@@ -61,7 +61,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
     // camera picture timewarp: the picture is ~100 ms old when it is shown, so it is turned by how far the head has turned since it was taken
     public volatile boolean reproj = true;
-    public volatile int camLagMs = 80;
+    public volatile int camLagMs = 80;                    // used when the picture's own time cannot be trusted
+    public volatile float camLagMeasured = 0f;            // how old the picture really is when shown (ms); 0 = not known
     private final Object rhLock = new Object();
     private final long[] rhT = new long[160];
     private final float[][] rhM = new float[160][];
@@ -214,10 +215,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.dist = L; w.dragD0 = L;
     }
 
+    public volatile boolean neck = true;                   // the eyes sit in front of the neck: turning the head also moves the eyes a little (gives depth to the windows)
+    private float mux = 0, muy = 0, muz = 0;
     private void smoothUser() {
         NvMotion mo = motion;
-        if (mo != null && mo.enabled) { sux += (mo.px - sux) * 0.18f; suy += (mo.py - suy) * 0.18f; suz += (mo.pz - suz) * 0.18f; }
-        else { sux = suy = suz = 0f; }
+        if (mo != null && mo.enabled) { mux += (mo.px - mux) * 0.18f; muy += (mo.py - muy) * 0.18f; muz += (mo.pz - muz) * 0.18f; }
+        else { mux = muy = muz = 0f; }
+        float nx = 0f, ny = 0f, nz = 0f;
+        float[] rn = rotNow;
+        if (neck && rn != null) {
+            // the eyes are 9 cm above and 10 cm in front of the point the head turns around (the neck): where they are in the room = that offset turned by the head's turn
+            final float ey = 0.09f, ez = -0.10f;
+            nx = rn[1] * ey + rn[2] * ez; ny = rn[5] * ey + rn[6] * ez; nz = rn[9] * ey + rn[10] * ez;
+        }
+        sux = mux + nx; suy = muy + ny; suz = muz + nz;
     }
 
     private void updateWin(Win w, float[] rn, float t) {
@@ -1042,7 +1053,16 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         synchronized (lock) { upd = newFrame; newFrame = false; }
         if (upd && st != null) {
             try { st.updateTexImage(); st.getTransformMatrix(stm); } catch (Throwable ignored) { }
-            frameRot = reproj ? rotBefore(System.nanoTime() - (long) camLagMs * 1_000_000L) : null;
+            // how old is this picture? the camera stamps it with the time it was taken; if that stamp makes sense, use it instead of a guess
+            long lagNs = (long) camLagMs * 1_000_000L;
+            try {
+                long age = android.os.SystemClock.elapsedRealtimeNanos() - st.getTimestamp();
+                if (age > 8_000_000L && age < 350_000_000L) {
+                    camLagMeasured = camLagMeasured <= 0f ? age / 1e6f : camLagMeasured + (age / 1e6f - camLagMeasured) * 0.15f;
+                    lagNs = (long) (camLagMeasured * 1e6f);
+                } else camLagMeasured = 0f;
+            } catch (Throwable ignored) { camLagMeasured = 0f; }
+            frameRot = reproj ? rotBefore(System.nanoTime() - lagNs) : null;
         }
         int pc = panoCmd;
         if (pc != 0) {

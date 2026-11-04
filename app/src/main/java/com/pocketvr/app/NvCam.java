@@ -58,6 +58,8 @@ public class NvCam {
     public volatile long detPaceMs = 0;           // shortest time between two looks for hands
     private volatile boolean autoDown = false;       // two hands were asked for but only one is in use: look for one (faster) until the hands are lowered
     private volatile long lastTwoT = 0, sessionT = 0;
+    public volatile boolean handsGpu = true;      // the hand model runs on the graphics chip (true) or on the processor (false)
+    private volatile boolean openedGpu = true;
     public volatile int handsN = 1;               // how many hands to look for (1 or 2; two is slower)
     private int openedN = 1;
     public volatile int detW = 320;               // width of the picture given to the hand model (bigger = steadier points, slower conversion)
@@ -206,10 +208,11 @@ public class NvCam {
             ex.execute(() -> {
                 try {
                     int want = (handsN >= 2 && !autoDown) ? 2 : 1;
-                    if (handsOpened && openedN != want) { hands.close(); handsOpened = false; }      // the number of hands was changed
+                    if (handsOpened && (openedN != want || openedGpu != handsGpu)) { hands.close(); handsOpened = false; }      // the number of hands (or where it runs) was changed
                     if (!handsOpened) {
                         openedN = want;
-                        handsOpened = hands.open(act.getApplicationContext(), true, openedN);
+                        openedGpu = handsGpu;
+                        handsOpened = hands.open(act.getApplicationContext(), openedGpu, openedN);
                         if (!handsOpened) { handsFailed = true; lis.onError("hands: " + hands.error); return; }
                     }
                     float[] res = hands.detect(bmp, ts);
