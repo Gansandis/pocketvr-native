@@ -548,6 +548,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // by their measured speed. Times are the moments the pictures were TAKEN (from the camera thread), not the moments this loop noticed
     // them, so the speed is not shaken by the 16 ms steps of the draw loop and the lead covers the real delay of the picture.
     private float rfX = 0, rfY = 0;
+    private float[] dispDraw = new float[]{0};
     private void predictNow(long now) {
         float[] r = cam.result;
         if (r != lastRes) {
@@ -579,10 +580,18 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             shx = Math.max(-0.35f, Math.min(0.35f, cam.flowX - rfX));
             shy = Math.max(-0.35f, Math.min(0.35f, cam.flowY - rfY));
         }
+        if (dispDraw.length != r.length) dispDraw = new float[r.length];
         for (int i = 0; i < r.length; i++) {
             float v = r[i];
             if (i > 0) { int m = (i - 1) % 3; if (m == 0) v += shx; else if (m == 1) v += shy; }
             disp[i] = v;
+            dispDraw[i] = v;
+        }
+        // the hand outline / skeleton is drawn where the hand is in the camera picture that is on screen right now (that picture is already a bit old),
+        // so it sticks to the real hand; the pointer below looks ahead instead, to feel quick
+        if (!fo && r[0] >= 1) {
+            float dl = Math.max(0, Math.min(now - handT - 16, 140)) / 1000f;
+            for (int i = 1; i < r.length; i++) { if ((i - 1) % 3 != 2) dispDraw[i] += vel[i] * dl * 0.9f; }
         }
         if (predict && r[0] >= 1) {
             // from the moment of the newest picture that was followed (or of the model's picture) to the moment this frame is shown
@@ -1215,7 +1224,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         computePanel();
         cursor();
         drawWins();
-        if (skel == 1) drawSkeleton(disp); else if (skel == 2) drawOutline(disp);
+        if (skel == 1) drawSkeleton(dispDraw); else if (skel == 2) drawOutline(dispDraw);
         drawCursor();
 
         // 2) screen: mono or split, with lens warp
