@@ -26,7 +26,7 @@ public class NvSettings implements NvContent {
         NvUi.Txt value; NvUi.Flag on; Runnable tap, minus, plus;
     }
     private static class Cat { String emoji, name; final List<Row> rows = new ArrayList<>(); final RectF r = new RectF(); }
-    private static class B { final RectF r = new RectF(); Runnable act; Cat cat; boolean small; }
+    private static class B { final RectF r = new RectF(); Runnable act; Cat cat; boolean small; float ah = 0f, ap = 0f; }
 
     private final Bitmap bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
     private final Canvas cv = new Canvas(bmp);
@@ -172,17 +172,35 @@ public class NvSettings implements NvContent {
         cv.drawText(s, cx, cy + size * 0.35f, p);
     }
 
-    private void button(RectF r, String label, boolean active, boolean isHover, boolean isPressed, float size) {
+    private boolean animating = false;
+
+    /** glide the pointed-at / pressed amounts of a button; keeps the picture redrawing while something is still moving */
+    private void ease(B b) {
+        float th = hover == b ? 1f : 0f;
+        float tp = (pressTgt == b && wasPinch && !scrolling) ? 1f : (pressed == b ? 1f : 0f);
+        b.ah += (th - b.ah) * 0.4f;
+        b.ap += (tp - b.ap) * 0.5f;
+        if (Math.abs(th - b.ah) > 0.02f || Math.abs(tp - b.ap) > 0.02f) animating = true; else { b.ah = th; b.ap = tp; }
+    }
+
+    private void button(B b, String label, boolean active, float size) {
+        ease(b);
+        RectF r = b.r;
         float rad = r.height() / 2f;
+        float sc = 1f + 0.03f * b.ah - 0.06f * b.ap;
+        cv.save();
+        cv.scale(sc, sc, r.centerX(), r.centerY());
         if (active) NvGlass.fill(cv, p, r, 0xF2FFFFFF, rad);
-        else NvGlass.control(cv, p, r, rad, 1.3f, false, isHover, isPressed);
+        else NvGlass.controlA(cv, p, r, rad, 1.3f, false, b.ah, b.ap);
         NvGlass.font(p, true);
         text(label, r.centerX(), r.centerY(), size, active ? 0xFF1C1E26 : NvGlass.TEXT, Paint.Align.CENTER, r.width() - 22);
+        cv.restore();
     }
 
     private B btnAt(float x, float y) { for (B b : btns) if (b.r.contains(x, y)) return b; return null; }
 
     private void draw() {
+        animating = false;
         cv.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
         RectF pr = new RectF(2, 2, W - 2, H - 2);
         NvGlass.panel(cv, p, pr, 36, 1.6f);
@@ -200,12 +218,19 @@ public class NvSettings implements NvContent {
         // categories: capsules; the chosen one is a brighter piece of glass
         for (Cat c : cats) {
             boolean active = cur == c;
-            boolean hv = hover != null && hover.cat == c;
+            B cb = null;
+            for (B bb : btns) if (bb.cat == c) { cb = bb; break; }
+            if (cb != null) ease(cb);
+            float ah = cb != null ? cb.ah : 0f, ap = cb != null ? cb.ap : 0f;
             float rad = c.r.height() / 2f;
-            if (active || hv) NvGlass.control(cv, p, c.r, rad, 1.4f, active, hv, false);
+            float sc = 1f + 0.03f * ah - 0.05f * ap;
+            cv.save();
+            cv.scale(sc, sc, c.r.centerX(), c.r.centerY());
+            if (active || ah > 0.02f || ap > 0.02f) NvGlass.controlA(cv, p, c.r, rad, 1.4f, active, ah, ap);
             NvGlass.font(p, active);
             text(c.emoji, c.r.left + 34, c.r.centerY(), 30, 0xFFFFFFFF, Paint.Align.CENTER, 0);
             text(c.name, c.r.left + 66, c.r.centerY(), 25, active ? NvGlass.TEXT : 0xCCFFFFFF, Paint.Align.LEFT, c.r.width() - 78);
+            cv.restore();
         }
 
         // rows
@@ -236,20 +261,20 @@ public class NvSettings implements NvContent {
                         }
                         case CYCLE: {
                             B b = btns.get(bi++);
-                            button(b.r, r.value != null ? r.value.get() : "", false, hover == b, pressed == b, 25);
+                            button(b, r.value != null ? r.value.get() : "", false, 25);
                             break;
                         }
                         case STEP: {
                             B plus = btns.get(bi++), minus = btns.get(bi++);
-                            button(minus.r, "−", false, hover == minus, pressed == minus, 34);
-                            button(plus.r, "+", false, hover == plus, pressed == plus, 34);
+                            button(minus, "−", false, 34);
+                            button(plus, "+", false, 34);
                             RectF vr = new RectF(minus.r.right + 4, minus.r.top, plus.r.left - 4, minus.r.bottom);
                             text(r.value != null ? r.value.get() : "", vr.centerX(), vr.centerY(), 25, 0xFFFFFFFF, Paint.Align.CENTER, vr.width());
                             break;
                         }
                         default: {
                             B b = btns.get(bi++);
-                            button(b.r, r.button, false, hover == b, pressed == b, 25);
+                            button(b, r.button, false, 25);
                             break;
                         }
                     }
@@ -266,5 +291,6 @@ public class NvSettings implements NvContent {
         float hp = 6;
         RectF hb = new RectF(handle.left + hp, handle.centerY() - 5, handle.right - hp, handle.centerY() + 5);
         NvGlass.fill(cv, p, hb, dragging ? 0xFFFFA24D : (hoverHandle ? 0xFFFFFFFF : 0xA6FFFFFF), 5);
+        if (animating) dirty = true;
     }
 }

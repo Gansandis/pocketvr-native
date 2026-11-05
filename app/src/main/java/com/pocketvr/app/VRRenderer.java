@@ -548,7 +548,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // by their measured speed. Times are the moments the pictures were TAKEN (from the camera thread), not the moments this loop noticed
     // them, so the speed is not shaken by the 16 ms steps of the draw loop and the lead covers the real delay of the picture.
     private float rfX = 0, rfY = 0;
-    private float[] dispDraw = new float[]{0};
+    private float[] dispDraw = new float[]{0}, corr = new float[1];
+    private float[] drawRes = null;
+    private long lastPredT = 0;
     private void predictNow(long now) {
         float[] r = cam.result;
         if (r != lastRes) {
@@ -580,12 +582,26 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             shx = Math.max(-0.35f, Math.min(0.35f, cam.flowX - rfX));
             shy = Math.max(-0.35f, Math.min(0.35f, cam.flowY - rfY));
         }
-        if (dispDraw.length != r.length) dispDraw = new float[r.length];
+        boolean newAns = r != drawRes;                       // a new answer of the model arrived since the last frame
+        float[] prevDraw = null;
+        if (dispDraw.length != r.length) { dispDraw = new float[r.length]; corr = new float[r.length]; newAns = false; }
+        else if (newAns && dispDraw.length > 0 && dispDraw[0] >= 1 && r[0] >= 1) prevDraw = dispDraw.clone();
+        drawRes = r;
+        long fdt = lastPredT == 0 ? 16 : Math.max(1, Math.min(60, now - lastPredT));
+        lastPredT = now;
+        float decay = (float) Math.exp(-fdt / 90f);
         for (int i = 0; i < r.length; i++) {
             float v = r[i];
             if (i > 0) { int m = (i - 1) % 3; if (m == 0) v += shx; else if (m == 1) v += shy; }
             disp[i] = v;
-            dispDraw[i] = v;
+            if (i == 0 || (i - 1) % 3 == 2) { dispDraw[i] = v; continue; }
+            // a new model answer corrects the points a little (the follower drifts a bit): instead of a jump, the difference melts away over ~90 ms
+            if (prevDraw != null && prevDraw.length == r.length) {
+                float c = prevDraw[i] - v;
+                corr[i] = Math.abs(c) < 0.06f ? c : 0f;
+            }
+            corr[i] *= decay;
+            dispDraw[i] = v + corr[i];
         }
         // the hand outline / skeleton is drawn where the hand is in the camera picture that is on screen right now (that picture is already a bit old),
         // so it sticks to the real hand; the pointer below looks ahead instead, to feel quick
@@ -685,6 +701,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     // finger pointer: index fingertip; pinch = thumb tip close to index tip (relative to hand size)
     private boolean pinching = false;
+    private float pinchAmt = 0f, rippleX = 0f, rippleY = 0f;
+    private long rippleT = 0;
     private long lastPinchT = 0, lostT = 0, mpSince = 0;
     private float sizeEma = 0, dnx = 0, dny = 0;
     private boolean resizing = false, gripHot = false;
@@ -733,6 +751,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         long nowMs = System.currentTimeMillis();
         boolean hand = r.length >= 64 && r[0] >= 1;
         if (!hand) {
+            pinchAmt *= 0.6f;
             curOk = false; pkOn = false; pkProg = 0; pkInit = false;
             mpOn = false; mpSince = 0; mpProg = 0; mpLatched = false;
             if (lostT == 0) lostT = nowMs;
@@ -759,6 +778,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float ratioM = size > 1e-4f ? dm / size : 9f;
         if (pinching) { if (ratio > 0.30f) pinching = false; } else { if (ratio < 0.17f) pinching = true; }
         if (pinching) lastPinchT = nowMs;
+        // how closed the fingers are (0..1), eased: the pointer ring tightens as the fingers close; a ripple goes out when the pinch lands
+        float pinchTarget = pinching ? 1f : Math.max(0f, Math.min(0.85f, (0.36f - ratio) / (0.36f - 0.17f)));
+        pinchAmt += (pinchTarget - pinchAmt) * 0.35f;
+        if (pinching && !prevPinch) { rippleT = nowMs; rippleX = cnx; rippleY = cny; }
 
         // air touch (as in the web version): the index finger is out and is pushed forward = the hand gets smaller in the picture.
         // Made calmer: the depth is smoothed, the pose has to be steady for a moment, a fast-moving hand does not count as a push,
@@ -933,17 +956,28 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         if (!curOk || !anyVisible()) return;
         float x = cnx * sceneW / 2f * camScale, y = cny * sceneH / 2f * camScale;
-        // small and faint so it does not cover what you are pointing at; it fills in and turns orange when pressed
+        // small and faint so it does not cover what you are pointing at. Like on Quest: the ring tightens as the fingers close,
+        // the dot grows, and a soft ripple spreads from the point where the pinch landed.
         float[] ro = {8f, 12f, 18f}, ri = {2.6f, 4f, 6f}, fo = {0.55f, 0.7f, 1f};
         int cs = Math.max(0, Math.min(2, cursorSz));
         boolean pv = pinching || pkOn;
+        float pa = Math.max(pinchAmt, pv ? 1f : 0f);
+        long age = System.currentTimeMillis() - rippleT;
+        if (rippleT != 0 && age >= 0 && age < 340) {
+            float k = age / 340f, e = 1f - (1f - k) * (1f - k);
+            float rx = rippleX * sceneW / 2f * camScale, ry = rippleY * sceneH / 2f * camScale;
+            aaFade = 0.45f * (1f - k);
+            aaBegin();
+            aaSeg(rx, ry, rx, ry, ro[cs] * (0.9f + 2.6f * e) * u);
+            aaFlush(1f, 1f, 1f);
+        }
         aaFade = fo[cs];
         aaBegin();
-        aaSeg(x, y, x, y, (pv ? ro[cs] * 0.8f : ro[cs] * (1f - 0.25f * pkProg)) * u);
-        if (gripHot) aaFlush(0.13f, 0.72f, 0.81f); else aaFlush(pv ? 1f : 0.55f, pv ? 0.55f : 0.9f, pv ? 0f : 1f);
+        aaSeg(x, y, x, y, ro[cs] * (1f - 0.42f * pa) * (1f - 0.2f * pkProg) * u);
+        if (gripHot) aaFlush(0.13f, 0.72f, 0.81f); else aaFlush(0.55f + 0.45f * pa, 0.9f - 0.35f * pa, 1f - pa);
         aaFade = Math.min(1f, fo[cs] + 0.2f);
         aaBegin();
-        aaSeg(x, y, x, y, ri[cs] * u);
+        aaSeg(x, y, x, y, ri[cs] * (1f + 0.6f * pa) * u);
         aaFlush(1f, 1f, 1f);
         aaFade = 1f;
     }

@@ -28,6 +28,7 @@ public class NvUi implements NvContent {
         public Runnable act;
         public Bitmap icon;       // app cards
         public int c1 = 0xFF5A5A63, c2 = 0xFF3A3A42;
+        float ah = 0f, ap = 0f;      // pointed-at / pressed, eased 0..1 for the little animations
         final RectF r = new RectF();
         public Btn(String e, Txt l, Txt s, Flag o, int a, int b, Runnable r) { emoji = e; label = l; sub = s; on = o; c1 = a; c2 = b; act = r; }
     }
@@ -238,7 +239,19 @@ public class NvUi implements NvContent {
         cv.drawText(s, cx, cy + size * 0.35f, p);
     }
 
+    private boolean animating = false;
+
+    /** glide the pointed-at / pressed amounts towards their targets; keeps redrawing while something is still moving */
+    private void ease(Btn b) {
+        float th = hover == b ? 1f : 0f;
+        float tp = (pressTgt == b && wasPinch && !scrolling && !swiped) ? 1f : 0f;
+        b.ah += (th - b.ah) * 0.4f;
+        b.ap += (tp - b.ap) * 0.5f;
+        if (Math.abs(th - b.ah) > 0.02f || Math.abs(tp - b.ap) > 0.02f) animating = true; else { b.ah = th; b.ap = tp; }
+    }
+
     private void draw() {
+        animating = false;
         cv.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
         float u = H / 540f;
         NvGlass.font(p, true);
@@ -258,10 +271,14 @@ public class NvUi implements NvContent {
         NvGlass.panel(cv, p, dockR, dockR.height() / 2, 0.8f * u);
         for (Btn b : dock) {
             boolean on = b.on != null && b.on.get();
-            boolean hv = hover == b;
-            NvGlass.fill(cv, p, b.r, on ? 0xF2FFFFFF : (hv ? 0x59FFFFFF : 0x26FFFFFF), b.r.width() / 2);
-            if (hv) NvGlass.ring(cv, p, b.r, NvGlass.RING, 2.4f * u, b.r.width() / 2);
+            ease(b);
+            float sc = 1f + 0.12f * b.ah - 0.10f * b.ap;
+            cv.save();
+            cv.scale(sc, sc, b.r.centerX(), b.r.centerY());
+            NvGlass.fill(cv, p, b.r, NvGlass.lerp(on ? 0xF2FFFFFF : 0x26FFFFFF, on ? 0xFFFFFFFF : 0x59FFFFFF, b.ah), b.r.width() / 2);
+            if (b.ah > 0.02f) NvGlass.ring(cv, p, b.r, NvGlass.lerp(0x00FFFFFF, NvGlass.RING, b.ah), 2.4f * u, b.r.width() / 2);
             text(b.emoji, b.r.centerX(), b.r.centerY(), 24 * u, 0xFFFFFFFF, 0);
+            cv.restore();
         }
         if (!open) return;
         // glass panel
@@ -277,12 +294,17 @@ public class NvUi implements NvContent {
         // categories: capsules; the chosen one is a brighter piece of glass
         for (int i = 0; i < tabs.size(); i++) {
             Btn t = tabs.get(i).b;
-            boolean act = i == tab, hv = hover == t;
+            boolean act = i == tab;
+            ease(t);
             float rad = t.r.height() / 2f;
-            if (act || hv) NvGlass.control(cv, p, t.r, rad, u, act, hv, false);
+            float sc = 1f + 0.03f * t.ah - 0.05f * t.ap;
+            cv.save();
+            cv.scale(sc, sc, t.r.centerX(), t.r.centerY());
+            if (act || t.ah > 0.02f || t.ap > 0.02f) NvGlass.controlA(cv, p, t.r, rad, u, act, t.ah, t.ap);
             NvGlass.font(p, act);
             text(t.emoji, t.r.left + 30 * u, t.r.centerY(), 25 * u, 0xFFFFFFFF, 0);
             textA(t.label.get(), t.r.left + 56 * u, t.r.centerY(), 21 * u, act ? NvGlass.TEXT : 0xCCFFFFFF, t.r.width() - 70 * u, Paint.Align.LEFT);
+            cv.restore();
         }
         // content (cut off at the edges of the list, so it can be scrolled)
         List<Btn> list = ct.items;
@@ -291,11 +313,14 @@ public class NvUi implements NvContent {
         for (Btn b : list) {
             if (b.r.isEmpty()) continue;
             boolean on = b.on != null && b.on.get();
-            boolean hv = hover == b;
             RectF r = b.r;
             float h = r.height();
             float cr = ct.grid ? 24 * u : h / 2.6f;
-            NvGlass.control(cv, p, r, cr, u, on, hv, false);
+            ease(b);
+            float sc = 1f + 0.025f * b.ah - 0.05f * b.ap;
+            cv.save();
+            cv.scale(sc, sc, r.centerX(), r.centerY());
+            NvGlass.controlA(cv, p, r, cr, u, on, b.ah, b.ap);
             if (ct.grid) {
                 if (b.icon != null) {
                     float s2 = h * 0.46f;
@@ -306,6 +331,7 @@ public class NvUi implements NvContent {
                 text(b.label.get(), r.centerX(), r.top + h * (b.sub != null ? 0.70f : 0.76f), 14 * u, NvGlass.TEXT, r.width() - 10 * u);
                 NvGlass.font(p, false);
                 if (b.sub != null) text(b.sub.get(), r.centerX(), r.top + h * 0.89f, 11 * u, 0xFFA9D4FF, r.width() - 10 * u);
+                cv.restore();
                 continue;
             }
             // list row: round coloured badge, name + hint, arrow
@@ -322,6 +348,7 @@ public class NvUi implements NvContent {
                 textA(b.sub.get(), lx, r.centerY() + h * 0.22f, 15 * u, NvGlass.TEXT2, lw, Paint.Align.LEFT);
             } else textA(b.label.get(), lx, r.centerY(), 22 * u, NvGlass.TEXT, lw, Paint.Align.LEFT);
             text("›", r.right - 22 * u, r.centerY(), 30 * u, on ? 0xFFA9D4FF : NvGlass.TEXT2, 0);
+            cv.restore();
         }
         cv.restore();
         if (maxScroll > 0f) {                                       // a thin bar shows where you are in a long list
@@ -329,6 +356,7 @@ public class NvUi implements NvContent {
             float ty = cRect.top + (cRect.height() - th) * (scroll / maxScroll);
             NvGlass.fill(cv, p, new RectF(cRect.right + 4 * u, ty, cRect.right + 8 * u, ty + th), scrolling ? 0xFFFFFFFF : 0x80FFFFFF, 3 * u);
         }
+        if (animating) dirty = true;
     }
 
     private static int lighten(int c) {

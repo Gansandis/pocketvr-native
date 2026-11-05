@@ -54,49 +54,92 @@ final class NvFlow {
         if (hn < HN) hn++;
     }
 
+    private static final int[][] BONES = {{0,1},{1,2},{2,3},{3,4},{0,5},{5,6},{6,7},{7,8},{9,10},{10,11},{11,12},{13,14},{14,15},{15,16},{0,17},{17,18},{18,19},{19,20},{5,9},{9,13},{13,17}};
+    private final byte[] mask = new byte[GW * GH];
+    private int[] spx = new int[4096], spy = new int[4096];
+
+    /**
+     * Only the pixels that belong to the hand are compared (round patches along the finger bones and palm), so a background that does not move
+     * does not pull the answer towards "nothing moved".
+     * pts: 21 points per hand (x, y as fractions of the picture) for up to two hands, or null (then the whole box is used).
+     */
+    private int collect(int x0, int y0, int x1, int y1, float[] pts) {
+        int n = 0;
+        if (pts == null || pts.length < 42) {
+            for (int y = y0; y < y1; y += 2) for (int x = x0; x < x1; x += 2) { if (n >= spx.length) return n; spx[n] = x; spy[n] = y; n++; }
+            return n;
+        }
+        for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) mask[y * GW + x] = 0;
+        int hands = pts.length / 42;
+        for (int h = 0; h < hands; h++) {
+            int o = h * 42;
+            float palm = (float) Math.hypot((pts[o + 18] - pts[o]) * GW, (pts[o + 19] - pts[o + 1]) * GH);       // wrist to middle-finger knuckle
+            float rad = Math.max(3f, palm * 0.28f);
+            for (int k = 0; k < 21; k++) disc(pts[o + k * 2] * GW, pts[o + k * 2 + 1] * GH, rad, x0, y0, x1, y1);
+            for (int[] bn : BONES) disc((pts[o + bn[0] * 2] + pts[o + bn[1] * 2]) * 0.5f * GW, (pts[o + bn[0] * 2 + 1] + pts[o + bn[1] * 2 + 1]) * 0.5f * GH, rad, x0, y0, x1, y1);
+        }
+        for (int y = y0; y < y1; y += 2) for (int x = x0; x < x1; x += 2) {
+            if (mask[y * GW + x] != 0) { if (n >= spx.length) return n; spx[n] = x; spy[n] = y; n++; }
+        }
+        return n;
+    }
+
+    private void disc(float cx, float cy, float r, int x0, int y0, int x1, int y1) {
+        int ya = Math.max(y0, (int) (cy - r)), yb = Math.min(y1 - 1, (int) (cy + r) + 1);
+        int xa = Math.max(x0, (int) (cx - r)), xb = Math.min(x1 - 1, (int) (cx + r) + 1);
+        float r2 = r * r;
+        for (int y = ya; y <= yb; y++) for (int x = xa; x <= xb; x++) { float dx = x - cx, dy = y - cy; if (dx * dx + dy * dy <= r2) mask[y * GW + x] = 1; }
+    }
+
     /**
      * gray: GW*GH picture of this frame; t: when the frame was taken (ms);
-     * box: the hand's box {x0, y0, x1, y1} as fractions of the picture, or null when there is no hand (then nothing is measured).
+     * box: the hand's box {x0, y0, x1, y1} as fractions of the picture, or null when there is no hand (then nothing is measured);
+     * pts: the hand's points (see collect), or null.
      */
-    synchronized void feed(byte[] gray, long t, float[] box) {
+    synchronized void feed(byte[] gray, long t, float[] box, float[] pts) {
         lastT = t;
         boolean ok = false;
         if (havePrev && box != null) {
             int x0 = Math.max(R + 1, (int) (box[0] * GW)), x1 = Math.min(GW - R - 2, (int) (box[2] * GW));
             int y0 = Math.max(R + 1, (int) (box[1] * GH)), y1 = Math.min(GH - R - 2, (int) (box[3] * GH));
             if (x1 - x0 >= 18 && y1 - y0 >= 18) {
-                // is there enough to look at in the box? (a flat patch cannot be followed)
-                int n = 0, sum = 0;
-                for (int y = y0; y < y1; y += 2) for (int x = x0; x < x1; x += 2) { sum += prev[y * GW + x] & 0xFF; n++; }
-                int mean = sum / Math.max(1, n), dev = 0;
-                for (int y = y0; y < y1; y += 2) for (int x = x0; x < x1; x += 2) dev += Math.abs((prev[y * GW + x] & 0xFF) - mean);
-                float texture = (float) dev / Math.max(1, n);
-                if (texture > 3.5f) {
-                    final int S = 2 * R + 1;
-                    int[] sad = new int[S * S];
-                    int best = Integer.MAX_VALUE, bi = 0;
-                    long tot = 0;
-                    for (int dy = -R; dy <= R; dy++) {
-                        for (int dx = -R; dx <= R; dx++) {
-                            int s = 0;
-                            for (int y = y0; y < y1; y += 2) {
-                                int rp = y * GW, rc = (y + dy) * GW + dx;
-                                for (int x = x0; x < x1; x += 2) s += Math.abs((prev[rp + x] & 0xFF) - (gray[rc + x] & 0xFF));
+                int n = collect(x0, y0, x1, y1, pts);
+                if (n >= 60) {
+                    // is there enough to look at? (a flat patch cannot be followed)
+                    int sum = 0;
+                    for (int i = 0; i < n; i++) sum += prev[spy[i] * GW + spx[i]] & 0xFF;
+                    int mean = sum / n, dev = 0;
+                    for (int i = 0; i < n; i++) dev += Math.abs((prev[spy[i] * GW + spx[i]] & 0xFF) - mean);
+                    float texture = (float) dev / n;
+                    if (texture > 3.0f) {
+                        final int S = 2 * R + 1;
+                        int[] sad = new int[S * S];
+                        int best = Integer.MAX_VALUE, bi = 0;
+                        long tot = 0;
+                        for (int dy = -R; dy <= R; dy++) {
+                            for (int dx = -R; dx <= R; dx++) {
+                                int s = 0;
+                                int off = dy * GW + dx;
+                                for (int i = 0; i < n; i++) {
+                                    int p0 = spy[i] * GW + spx[i];
+                                    int d = (prev[p0] & 0xFF) - (gray[p0 + off] & 0xFF);
+                                    s += d < 0 ? -d : d;
+                                }
+                                int idx = (dy + R) * S + (dx + R);
+                                sad[idx] = s; tot += s;
+                                if (s < best) { best = s; bi = idx; }
                             }
-                            int idx = (dy + R) * S + (dx + R);
-                            sad[idx] = s; tot += s;
-                            if (s < best) { best = s; bi = idx; }
                         }
-                    }
-                    int bx = bi % S, by = bi / S;
-                    float mean2 = (float) tot / (S * S);
-                    // clear single minimum, and not on the edge of what is searched (a bigger move than that cannot be told)
-                    if (bx > 0 && bx < S - 1 && by > 0 && by < S - 1 && best < 0.8f * mean2) {
-                        float sx = sub(sad[by * S + bx - 1], sad[bi], sad[by * S + bx + 1]);
-                        float sy = sub(sad[(by - 1) * S + bx], sad[bi], sad[(by + 1) * S + bx]);
-                        cumX += ((bx - R) + sx) / GW;
-                        cumY += ((by - R) + sy) / GH;
-                        ok = true;
+                        int bx = bi % S, by = bi / S;
+                        float mean2 = (float) tot / (S * S);
+                        // clear single minimum, and not on the edge of what is searched (a bigger move than that cannot be told)
+                        if (bx > 0 && bx < S - 1 && by > 0 && by < S - 1 && best < 0.8f * mean2) {
+                            float sx = sub(sad[by * S + bx - 1], sad[bi], sad[by * S + bx + 1]);
+                            float sy = sub(sad[(by - 1) * S + bx], sad[bi], sad[(by + 1) * S + bx]);
+                            cumX += ((bx - R) + sx) / GW;
+                            cumY += ((by - R) + sy) / GH;
+                            ok = true;
+                        }
                     }
                 }
             }

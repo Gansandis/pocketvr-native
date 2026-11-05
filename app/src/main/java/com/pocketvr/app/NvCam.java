@@ -77,14 +77,16 @@ public class NvCam {
     // look at how the picture inside the hand's box moved since the last frame (see NvFlow)
     private void feedFlow(Image img, long now) {
         float[] rr = result;
-        float[] box = null;
+        float[] box = null, pts = null;
         if (rr != null && rr.length > 0 && rr[0] >= 1) {
             float sx = flow.cumX() - resFlowX, sy = flow.cumY() - resFlowY;           // the hand is where the model saw it plus what moved since
             float x0 = 1f, y0 = 1f, x1 = 0f, y1 = 0f;
             int n = Math.min(2, (int) rr[0]);
+            pts = new float[n * 42];
             for (int hnd = 0; hnd < n && rr.length >= 1 + (hnd + 1) * 63; hnd++) {
                 for (int k = 0; k < 21; k++) {
                     float x = rr[1 + hnd * 63 + k * 3] + sx, y = rr[1 + hnd * 63 + k * 3 + 1] + sy;
+                    pts[hnd * 42 + k * 2] = x; pts[hnd * 42 + k * 2 + 1] = y;
                     if (x < x0) x0 = x; if (x > x1) x1 = x;
                     if (y < y0) y0 = y; if (y > y1) y1 = y;
                 }
@@ -98,7 +100,7 @@ public class NvCam {
             int row = Math.min(h - 1, (2 * gy + 1) * h / (2 * NvFlow.GH)) * rs;
             for (int gx = 0; gx < NvFlow.GW; gx++) gray[gy * NvFlow.GW + gx] = yb.get(row + Math.min(w - 1, (2 * gx + 1) * w / (2 * NvFlow.GW)));
         }
-        flow.feed(gray, now, box);
+        flow.feed(gray, now, box, pts);
         flowX = flow.cumX(); flowY = flow.cumY(); flowT = now;
         flowOk = box != null && flow.valid();
     }

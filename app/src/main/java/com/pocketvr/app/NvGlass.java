@@ -56,8 +56,26 @@ final class NvGlass {
 
     /** a control on the glass: fill by state, hairline rim, and a ring when pointed at */
     static void control(Canvas cv, Paint p, RectF r, float rad, float u, boolean on, boolean hot, boolean pressed) {
-        fill(cv, p, r, pressed ? FILL_PRESS : (on ? FILL_ON : (hot ? FILL_HOT : FILL)), rad);
-        ring(cv, p, r, hot ? RING : (on ? 0x99FFFFFF : 0x22FFFFFF), (hot ? 2.4f : 1.2f) * u, rad);
+        controlA(cv, p, r, rad, u, on, hot ? 1f : 0f, pressed ? 1f : 0f);
+    }
+
+    static int lerp(int a, int b, float t) {
+        t = Math.max(0f, Math.min(1f, t));
+        int out = 0;
+        for (int sh = 0; sh <= 24; sh += 8) {
+            int ca = (a >>> sh) & 0xFF, cb = (b >>> sh) & 0xFF;
+            out |= (Math.round(ca + (cb - ca) * t) & 0xFF) << sh;
+        }
+        return out;
+    }
+
+    /** same, with the pointed-at and pressed states as 0..1 amounts that are eased by the caller (so the change glides instead of jumping) */
+    static void controlA(Canvas cv, Paint p, RectF r, float rad, float u, boolean on, float hot, float press) {
+        int base = on ? FILL_ON : FILL;
+        int c = lerp(base, on ? 0x5CFFFFFF : FILL_HOT, hot);
+        c = lerp(c, FILL_PRESS, press);
+        fill(cv, p, r, c, rad);
+        ring(cv, p, r, lerp(on ? 0x99FFFFFF : 0x22FFFFFF, RING, hot), (1.2f + 1.2f * hot) * u, rad);
     }
 
     /** a circle badge (an icon on a soft coloured disc) */
