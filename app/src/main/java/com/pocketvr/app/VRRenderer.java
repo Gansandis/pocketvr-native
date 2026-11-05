@@ -702,6 +702,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // finger pointer: index fingertip; pinch = thumb tip close to index tip (relative to hand size)
     private boolean pinching = false;
     private float pinchAmt = 0f, rippleX = 0f, rippleY = 0f;
+    private long popT = 0; private float popX = 0f, popY = 0f; private boolean popOk = false;
+    private void holdPop(float nx, float ny, boolean ok) { popT = System.currentTimeMillis(); popX = nx; popY = ny; popOk = ok; }
     private long rippleT = 0;
     private long lastPinchT = 0, lostT = 0, mpSince = 0;
     private float sizeEma = 0, dnx = 0, dny = 0;
@@ -834,7 +836,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (mpOn && !mpLatched) {
             if (mpSince == 0) mpSince = nowMs;
             mpProg = Math.min(1f, (nowMs - mpSince) / 700f);
-            if (mpProg >= 1f) { toggleMenuGL(); mpLatched = true; mpProg = 0; }
+            if (mpProg >= 1f) { holdPop(mpNx, mpNy, false); toggleMenuGL(); mpLatched = true; mpProg = 0; }
         } else if (!mpOn) { mpSince = 0; mpProg = 0; mpLatched = false; }
         float mhx = (kx + ax) * 0.5f, mhy = (ky + ay) * 0.5f;
         if (rot180) { mhx = 1f - mhx; mhy = 1f - mhy; }
@@ -888,7 +890,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (pinching && ext && target == null && gripWin == null && dragWin == null && !mpOn) {
                 if (okT0 == 0) okT0 = nowMs;
                 okProg = Math.min(1f, (nowMs - okT0) / 1500f);
-                if (okProg >= 1f && !okDone) { okDone = true; resetLayoutReq = true; recenter = true; }
+                if (okProg >= 1f && !okDone) { okDone = true; resetLayoutReq = true; recenter = true; holdPop(cnx, cny, true); }
             } else { okT0 = 0; okProg = 0; if (!pinching) okDone = false; }
         }
         if (gripWin != null && pinching && !prevPinch) {
@@ -942,17 +944,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     private void drawCursor() {
         float u = sceneH / 540f;
-        if (mpProg > 0f) {                                   // growing dot while the menu gesture is being held
-            float x = mpNx * sceneW / 2f * camScale, y = mpNy * sceneH / 2f * camScale;
-            aaBegin();
-            aaSeg(x, y, x, y, (8f + 20f * mpProg) * u);
-            aaFlush(1f, 0.7f, 0.15f);
-        }
-        if (okProg > 0f && curOk) {                           // growing green ring while the OK sign is held
-            float ox = cnx * sceneW / 2f * camScale, oy = cny * sceneH / 2f * camScale;
-            aaBegin();
-            aaSeg(ox, oy, ox, oy, (10f + 26f * okProg) * u);
-            aaFlush(0.2f, 0.85f, 0.4f);
+        // a small glass badge with three bars, one above the other, that light up from the top down while a gesture is held
+        // (menu: thumb + middle finger; layout reset: OK sign). When all three are lit the badge pops and fades.
+        if (mpProg > 0f) drawHold(mpNx, mpNy, mpProg, false, 1f, 1f);
+        if (okProg > 0f && curOk) drawHold(cnx, cny, okProg, true, 1f, 1f);
+        long pa0 = System.currentTimeMillis() - popT;
+        if (popT != 0 && pa0 >= 0 && pa0 < 380) {
+            float k = pa0 / 380f;
+            drawHold(popX, popY, 1f, popOk, 1f + 0.55f * (1f - (1f - k) * (1f - k)), 1f - k);
         }
         if (!curOk || !anyVisible()) return;
         float x = cnx * sceneW / 2f * camScale, y = cny * sceneH / 2f * camScale;
@@ -979,6 +978,29 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         aaBegin();
         aaSeg(x, y, x, y, ri[cs] * (1f + 0.6f * pa) * u);
         aaFlush(1f, 1f, 1f);
+        aaFade = 1f;
+    }
+
+    private void drawHold(float nx, float ny, float prog, boolean ok, float scale, float alpha) {
+        float u = sceneH / 540f * scale;
+        float x = nx * sceneW / 2f * camScale, y = ny * sceneH / 2f * camScale + 52f * sceneH / 540f;      // a little above the hand
+        float[] c = ok ? new float[]{0.20f, 0.85f, 0.42f} : new float[]{1f, 1f, 1f};
+        // rim, then the dark glass body (a tall capsule)
+        aaFade = 0.45f * alpha;
+        aaBegin(); aaSeg(x, y - 13f * u, x, y + 13f * u, 25f * u); aaFlush(1f, 1f, 1f);
+        aaFade = 0.86f * alpha;
+        aaBegin(); aaSeg(x, y - 13f * u, x, y + 13f * u, 23.5f * u); aaFlush(0.10f, 0.11f, 0.15f);
+        // three bars, top to bottom; each fills from the left as the hold goes on
+        for (int i = 0; i < 3; i++) {
+            float by = y + (13f - 13f * i) * u;                 // scene y points up: bar 0 is the top one
+            float f = Math.max(0f, Math.min(1f, prog * 3f - i));
+            aaFade = 0.25f * alpha;
+            aaBegin(); aaSeg(x - 11f * u, by, x + 11f * u, by, 3.2f * u); aaFlush(1f, 1f, 1f);
+            if (f > 0f) {
+                aaFade = alpha;
+                aaBegin(); aaSeg(x - 11f * u, by, x - 11f * u + 22f * u * f, by, 3.2f * u); aaFlush(c[0], c[1], c[2]);
+            }
+        }
         aaFade = 1f;
     }
 
