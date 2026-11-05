@@ -168,7 +168,8 @@ public class NvUi implements NvContent {
         pW = W * safe;
         pX = (W - pW) / 2f;
         pY = H * 0.04f;
-        pH = dy - 12 * u - pY;
+        float ov = dh * 0.5f + 2 * u;                       // the dock floats over the bottom edge of the panel, like a visionOS ornament
+        pH = dy - 12 * u - pY + ov;
         sbW = Math.min(214 * u, pW * 0.27f);
         float tabH = Math.min(56 * u, (pH - 76 * u) / Math.max(1, tabs.size()) - 6 * u);
         for (int i = 0; i < tabs.size(); i++) {
@@ -177,7 +178,7 @@ public class NvUi implements NvContent {
             visible.add(tabs.get(i).b);
         }
         float cx0 = pX + sbW + 6 * u, cy0 = pY + 62 * u;
-        float cw = pW - sbW - 6 * u - 16 * u, ch = pH - 62 * u - 46 * u;
+        float cw = pW - sbW - 6 * u - 16 * u, ch = pH - 62 * u - 46 * u - ov;
         if (tab >= tabs.size()) tab = 0;
         Tab ct = tabs.get(tab);
         List<Btn> list = ct.items;

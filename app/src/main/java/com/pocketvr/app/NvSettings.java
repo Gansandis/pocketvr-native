@@ -26,7 +26,7 @@ public class NvSettings implements NvContent {
         NvUi.Txt value; NvUi.Flag on; Runnable tap, minus, plus;
     }
     private static class Cat { String emoji, name; final List<Row> rows = new ArrayList<>(); final RectF r = new RectF(); }
-    private static class B { final RectF r = new RectF(); Runnable act; Cat cat; boolean small; float ah = 0f, ap = 0f; }
+    private static class B { final RectF r = new RectF(); Runnable act; Cat cat; boolean small; float ah = 0f, ap = 0f, kp = -1f; }
 
     private final Bitmap bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888);
     private final Canvas cv = new Canvas(bmp);
@@ -252,10 +252,17 @@ public class NvSettings implements NvContent {
                             B b = btns.get(bi++);
                             boolean on = r.on != null && r.on.get();
                             boolean hv = hover == b, pr2 = pressed == b;
-                            // switch like Apple's: green track when on, glass track when off, white round knob
-                            NvGlass.fill(cv, p, b.r, on ? (pr2 ? 0xFF5BD97A : NvGlass.GREEN) : (hv ? 0x66FFFFFF : 0x4DFFFFFF), 23);
-                            float kx = on ? b.r.right - 24 : b.r.left + 24;
-                            p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(0xFFFFFFFF); cv.drawCircle(kx, b.r.centerY(), 19, p);
+                            // switch like Apple's: the knob slides, the track turns green; the knob stretches a little while pressed
+                            ease(b);
+                            float tk = on ? 1f : 0f;
+                            if (b.kp < 0f) b.kp = tk;
+                            b.kp += (tk - b.kp) * 0.35f;
+                            if (Math.abs(tk - b.kp) > 0.02f) animating = true; else b.kp = tk;
+                            int track = NvGlass.lerp(hv ? 0x66FFFFFF : 0x4DFFFFFF, NvGlass.GREEN, b.kp);
+                            NvGlass.fill(cv, p, b.r, track, 23);
+                            float kw = 19 + 6 * b.ap, kc = b.r.left + 24 + (b.r.width() - 48) * b.kp;
+                            RectF kr = new RectF(kc - kw, b.r.centerY() - 19, kc + kw, b.r.centerY() + 19);
+                            NvGlass.fill(cv, p, kr, 0xFFFFFFFF, 19);
                             if (hv) NvGlass.ring(cv, p, b.r, NvGlass.RING, 2.4f, 23);
                             break;
                         }

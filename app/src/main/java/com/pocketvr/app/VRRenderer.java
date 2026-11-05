@@ -981,25 +981,64 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         aaFade = 1f;
     }
 
+    /** part of a circle drawn as short capsules. Angles in turns (0 = top, clockwise); scene y points up. */
+    private void aaArc(float cx, float cy, float r, float t0, float t1, float hw) {
+        if (t1 - t0 < 0.002f) return;
+        int n = Math.max(1, (int) Math.ceil((t1 - t0) * 48f));
+        float px = cx + r * (float) Math.sin(t0 * 6.2831853f), py = cy + r * (float) Math.cos(t0 * 6.2831853f);
+        for (int i = 1; i <= n; i++) {
+            float t = t0 + (t1 - t0) * i / n;
+            float qx = cx + r * (float) Math.sin(t * 6.2831853f), qy = cy + r * (float) Math.cos(t * 6.2831853f);
+            aaSeg(px, py, qx, qy, hw);
+            px = qx; py = qy;
+        }
+    }
+
+    /**
+     * The badge shown above the hand while a gesture is held: a round glass disc with a ring and a small picture, two different looks:
+     *  - menu (thumb + middle finger): the ring FILLS clockwise and a grid of 3 x 3 dots lights up row by row, top to bottom;
+     *  - layout reset (OK sign): like a countdown, the ring EMPTIES, and four corner brackets (a screen frame) close in towards the middle. In green.
+     * When the hold is complete the badge swells and fades.
+     */
     private void drawHold(float nx, float ny, float prog, boolean ok, float scale, float alpha) {
         float u = sceneH / 540f * scale;
-        float x = nx * sceneW / 2f * camScale, y = ny * sceneH / 2f * camScale + 52f * sceneH / 540f;      // a little above the hand
-        float[] c = ok ? new float[]{0.20f, 0.85f, 0.42f} : new float[]{1f, 1f, 1f};
-        // rim, then the dark glass body (a tall capsule)
-        aaFade = 0.45f * alpha;
-        aaBegin(); aaSeg(x, y - 13f * u, x, y + 13f * u, 25f * u); aaFlush(1f, 1f, 1f);
-        aaFade = 0.86f * alpha;
-        aaBegin(); aaSeg(x, y - 13f * u, x, y + 13f * u, 23.5f * u); aaFlush(0.10f, 0.11f, 0.15f);
-        // three bars, top to bottom; each fills from the left as the hold goes on
-        for (int i = 0; i < 3; i++) {
-            float by = y + (13f - 13f * i) * u;                 // scene y points up: bar 0 is the top one
-            float f = Math.max(0f, Math.min(1f, prog * 3f - i));
-            aaFade = 0.25f * alpha;
-            aaBegin(); aaSeg(x - 11f * u, by, x + 11f * u, by, 3.2f * u); aaFlush(1f, 1f, 1f);
-            if (f > 0f) {
-                aaFade = alpha;
-                aaBegin(); aaSeg(x - 11f * u, by, x - 11f * u + 22f * u * f, by, 3.2f * u); aaFlush(c[0], c[1], c[2]);
+        float x = nx * sceneW / 2f * camScale, y = ny * sceneH / 2f * camScale + 58f * sceneH / 540f;      // a little above the hand
+        float[] c = ok ? new float[]{0.25f, 0.88f, 0.45f} : new float[]{0.62f, 0.82f, 1f};
+        // rim, then the dark glass disc
+        aaFade = 0.50f * alpha;
+        aaBegin(); aaSeg(x, y, x, y, 31.5f * u); aaFlush(1f, 1f, 1f);
+        aaFade = 0.88f * alpha;
+        aaBegin(); aaSeg(x, y, x, y, 30f * u); aaFlush(0.09f, 0.10f, 0.14f);
+        // the ring: a faint track, and the bright part
+        aaFade = 0.20f * alpha;
+        aaBegin(); aaArc(x, y, 23.5f * u, 0f, 1f, 2.1f * u); aaFlush(1f, 1f, 1f);
+        aaFade = alpha;
+        aaBegin();
+        if (ok) aaArc(x, y, 23.5f * u, prog, 1f, 2.6f * u);       // countdown: what is left
+        else aaArc(x, y, 23.5f * u, 0f, prog, 2.6f * u);          // filling up
+        aaFlush(c[0], c[1], c[2]);
+        if (!ok) {
+            // 3 x 3 dots; a row lights up when the hold has reached it (top row first)
+            for (int r = 0; r < 3; r++) {
+                float f = Math.max(0f, Math.min(1f, prog * 3f - r));
+                for (int q = 0; q < 3; q++) {
+                    float dx = x + (q - 1) * 8.5f * u, dy = y + (1 - r) * 8.5f * u;
+                    aaFade = 0.28f * alpha;
+                    aaBegin(); aaSeg(dx, dy, dx, dy, 2.2f * u); aaFlush(1f, 1f, 1f);
+                    if (f > 0f) { aaFade = alpha * f; aaBegin(); aaSeg(dx, dy, dx, dy, 2.5f * u); aaFlush(1f, 1f, 1f); }
+                }
             }
+        } else {
+            // four corner brackets that close in as the time runs
+            float sq = (15f - 7f * prog) * u, arm = 6f * u;
+            aaFade = alpha;
+            aaBegin();
+            for (int sx = -1; sx <= 1; sx += 2) for (int sy = -1; sy <= 1; sy += 2) {
+                aaSeg(x + sx * sq, y + sy * sq, x + sx * (sq - arm), y + sy * sq, 1.9f * u);
+                aaSeg(x + sx * sq, y + sy * sq, x + sx * sq, y + sy * (sq - arm), 1.9f * u);
+            }
+            aaFlush(c[0], c[1], c[2]);
+            if (prog > 0.75f) { aaFade = alpha * Math.min(1f, (prog - 0.75f) * 4f); aaBegin(); aaSeg(x, y, x, y, 2.4f * u); aaFlush(c[0], c[1], c[2]); }
         }
         aaFade = 1f;
     }
