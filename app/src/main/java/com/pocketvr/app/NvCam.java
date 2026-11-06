@@ -58,7 +58,10 @@ public class NvCam {
     public volatile float[] tipNow = new float[NvFlow.NT * 3], resTip = new float[NvFlow.NT * 3];       // per fingertip: moves added up now / at the time of the model's picture, and whether they can be trusted
     public static final int[] TIPS = {4, 8, 12};
     private final float[] tmp2 = new float[2];
-    public volatile float flowX = 0, flowY = 0, resFlowX = 0, resFlowY = 0;     // moves added up now / at the time of the picture behind `result`
+    // four followers (hand 0 / 1 x palm / fingers): their moves added up now / at the time of the picture behind `result` (x, y per follower), and which ones can be trusted (bit k = follower k)
+    public volatile float[] flowNow = new float[NvFlow.NTRK * 2], resFl = new float[NvFlow.NTRK * 2];
+    public volatile int flowMask = 0;
+    private final float[] kfA = new float[21], hsx = new float[21], hsy = new float[21], shO = new float[2];
     public volatile long flowT = 0;
     private final NvFlow flow = new NvFlow();
     private final byte[] gray = new byte[NvFlow.GW * NvFlow.GH];
@@ -81,35 +84,36 @@ public class NvCam {
     // look at how the picture inside the hand's box moved since the last frame (see NvFlow)
     private void feedFlow(Image img, long now) {
         float[] rr = result;
-        float[] box = null, pts = null, tips = null;
-        if (rr != null && rr.length > 0 && rr[0] >= 1) {
-            float sx = flow.cumX() - resFlowX, sy = flow.cumY() - resFlowY;           // the hand is where the model saw it plus what moved since
-            float x0 = 1f, y0 = 1f, x1 = 0f, y1 = 0f;
-            int n = Math.min(2, (int) rr[0]);
+        float[] pts = null, tips = null;
+        int n = (rr != null && rr.length > 0 && rr[0] >= 1) ? Math.min(2, Math.min((int) rr[0], (rr.length - 1) / 63)) : 0;
+        if (n > 0) {
             pts = new float[n * 42];
-            for (int hnd = 0; hnd < n && rr.length >= 1 + (hnd + 1) * 63; hnd++) {
+            if (tipsOn) { tips = new float[NvFlow.NT * 2]; java.util.Arrays.fill(tips, Float.NaN); }
+            float[] tn = tipNow, rt = resTip, rs = resFl;
+            for (int hnd = 0; hnd < n; hnd++) {
+                int base = 1 + hnd * 63, t0 = hnd * 2;
+                boolean pok = flow.valid(t0), fok = flow.valid(t0 + 1);
+                float pdx = 0f, pdy = 0f, fdx = 0f, fdy = 0f;                              // what each follower has seen since the model's picture
+                if (pok) { pdx = flow.cumX(t0) - rs[t0 * 2]; pdy = flow.cumY(t0) - rs[t0 * 2 + 1]; }
+                if (fok) { fdx = flow.cumX(t0 + 1) - rs[(t0 + 1) * 2]; fdy = flow.cumY(t0 + 1) - rs[(t0 + 1) * 2 + 1]; }
+                NvFlow.kFactors(rr, base, kfA);
                 for (int k = 0; k < 21; k++) {
-                    float x = rr[1 + hnd * 63 + k * 3] + sx, y = rr[1 + hnd * 63 + k * 3 + 1] + sy;
-                    pts[hnd * 42 + k * 2] = x; pts[hnd * 42 + k * 2 + 1] = y;
-                    if (x < x0) x0 = x; if (x > x1) x1 = x;
-                    if (y < y0) y0 = y; if (y > y1) y1 = y;
+                    boolean has = NvFlow.shiftOf(kfA[k], pok, pdx, pdy, fok, fdx, fdy, shO);     // each point is where the model saw it plus what moved since
+                    hsx[k] = has ? shO[0] : 0f; hsy[k] = has ? shO[1] : 0f;
+                    pts[hnd * 42 + k * 2] = rr[base + k * 3] + hsx[k];
+                    pts[hnd * 42 + k * 2 + 1] = rr[base + k * 3 + 1] + hsy[k];
                 }
-            }
-            if (tipsOn) {
-                tips = new float[NvFlow.NT * 2];
-                java.util.Arrays.fill(tips, Float.NaN);
-                float[] tn = tipNow, rt = resTip;
-                for (int hnd = 0; hnd < n && rr.length >= 1 + (hnd + 1) * 63; hnd++) for (int j = 0; j < 3; j++) {
-                    int slot = hnd * 3 + j, base = 1 + hnd * 63 + TIPS[j] * 3;
-                    float tx = rr[base] + sx, ty = rr[base + 1] + sy;                  // where this fingertip was in the last frame: the model's point + what has moved since
+                if (tips != null) for (int j = 0; j < 3; j++) {
+                    int slot = hnd * 3 + j, lm = TIPS[j], tb = base + lm * 3;
+                    float sx = hsx[lm], sy = hsy[lm];
+                    float tx = rr[tb] + sx, ty = rr[tb + 1] + sy;                      // where this fingertip was in the last frame: the model's point + what has moved since
                     if (tn != null && rt != null && tn[slot * 3 + 2] > 0.5f && rt[slot * 3 + 2] > 0.5f) {
                         float ex = tn[slot * 3] - rt[slot * 3], ey = tn[slot * 3 + 1] - rt[slot * 3 + 1];
-                        if (Math.abs(ex - sx) < 0.08f && Math.abs(ey - sy) < 0.08f) { tx = rr[base] + ex; ty = rr[base + 1] + ey; }
+                        if (Math.abs(ex - sx) < 0.08f && Math.abs(ey - sy) < 0.08f) { tx = rr[tb] + ex; ty = rr[tb + 1] + ey; }
                     }
                     tips[slot * 2] = tx; tips[slot * 2 + 1] = ty;
                 }
             }
-            if (x1 > x0 && y1 > y0) box = new float[]{Math.max(0f, x0 - 0.02f), Math.max(0f, y0 - 0.02f), Math.min(1f, x1 + 0.02f), Math.min(1f, y1 + 0.02f)};
         }
         Image.Plane yp = img.getPlanes()[0];
         ByteBuffer yb = yp.getBuffer();
@@ -118,12 +122,16 @@ public class NvCam {
             int row = Math.min(h - 1, (2 * gy + 1) * h / (2 * NvFlow.GH)) * rs;
             for (int gx = 0; gx < NvFlow.GW; gx++) gray[gy * NvFlow.GW + gx] = yb.get(row + Math.min(w - 1, (2 * gx + 1) * w / (2 * NvFlow.GW)));
         }
-        flow.feed(gray, now, box, pts, tips);
+        flow.feed(gray, now, pts, tips);
         float[] tnw = new float[NvFlow.NT * 3];
         flow.tipNow(tnw);
         tipNow = tnw;
-        flowX = flow.cumX(); flowY = flow.cumY(); flowT = now;
-        flowOk = box != null && flow.valid();
+        float[] fn = new float[NvFlow.NTRK * 2];
+        for (int k = 0; k < NvFlow.NTRK; k++) { fn[k * 2] = flow.cumX(k); fn[k * 2 + 1] = flow.cumY(k); }
+        flowNow = fn;
+        flowMask = flow.validMask();
+        flowT = now;
+        flowOk = n > 0 && flowMask != 0;
     }
 
     private void applyRotation() {
@@ -194,7 +202,7 @@ public class NvCam {
         }
         handsOpened = false;
         detBusy.set(false);
-        detBmp = null; fOk = false; flow.reset(); flowOk = false;
+        detBmp = null; fOk = false; flow.reset(); flowOk = false; flowMask = 0;
     }
 
     private static Size pick(Size[] list, int tw, int th, double aspect) {
@@ -342,7 +350,9 @@ public class NvCam {
                         if (res[0] < 1 && result.length > 0 && result[0] >= 1 && tn - lastHandT < 260) res = result;
                         else {
                             resultCapT = ts;
-                            flow.cumAt(ts, cat); resFlowX = cat[0]; resFlowY = cat[1];     // where the moves stood when that picture was taken (set before the points)
+                            float[] rf = new float[NvFlow.NTRK * 2];                       // where the moves of every follower stood when that picture was taken (set before the points)
+                            for (int k = 0; k < NvFlow.NTRK; k++) { flow.cumAt(k, ts, cat); rf[k * 2] = cat[0]; rf[k * 2 + 1] = cat[1]; }
+                            resFl = rf;
                             float[] rt = new float[NvFlow.NT * 3];
                             for (int k = 0; k < NvFlow.NT; k++) { flow.tipAt(k, ts, tmp2); rt[k * 3] = tmp2[0]; rt[k * 3 + 1] = tmp2[1]; rt[k * 3 + 2] = flow.tipValid(k) ? 1f : 0f; }
                             resTip = rt;

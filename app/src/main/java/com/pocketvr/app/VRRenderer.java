@@ -165,6 +165,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         public volatile float defYaw = 0, defPitch = 0;      // where it appears by default (before the user moved it)
         public volatile float svYaw = 0, svPitch = 0, svScale = 1f, svDist = 1.5f, placeDist = 0f;
         public volatile float wantScale = 0;                 // size to take when (re)placed in front of the user; 0 = normal
+        public volatile boolean newOpen = false;             // just opened (not just re-centred): it comes in with a slide
+        float slideDeg = 0f;                                 // at the start of the slide the window is this many degrees to the right of where it ends up (it starts behind its neighbour)
+        float animA = 1f, animS = 1f;                        // fade and size while it comes in
+        boolean animOn = false;
+        long animT0 = 0;
         int texW = 0, texH = 0;
         public volatile float offYaw = 0, offPitch = 0;      // where it appears, relative to the view centre (degrees)
         float[] rot = null;
@@ -192,7 +197,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public void setVisible(Win w, boolean v, float offYaw, float offPitch) {
         w.offYaw = offYaw; w.offPitch = offPitch; w.defYaw = offYaw; w.defPitch = offPitch;
         if (v && !w.visible && w.hasSaved) { w.offYaw = w.svYaw; w.offPitch = w.svPitch; w.wantScale = w.svScale; w.placeDist = w.svDist; }
-        if (v && !w.visible) w.placeReq = true;
+        if (v && !w.visible) { w.placeReq = true; w.newOpen = true; }
         w.visible = v;
     }
     public void toggle(Win w, float offYaw, float offPitch) { setVisible(w, !w.visible, offYaw, offPitch); }
@@ -204,7 +209,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         else {
             menuWin.offYaw = menuWin.hasSaved ? menuWin.svYaw : 0; menuWin.offPitch = menuWin.hasSaved ? menuWin.svPitch : 0;
             if (menuWin.hasSaved) { menuWin.wantScale = menuWin.svScale; menuWin.placeDist = menuWin.svDist; }
-            menuWin.placeReq = true; menuWin.visible = true; if (ui != null) ui.setOpen(true); }
+            menuWin.placeReq = true; menuWin.newOpen = true; menuWin.visible = true; if (ui != null) ui.setOpen(true); }
     }
 
     private boolean anyVisible() { for (Win w : wins) if (shown(w)) return true; return false; }
@@ -290,11 +295,25 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     /**
-     * A window that comes up on its standard place (the user has not moved it yet) steps aside, to the right first and then to the left,
-     * when another window is already there, so the menu and the settings do not lie on top of each other.
-     * Angles: positive yaw = to the right, positive pitch = up (the same as the angles the windows report about themselves).
+     * A window that comes up on its standard place (the user has not moved it yet) sits right next to the windows that are already up:
+     * flush against the side of one of them (nearest to the standard place, the right side first), so the windows form a row and never lie on top of each other.
+     * It then slides out from behind that neighbour into its place (see updateWin). Angles: positive yaw = to the right, positive pitch = up.
      */
+    private boolean hitsAt(Win w, float cy, float cp, float hw, float hh) {
+        for (Win o : wins) {
+            if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
+            android.graphics.Bitmap ob = o.c.bitmap();
+            if (ob == null || ob.getWidth() <= 0) continue;
+            float opw = o.widthM * o.scale * winZoom, oph = opw * ob.getHeight() / ob.getWidth();
+            float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / Math.max(0.3f, o.dist))), ohh = (float) Math.toDegrees(Math.atan(oph / 2f / Math.max(0.3f, o.dist)));
+            if (ohw > 45f) continue;                          // something huge (the cinema screen): do not dodge it
+            if (Math.abs(cy - o.yawA) < hw + ohw + 1.0f && Math.abs(cp - o.pitchA) < hh + ohh + 1.5f) return true;
+        }
+        return false;
+    }
+
     private void avoidOverlap(Win w) {
+        w.slideDeg = 0f;
         if (w.hasSaved) return;                                   // the user chose that place: keep it
         android.graphics.Bitmap bm = w.c.bitmap();
         if (bm == null || bm.getWidth() <= 0) return;
@@ -302,28 +321,39 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float pw = w.widthM * sc * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
         float hw = (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = (float) Math.toDegrees(Math.atan(ph / 2f / d));
         float baseY = w.offYaw, baseP = w.offPitch;
-        for (int k = 0; k < 7; k++) {
-            int m = ((k + 1) / 2) * (k % 2 == 1 ? 1 : -1);        // 0, +1, -1, +2, -2, +3, -3 steps (a step = the window's own width + a gap)
-            // k=0 -> m=0; k=1 -> +1; k=2 -> -1 ...
-            float cy = baseY + m * (2f * hw + 3f), cp = baseP;
-            boolean hit = false;
-            for (Win o : wins) {
-                if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
-                android.graphics.Bitmap ob = o.c.bitmap();
-                if (ob == null || ob.getWidth() <= 0) continue;
-                float opw = o.widthM * o.scale * winZoom, oph = opw * ob.getHeight() / ob.getWidth();
-                float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / Math.max(0.3f, o.dist))), ohh = (float) Math.toDegrees(Math.atan(oph / 2f / Math.max(0.3f, o.dist)));
-                if (ohw > 45f) continue;                          // something huge (the cinema screen): do not dodge it
-                if (Math.abs(cy - o.yawA) < hw + ohw + 1.5f && Math.abs(cp - o.pitchA) < hh + ohh + 1.5f) { hit = true; break; }
-            }
-            if (!hit) { w.offYaw = cy; w.offPitch = cp; return; }
+        if (!hitsAt(w, baseY, baseP, hw, hh)) return;             // the standard place is free
+        final float gap = 2.0f;                                   // degrees between two windows
+        float[] cand = new float[2 * wins.size()], from = new float[2 * wins.size()];
+        int nc = 0;
+        for (Win o : wins) {
+            if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
+            android.graphics.Bitmap ob = o.c.bitmap();
+            if (ob == null || ob.getWidth() <= 0) continue;
+            float opw = o.widthM * o.scale * winZoom;
+            float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / Math.max(0.3f, o.dist)));
+            if (ohw > 45f) continue;
+            cand[nc] = o.yawA + ohw + hw + gap; from[nc] = o.yawA; nc++;     // against its right side
+            cand[nc] = o.yawA - ohw - hw - gap; from[nc] = o.yawA; nc++;     // against its left side
         }
+        int best = -1; float bestD = 1e9f;
+        for (int i = 0; i < nc; i++) {
+            if (hitsAt(w, cand[i], baseP, hw, hh)) continue;
+            float dd = Math.abs(cand[i] - baseY) + (cand[i] < from[i] ? 0.01f : 0f);     // the right side wins a tie
+            if (dd < bestD) { bestD = dd; best = i; }
+        }
+        if (best < 0) return;
+        w.offYaw = cand[best]; w.offPitch = baseP;
+        w.slideDeg = from[best] - cand[best];                     // it starts at the neighbour's middle and slides out to its place
     }
+
+    private static final float ANIM_MS = 520f;                     // how long a window takes to slide in
 
     private void updateWin(Win w, float[] rn, float t) {
         float ux = sux, uy = suy, uz = suz;
         if (w.placeReq || w.rot == null) {
             avoidOverlap(w);
+            if (w.newOpen) { w.newOpen = false; w.animOn = true; w.animT0 = System.nanoTime(); }     // a window that is opened (not just re-centred) slides in
+            else w.animOn = false;
             android.opengl.Matrix.transposeM(tA, 0, rn, 0);
             w.rot = tA.clone();
             if (w.offYaw != 0f || w.offPitch != 0f) turnWin(w, rn, -w.offYaw, w.offPitch);
@@ -359,7 +389,23 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             by = 0.008f * (float) Math.sin(t * 0.9f + w.phase);
             bz = 0.010f * (float) Math.sin(t * 0.4f + 2f + w.phase);
         }
-        android.opengl.Matrix.translateM(mM, 0, w.rot, 0, bx, by, -w.dist + bz);
+        // coming in: it starts behind its neighbour (a bit further away, a bit small, see-through, turned towards the middle) and slides out to its place
+        float sx = 0f, sz = 0f, tilt = 0f;
+        w.animA = 1f; w.animS = 1f;
+        if (w.animOn) {
+            float x = (System.nanoTime() - w.animT0) / 1e6f / ANIM_MS;
+            if (x >= 1f) w.animOn = false;
+            else {
+                float rest = 1f - x, e = 1f - rest * rest * rest, left = 1f - e;                 // ease out: quick at first, settles softly
+                sx = w.dist * (float) Math.tan(Math.toRadians(w.slideDeg)) * left;               // sideways, along the window's own right
+                sz = -0.16f * left;                                                              // further away at first, comes forward
+                tilt = Math.signum(w.slideDeg) * 14f * left;
+                w.animA = Math.min(1f, x * 2.6f);
+                w.animS = 0.9f + 0.1f * e;
+            }
+        }
+        android.opengl.Matrix.translateM(mM, 0, w.rot, 0, bx + sx, by, -w.dist + bz + sz);
+        if (tilt != 0f) android.opengl.Matrix.rotateM(mM, 0, tilt, 0f, 1f, 0f);
         shiftBy(w, mM, ux, uy, uz);
         android.opengl.Matrix.multiplyMM(w.mv, 0, rn, 0, mM, 0);
         android.opengl.Matrix.multiplyMM(w.mvp, 0, mP, 0, w.mv, 0);
@@ -530,7 +576,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         maskW = 0; maskFbo[0] = 0; maskTex[0] = 0;
         progPanel = prog(
             "attribute vec2 p; uniform mat4 mvp; uniform vec2 hs; varying vec2 uv; void main(){ gl_Position=mvp*vec4(p*hs,0.,1.); uv=vec2(p.x*0.5+0.5, 0.5-p.y*0.5); }",
-            "precision mediump float; uniform sampler2D tex; varying vec2 uv; void main(){ gl_FragColor=texture2D(tex,uv); }");
+            "precision mediump float; uniform sampler2D tex; uniform float al; varying vec2 uv; void main(){ gl_FragColor=texture2D(tex,uv)*al; }");
         progVid = prog(
             "attribute vec2 p; uniform mat4 mvp; uniform vec2 hs; uniform vec2 off; uniform vec2 fit; uniform mat4 stm; varying vec2 uv; varying vec2 c;" +
             "void main(){ gl_Position=mvp*vec4(p*hs+off,0.,1.); c=p*0.5*fit+0.5; uv=(stm*vec4(c,0.,1.)).xy; }",
@@ -585,7 +631,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // the hand model answers 20-30 times a second but the screen is drawn 60 times a second: between answers the points are moved on
     // by their measured speed. Times are the moments the pictures were TAKEN (from the camera thread), not the moments this loop noticed
     // them, so the speed is not shaken by the 16 ms steps of the draw loop and the lead covers the real delay of the picture.
-    private float rfX = 0, rfY = 0;
+    private float[] rfl = new float[NvFlow.NTRK * 2];          // the followers' moves at the time of the model's picture
+    private final float[] hsx = new float[42], hsy = new float[42], kfR = new float[21], shO = new float[2];     // per hand, per point: how far it has moved since that picture
+    private final boolean[] foh = new boolean[2];              // per hand: is it followed at the camera rate right now
     private float[] rTip = null;
     private final float[] tsx = new float[6], tsy = new float[6];
     private final boolean[] tuse = new boolean[6];
@@ -600,7 +648,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             long tc = cam.resultCapT;
             if (tc <= 0 || tc > now) tc = now;
             lastRes = r; handT = tc;
-            rfX = cam.resFlowX; rfY = cam.resFlowY; rTip = cam.resTip;
+            rfl = cam.resFl; rTip = cam.resTip;
             if (vel.length != r.length) vel = new float[r.length];
             if (prev != null && prev.length == r.length && r[0] >= 1 && tc - tPrev >= 8 && tc - tPrev < 350) {
                 float dt = (tc - tPrev) / 1000f;
@@ -617,11 +665,27 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (disp.length != r.length) disp = new float[r.length];
         // how far the whole hand has moved since the picture the model answered about (seen by the camera-rate follower): the points are moved on by that,
         // so the hand is drawn where it is now, not where it was ~100 ms ago
-        boolean fo = cam.flowOn && cam.flowOk && r[0] >= 1 && now - cam.flowT < 150;
-        float shx = 0f, shy = 0f;
-        if (fo) {
-            shx = Math.max(-0.35f, Math.min(0.35f, cam.flowX - rfX));
-            shy = Math.max(-0.35f, Math.min(0.35f, cam.flowY - rfY));
+        // every hand has its own followers (palm and fingers): two hands moving in different ways do not pull on each other, and a hand that
+        // turns or rolls has its fingers moved more than its palm (NvFlow.kFactors / shiftOf give the move of every single point)
+        int nh = r[0] >= 1 ? Math.min(2, Math.min((int) r[0], (r.length - 1) / 63)) : 0;
+        foh[0] = foh[1] = false;
+        boolean fo = false;
+        float[] fnow = cam.flowNow; int fmask = cam.flowMask;
+        if (cam.flowOn && nh > 0 && now - cam.flowT < 150 && fnow != null && rfl != null && fnow.length >= 8 && rfl.length >= 8) {
+            for (int hnd = 0; hnd < nh; hnd++) {
+                int t0 = hnd * 2;
+                boolean pok = (fmask & (1 << t0)) != 0, fok = (fmask & (2 << t0)) != 0;
+                if (!pok && !fok) continue;
+                float pdx = 0f, pdy = 0f, fdx = 0f, fdy = 0f;
+                if (pok) { pdx = fnow[t0 * 2] - rfl[t0 * 2]; pdy = fnow[t0 * 2 + 1] - rfl[t0 * 2 + 1]; }
+                if (fok) { fdx = fnow[(t0 + 1) * 2] - rfl[(t0 + 1) * 2]; fdy = fnow[(t0 + 1) * 2 + 1] - rfl[(t0 + 1) * 2 + 1]; }
+                NvFlow.kFactors(r, 1 + hnd * 63, kfR);
+                for (int lm = 0; lm < 21; lm++) {
+                    boolean has = NvFlow.shiftOf(kfR[lm], pok, pdx, pdy, fok, fdx, fdy, shO);
+                    hsx[hnd * 21 + lm] = has ? shO[0] : 0f; hsy[hnd * 21 + lm] = has ? shO[1] : 0f;
+                }
+                foh[hnd] = true; fo = true;
+            }
         }
         boolean newAns = r != drawRes;                       // a new answer of the model arrived since the last frame
         float[] prevDraw = null;
@@ -630,12 +694,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (fo && cam.tipsOn) {
             float[] tn = cam.tipNow; float[] rt = rTip;
             if (tn != null && rt != null && tn.length >= 18 && rt.length >= 18) {
-                int nh = Math.min(2, (int) r[0]);
-                for (int hnd = 0; hnd < nh; hnd++) for (int j = 0; j < 3; j++) {
-                    int sl = hnd * 3 + j;
-                    if (tn[sl * 3 + 2] > 0.5f && rt[sl * 3 + 2] > 0.5f) {
-                        float ex = tn[sl * 3] - rt[sl * 3], ey = tn[sl * 3 + 1] - rt[sl * 3 + 1];
-                        if (Math.abs(ex - shx) < 0.08f && Math.abs(ey - shy) < 0.08f) { tsx[sl] = ex; tsy[sl] = ey; tuse[sl] = true; }
+                for (int hnd = 0; hnd < nh; hnd++) {
+                    if (!foh[hnd]) continue;
+                    for (int j = 0; j < 3; j++) {
+                        int sl = hnd * 3 + j, lm = NvCam.TIPS[j];
+                        if (tn[sl * 3 + 2] > 0.5f && rt[sl * 3 + 2] > 0.5f) {
+                            float ex = tn[sl * 3] - rt[sl * 3], ey = tn[sl * 3 + 1] - rt[sl * 3 + 1];
+                            if (Math.abs(ex - hsx[hnd * 21 + lm]) < 0.08f && Math.abs(ey - hsy[hnd * 21 + lm]) < 0.08f) { tsx[sl] = ex; tsy[sl] = ey; tuse[sl] = true; }
+                        }
                     }
                 }
             }
@@ -650,19 +716,18 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float v = r[i], vt = r[i];
             if (i > 0) {
                 int m = (i - 1) % 3;
-                float ax = shx, ay = shy;                       // the outline / skeleton moves with the whole hand only: the single fingertips jitter a little and made it bounce
-                float bx = shx, by = shy;                       // the pointer and the pinch look at the fingertips' own movement
-                if (m != 2) {
-                    int hnd = (i - 1) / 63, lm = ((i - 1) % 63) / 3;
-                    if (hnd < 2) { int j = lm == 4 ? 0 : (lm == 8 ? 1 : (lm == 12 ? 2 : -1)); if (j >= 0 && tuse[hnd * 3 + j]) { bx = tsx[hnd * 3 + j]; by = tsy[hnd * 3 + j]; } }
+                int hnd = (i - 1) / 63, lm = ((i - 1) % 63) / 3;
+                float ax = 0f, ay = 0f;                         // the outline / skeleton moves with the palm + fingers followers only: the single fingertips jitter a little and made it bounce
+                if (m != 2 && hnd < 2 && foh[hnd]) { ax = hsx[hnd * 21 + lm]; ay = hsy[hnd * 21 + lm]; }
+                float bx = ax, by = ay;                         // the pointer and the pinch look at the fingertips' own movement
+                if (m != 2 && hnd < 2) {
+                    int j = lm == 4 ? 0 : (lm == 8 ? 1 : (lm == 12 ? 2 : -1));
+                    if (j >= 0 && tuse[hnd * 3 + j]) { bx = tsx[hnd * 3 + j]; by = tsy[hnd * 3 + j]; }
                 }
                 if (m == 0) { v += ax; vt += bx; } else if (m == 1) { v += ay; vt += by; }
             }
             disp[i] = vt;
             if (i == 0 || (i - 1) % 3 == 2) { dispDraw[i] = v; continue; }
-            // the drawn outline / skeleton moves only by the whole-hand shift: the fingertips followed on their own are for the pointer and the pinch,
-            // drawn they would pull the tips away from the rest of the finger and make the outline bounce
-            v = r[i] + (((i - 1) % 3 == 0) ? shx : shy);
             // a new model answer corrects the points a little (the follower drifts a bit): instead of a jump, the difference melts away over ~90 ms
             if (prevDraw != null && prevDraw.length == r.length) {
                 float c = prevDraw[i] - v;
@@ -673,17 +738,22 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         // the hand outline / skeleton is drawn where the hand is in the camera picture that is on screen right now (that picture is already a bit old),
         // so it sticks to the real hand; the pointer below looks ahead instead, to feel quick
-        if (!fo && r[0] >= 1) {
+        if (r[0] >= 1) {                                    // a hand that is not followed by the camera is drawn from its speed instead
             float dl = Math.max(0, Math.min(now - handT - 16, 140)) / 1000f;
-            for (int i = 1; i < r.length; i++) { if ((i - 1) % 3 != 2) dispDraw[i] += vel[i] * dl * 0.9f; }
+            for (int i = 1; i < r.length; i++) {
+                if ((i - 1) % 3 == 2) continue;
+                int hnd = (i - 1) / 63;
+                if (hnd >= 2 || !foh[hnd]) dispDraw[i] += vel[i] * dl * 0.9f;
+            }
         }
         if (predict && r[0] >= 1) {
             // from the moment of the newest picture that was followed (or of the model's picture) to the moment this frame is shown
-            float lead = fo ? Math.max(0, Math.min(now - cam.flowT + 18, 90)) / 1000f : Math.max(0, Math.min(now - handT + 18, 140)) / 1000f;
-            predMs = lead * 1000f;
+            float leadF = Math.max(0, Math.min(now - cam.flowT + 18, 90)) / 1000f, leadM = Math.max(0, Math.min(now - handT + 18, 140)) / 1000f;
+            predMs = (fo ? leadF : leadM) * 1000f;
             for (int i = 1; i < r.length; i++) {
                 if ((i - 1) % 3 == 2) continue;
-                disp[i] += vel[i] * lead * 0.9f;
+                int hnd = (i - 1) / 63;
+                disp[i] += vel[i] * ((hnd < 2 && foh[hnd]) ? leadF : leadM) * 0.9f;
             }
         } else predMs = 0;
     }
@@ -708,7 +778,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (v.vw <= 0 || v.vh <= 0) return;
         float wa = (float) NvVideo.W / NvVideo.VH, va = (float) v.vw / v.vh;
         float fx = va > wa ? 1f : wa / va, fy = va > wa ? va / wa : 1f;
-        float pw = w.widthM * w.scale * winZoom;
+        float pw = w.widthM * w.scale * winZoom * w.animS;
         float hh = pw * bm.getHeight() / bm.getWidth() / 2f;
         float fr = (float) NvVideo.VH / bm.getHeight();
         GLES20.glDisable(GLES20.GL_BLEND);
@@ -759,8 +829,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, w.tex);
             GLES20.glUniform1i(ul(progPanel, "tex"), 0);
+            GLES20.glUniform1f(ul(progPanel, "al"), w.c instanceof NvVideo ? 1f : w.animA);
             GLES20.glUniformMatrix4fv(ul(progPanel, "mvp"), 1, false, w.mvp, 0);
-            float pw = w.widthM * w.scale * winZoom;
+            float pw = w.widthM * w.scale * winZoom * w.animS;
             GLES20.glUniform2f(ul(progPanel, "hs"), pw / 2f, pw * bm.getHeight() / bm.getWidth() / 2f);
             drawQuad(progPanel);
             GLES20.glDisable(GLES20.GL_BLEND);
