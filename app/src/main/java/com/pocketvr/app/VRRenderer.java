@@ -480,6 +480,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     @Override public void onSurfaceCreated(GL10 gl, EGLConfig cfg) {
         ulc.clear();
+        java.util.Arrays.fill(alc, 0);
+        GLES20.glDisable(GLES20.GL_DITHER);                // no dithering: a little less work for every pixel
         panoTex = 0; panoOn = false;
         for (Win w : wins) if (w.c instanceof NvVideo) ((NvVideo) w.c).glLost();
         progCam = prog(
@@ -1109,8 +1111,18 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         aaFade = 1f;
     }
 
+    private final int[] alc = new int[256];                    // attribute places already asked for (location + 1; 0 = not asked yet)
+    private int attr(int prog, String n, int slot) {
+        int k = prog * 2 + slot;
+        if (k >= 0 && k < alc.length) {
+            if (alc[k] == 0) alc[k] = GLES20.glGetAttribLocation(prog, n) + 1;
+            return alc[k] - 1;
+        }
+        return GLES20.glGetAttribLocation(prog, n);
+    }
+
     private void drawQuad(int prog) {
-        int a = GLES20.glGetAttribLocation(prog, "p");
+        int a = attr(prog, "p", 0);
         GLES20.glEnableVertexAttribArray(a);
         GLES20.glVertexAttribPointer(a, 2, GLES20.GL_FLOAT, false, 0, quad);
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
@@ -1135,17 +1147,22 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     // hand shape (fingers as fat soft bars, palm filled) drawn to a small soft mask; the mask is blurred a little and a thin smooth line
     // is drawn along its middle value, with a faint glow outside: a clean single contour like the web version
-    private void drawOutline(float[] r) {
+    // step 1 of the outline: the soft hand shape into the small mask. This is done BEFORE the camera picture is started, so the big scene
+    // picture is drawn in one go (switching away from it half way makes a phone GPU save and reload the whole picture: a lot of memory traffic)
+    private boolean maskReady = false;
+    private void renderMask(float[] r) {
+        maskReady = false;
         int n = (int) r[0];
-        if (n <= 0) return;
+        if (n <= 0 || sceneW == 0) return;
         ensureMask();
+        maskReady = true;
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, maskFbo[0]);
         GLES20.glViewport(0, 0, maskW, maskH);
         GLES20.glClearColor(0, 0, 0, 0);
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         float hwS = sceneW / 2f, hhS = sceneH / 2f;
         for (int i = 0; i < n; i++) {
-            float[] X = new float[21], Y = new float[21];
+            float[] X = ohX, Y = ohY;
             for (int k = 0; k < 21; k++) {
                 float hx = r[1 + i * 63 + k * 3], hy = r[1 + i * 63 + k * 3 + 1];
                 if (rot180) { hx = 1f - hx; hy = 1f - hy; }
@@ -1167,8 +1184,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * 0.38f);
             aaFlush(1f, 1f, 1f);
         }
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0]);
-        GLES20.glViewport(0, 0, sceneW, sceneH);
+    }
+
+    // step 2 of the outline: a thin line along the middle of the blurred mask, drawn on the scene picture
+    private void drawOutline(float[] r) {
+        int n = (int) r[0];
+        if (n <= 0 || !maskReady) return;
+        float hwS = sceneW / 2f, hhS = sceneH / 2f;
         GLES20.glEnable(GLES20.GL_BLEND);
         GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
         // the thin outline only needs to be worked out around the hands, not over the whole picture (a big saving on a weak GPU)
@@ -1218,24 +1240,28 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float lh = len / hw;
         float pad = hw + aaSoft;
         float pa = pad / hw;
-        float[][] c = {
-            {x0 - dx * pad + nx * pad, y0 - dy * pad + ny * pad, -pa, pa},
-            {x0 - dx * pad - nx * pad, y0 - dy * pad - ny * pad, -pa, -pa},
-            {x1 + dx * pad + nx * pad, y1 + dy * pad + ny * pad, lh + pa, pa},
-            {x1 + dx * pad - nx * pad, y1 + dy * pad - ny * pad, lh + pa, -pa}};
-        int[] idx = {0, 1, 2, 1, 3, 2};
-        for (int k : idx) {
-            aaBuf.put(c[k][0] / hwS).put(c[k][1] / hhS).put(c[k][2]).put(c[k][3]).put(lh).put(hw);
+        // the four corners go into a fixed array (nothing new is made here: this runs dozens of times every frame)
+        float[] c = aaC;
+        c[0] = x0 - dx * pad + nx * pad;  c[1] = y0 - dy * pad + ny * pad;  c[2] = -pa;      c[3] = pa;
+        c[4] = x0 - dx * pad - nx * pad;  c[5] = y0 - dy * pad - ny * pad;  c[6] = -pa;      c[7] = -pa;
+        c[8] = x1 + dx * pad + nx * pad;  c[9] = y1 + dy * pad + ny * pad;  c[10] = lh + pa; c[11] = pa;
+        c[12] = x1 + dx * pad - nx * pad; c[13] = y1 + dy * pad - ny * pad; c[14] = lh + pa; c[15] = -pa;
+        for (int k : AA_IDX) {
+            int o = k * 4;
+            aaBuf.put(c[o] / hwS).put(c[o + 1] / hhS).put(c[o + 2]).put(c[o + 3]).put(lh).put(hw);
             aaN++;
         }
     }
+    private final float[] aaC = new float[16];
+    private static final int[] AA_IDX = {0, 1, 2, 1, 3, 2};
+    private final float[] ohX = new float[21], ohY = new float[21];
 
     private void aaFlush(float cr, float cg, float cb) {
         if (aaN == 0) return;
         GLES20.glEnable(GLES20.GL_BLEND);
         GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
         GLES20.glUseProgram(progAA);
-        int ap = GLES20.glGetAttribLocation(progAA, "p"), aq = GLES20.glGetAttribLocation(progAA, "q");
+        int ap = attr(progAA, "p", 0), aq = attr(progAA, "q", 1);
         GLES20.glEnableVertexAttribArray(ap);
         GLES20.glEnableVertexAttribArray(aq);
         aaBuf.position(0);
@@ -1259,7 +1285,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float u = sceneH / 540f;
         float hwS = sceneW / 2f, hhS = sceneH / 2f;
         for (int i = 0; i < n; i++) {
-            float[] X = new float[21], Y = new float[21];
+            float[] X = ohX, Y = ohY;
             for (int k = 0; k < 21; k++) {
                 float hx = r[1 + i * 63 + k * 3], hy = r[1 + i * 63 + k * 3 + 1];
                 if (rot180) { hx = 1f - hx; hy = 1f - hy; }
@@ -1353,10 +1379,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 }
             }
         }
+        predictNow(now);                                    // where the hand is on screen right now (needed first: the outline mask is made before the scene picture)
+        if (skel == 2) renderMask(dispDraw); else maskReady = false;
         // 1) scene picture: camera (or the 360 picture) + hand skeleton
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0]);
         GLES20.glViewport(0, 0, sceneW, sceneH);
         GLES20.glDisable(GLES20.GL_BLEND);
+        GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
+        GLES20.glClearColor(0f, 0f, 0f, 1f);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);         // always start clean: the GPU then does not have to load last frame's picture back in
         if (panoOn && panoTex != 0) {
             float[] m = rotView;
             rm3[0] = m[0]; rm3[1] = m[1]; rm3[2] = m[2]; rm3[3] = m[4]; rm3[4] = m[5]; rm3[5] = m[6]; rm3[6] = m[8]; rm3[7] = m[9]; rm3[8] = m[10];
@@ -1372,7 +1403,6 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glClearColor(0.01f, 0.01f, 0.015f, 1f);          // the room goes dark: only the screen is left
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         } else {
-        if (camScale < 0.999f) { GLES20.glClearColor(0f, 0f, 0f, 1f); GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT); }      // smaller camera picture: dark border
         GLES20.glUseProgram(progCam);
         GLES20.glUniform1f(ul(progCam, "zs"), camScale);
         float[] fr = frameRot, rn0 = rotView;
@@ -1396,7 +1426,6 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform1f(ul(progCam, "amt"), sharpen);
         drawQuad(progCam);
         }
-        predictNow(now);
         computePanel();
         cursor();
         drawWins();
