@@ -95,19 +95,50 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     private final long t0 = System.currentTimeMillis();
     private boolean swRunning = false;
     private long swStart = 0, swAcc = 0;
+    // ---- heat and battery: read the battery temperature and the phone's own heat level; when it gets warm, draw / look for hands a bit less often ----
+    private int eco = 1;                                    // 0 off, 1 automatic, 2 always light (45 fps), 3 always lighter (30 fps)
+    private int ecoLevel = 0;                               // what is applied now: 0 none, 1 = 45 fps, 2 = 30 fps
+    private float tempC = 0f;
+    private int thermal = 0;
+    private long ecoHotT = 0;
+
+    private void updateEco(long nowMs) {
+        try {
+            android.content.Intent bi = registerReceiver(null, new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED));
+            if (bi != null) tempC = bi.getIntExtra(android.os.BatteryManager.EXTRA_TEMPERATURE, 0) / 10f;
+        } catch (Throwable ignored) { }
+        try {
+            if (android.os.Build.VERSION.SDK_INT >= 29) thermal = ((android.os.PowerManager) getSystemService(POWER_SERVICE)).getCurrentThermalStatus();
+        } catch (Throwable ignored) { }
+        int want = (thermal >= 3 || tempC >= 44f) ? 2 : ((thermal >= 2 || tempC >= 41f) ? 1 : 0);
+        int old = ecoLevel;
+        if (eco == 0) ecoLevel = 0;
+        else if (eco == 2) ecoLevel = 1;
+        else if (eco == 3) ecoLevel = 2;
+        else {
+            if (want >= ecoLevel) ecoHotT = nowMs;
+            if (want > ecoLevel) ecoLevel = want;
+            else if (want < ecoLevel && nowMs - ecoHotT > 40000) ecoLevel = want;       // only after it has been cooler for 40 s
+        }
+        if (ecoLevel != old && menu != null) menu.toast(ecoLevel > old ? "เครื่องอุ่น: ลดความเร็วเพื่อประหยัดความร้อน" : "กลับเป็นความเร็วปกติ");
+        rend.fpsCap = ecoLevel == 0 ? 0 : (ecoLevel == 1 ? 45 : 30);
+    }
+
     private final Runnable tick = new Runnable() {
         @Override public void run() {
             if (cam != null && rend != null) {
                 float f = rend.fps;
                 long p = cam.detPaceMs;
                 if (f >= 40) p = Math.max(0, p - 20); else if (f > 0 && f < 28) p = Math.min(100, p + 15);
+                updateEco(System.currentTimeMillis());
+                if (ecoLevel == 1) p = Math.max(p, 25); else if (ecoLevel == 2) p = Math.max(p, 60);
                 cam.detPaceMs = p;
                 for (NvBrowser b : brs) if (b != null) b.poll();
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.85 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s%s",
-                            f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", err.isEmpty() ? "" : "\n! " + err));
+                    hud.setText((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.86 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                            f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err));
                 } else hud.setText("");
             }
             ui.postDelayed(this, 500);
@@ -388,6 +419,9 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.cycle("🔍", "ความละเอียดตรวจมือ", () -> cam.detW + " px" + (cam.detW <= 320 ? " (เร็ว)" : cam.detW >= 640 ? " (แม่นสุด)" : ""), () -> cam.detW = cam.detW <= 320 ? 480 : (cam.detW <= 480 ? 640 : 320));
         s.cycle("🙌", "จำนวนมือที่ตรวจ", () -> cam.handsN == 2 ? "2 ข้าง (เปลี่ยนเป็น 1 เองถ้าไม่ใช้)" : "ข้างเดียว (เร็ว)", () -> cam.handsN = cam.handsN == 2 ? 1 : 2);
         s.toggle("🎞", "ตามมือต่อระหว่างโมเดล (ลดหน่วง)", () -> cam.flowOn, () -> cam.flowOn = !cam.flowOn);
+        s.toggle("🤏", "ตามปลายนิ้วต่อระหว่างโมเดล (ท่าจีบไวขึ้น)", () -> cam.tipsOn, () -> cam.tipsOn = !cam.tipsOn);
+        s.cycle("🌡", "ความร้อน / ประหยัดพลังงาน", () -> (eco == 0 ? "ปิด" : eco == 1 ? "อัตโนมัติ" : eco == 2 ? "ประหยัด 45 fps" : "ประหยัดมาก 30 fps") + " • " + Math.round(tempC) + "°C" + (ecoLevel > 0 ? " (กำลังลดความเร็ว)" : ""), () -> eco = (eco + 1) % 4);
+        s.toggle("🖼", "ปรับความละเอียดภาพอัตโนมัติ (ให้ลื่น)", () -> rend.autoRes, () -> rend.autoRes = !rend.autoRes);
         s.cycle("🧠", "ตัวประมวลผลตรวจมือ", () -> cam.handsGpu ? "การ์ดจอ GPU (ค่าเดิม)" : "CPU (ลองถ้าภาพแลค)", () -> cam.handsGpu = !cam.handsGpu);
         s.cycle("🫱", "มือหลัก (ตอนยกสองมือ)", () -> rend.mainHand == 0 ? "มือซ้าย" : "มือขวา", () -> rend.mainHand = rend.mainHand == 0 ? 1 : 0);
         s.toggle("🎈", "หน้าต่างลอยเบาๆ", () -> rend.floaty, () -> rend.floaty = !rend.floaty);
@@ -458,13 +492,13 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     // ================= saved settings (kept when the app is closed) =================
-    private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck", "flow"};
+    private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck", "flow", "eco", "autoRes", "tips"};
     private double[] defaults;
     private double[] lastSaved;
 
     private double[] snapPrefs() {
         return new double[]{rend.sel, rend.pokeS, rend.predict ? 1 : 0, cam.detW, rend.floaty ? 1 : 0, NvUi.glass, rend.cursorSz, rend.skel, hudOn ? 1 : 0,
-                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs, rend.mainHand, rend.chroma, cam.handsGpu ? 1 : 0, rend.neck ? 1 : 0, cam.flowOn ? 1 : 0};
+                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs, rend.mainHand, rend.chroma, cam.handsGpu ? 1 : 0, rend.neck ? 1 : 0, cam.flowOn ? 1 : 0, eco, rend.autoRes ? 1 : 0, cam.tipsOn ? 1 : 0};
     }
 
     private void applyPrefs(double[] v) {
@@ -472,7 +506,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         NvUi.glass = (int) v[5]; rend.cursorSz = (int) v[6]; rend.skel = (int) v[7]; hudOn = v[8] > 0.5;
         rend.sharpen = (float) v[9]; rend.stereo = v[10] > 0.5; rend.lens = (int) v[11]; rend.eyeShift = (float) v[12]; compass = v[13] > 0.5;
         motion.depthM = (float) v[14]; motion.lagMs = (int) v[15]; cam.handsN = Math.max(1, Math.min(2, (int) v[16])); rend.vrFov = (float) Math.max(50, Math.min(110, v[17]));
-        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19])); rend.mainHand = v[20] > 0.5 ? 1 : 0; rend.chroma = (float) Math.max(-0.06, Math.min(0.06, v[21])); cam.handsGpu = v[22] > 0.5; rend.neck = v[23] > 0.5; cam.flowOn = v[24] > 0.5;
+        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19])); rend.mainHand = v[20] > 0.5 ? 1 : 0; rend.chroma = (float) Math.max(-0.06, Math.min(0.06, v[21])); cam.handsGpu = v[22] > 0.5; rend.neck = v[23] > 0.5; cam.flowOn = v[24] > 0.5; eco = Math.max(0, Math.min(3, (int) v[25])); rend.autoRes = v[26] > 0.5; cam.tipsOn = v[27] > 0.5;
     }
 
     // ----- where the windows were left (turn, height, size, distance) -----

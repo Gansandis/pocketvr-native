@@ -29,14 +29,16 @@ final class NvFlow {
     synchronized float cumX() { return cumX; }
     synchronized float cumY() { return cumY; }
 
-    synchronized void reset() { havePrev = false; hn = 0; hi = 0; fails = 0; valid = false; }
+    synchronized void reset() { havePrev = false; hn = 0; hi = 0; fails = 0; valid = false; for (int k = 0; k < NT; k++) { tok[k] = false; tcx[k] = 0f; tcy[k] = 0f; tfl[k] = 0; } }
 
     /** the moves added up as they were at time t (between two frames: in between). Out of range: the nearest one. */
-    synchronized void cumAt(long t, float[] out) {
-        if (hn == 0) { out[0] = cumX; out[1] = cumY; return; }
+    synchronized void cumAt(long t, float[] out) { interp(t, hx, hy, cumX, cumY, out); }
+
+    private void interp(long t, float[] ax, float[] ay, float nowX, float nowY, float[] out) {
+        if (hn == 0) { out[0] = nowX; out[1] = nowY; return; }
         int newest = (hi - 1 + HN) % HN, oldest = hn < HN ? 0 : hi;
-        if (t >= ht[newest]) { out[0] = hx[newest]; out[1] = hy[newest]; return; }
-        if (t <= ht[oldest]) { out[0] = hx[oldest]; out[1] = hy[oldest]; return; }
+        if (t >= ht[newest]) { out[0] = ax[newest]; out[1] = ay[newest]; return; }
+        if (t <= ht[oldest]) { out[0] = ax[oldest]; out[1] = ay[oldest]; return; }
         int a = oldest;
         for (int k = 0; k < hn - 1; k++) {
             int i0 = (oldest + k) % HN, i1 = (oldest + k + 1) % HN;
@@ -44,12 +46,72 @@ final class NvFlow {
         }
         int b = (a + 1) % HN;
         float f = ht[b] == ht[a] ? 0f : (float) (t - ht[a]) / (ht[b] - ht[a]);
-        out[0] = hx[a] + (hx[b] - hx[a]) * f;
-        out[1] = hy[a] + (hy[b] - hy[a]) * f;
+        out[0] = ax[a] + (ax[b] - ax[a]) * f;
+        out[1] = ay[a] + (ay[b] - ay[a]) * f;
+    }
+
+    // ---- fingertips (thumb, index, middle of up to two hands): each one is followed on its own, so a pinch closing is seen at the camera rate too ----
+    static final int NT = 6;
+    private final float[] tcx = new float[NT], tcy = new float[NT];
+    private final float[][] thx = new float[NT][HN], thy = new float[NT][HN];
+    private final boolean[] tok = new boolean[NT];
+    private final int[] tfl = new int[NT];
+
+    synchronized void tipNow(float[] out) { for (int k = 0; k < NT; k++) { out[k * 3] = tcx[k]; out[k * 3 + 1] = tcy[k]; out[k * 3 + 2] = tok[k] ? 1f : 0f; } }
+    synchronized void tipAt(int k, long t, float[] out) { interp(t, thx[k], thy[k], tcx[k], tcy[k], out); }
+    synchronized boolean tipValid(int k) { return tok[k]; }
+
+    /** tips: NT pairs of (x, y) as fractions of the picture = where each fingertip was in the previous frame; NaN = no such finger */
+    private static final int[] DISC_DX, DISC_DY;
+    static {
+        int n = 0;
+        int[] tx = new int[400], ty = new int[400];
+        for (int j = -5; j <= 5; j++) for (int i = -5; i <= 5; i++) if (i * i + j * j <= 16) { tx[n] = i; ty[n] = j; n++; }     // a round patch, radius 4: mostly fingertip, little background
+        DISC_DX = java.util.Arrays.copyOf(tx, n); DISC_DY = java.util.Arrays.copyOf(ty, n);
+    }
+
+    private void trackTips(byte[] gray, float[] tips) {
+        final int P = 5, R2 = 5, S = 2 * R2 + 1, N = DISC_DX.length;
+        for (int k = 0; k < NT; k++) {
+            if (tips == null || Float.isNaN(tips[k * 2]) || Float.isNaN(tips[k * 2 + 1])) { tok[k] = false; tfl[k] = 0; continue; }
+            int cx = Math.round(tips[k * 2] * GW), cy = Math.round(tips[k * 2 + 1] * GH);
+            if (cx < P + R2 + 1 || cx > GW - P - R2 - 2 || cy < P + R2 + 1 || cy > GH - P - R2 - 2) { tok[k] = false; continue; }
+            int sum = 0;
+            for (int q = 0; q < N; q++) sum += prev[(cy + DISC_DY[q]) * GW + cx + DISC_DX[q]] & 0xFF;
+            int mean = sum / N, dev = 0;
+            for (int q = 0; q < N; q++) dev += Math.abs((prev[(cy + DISC_DY[q]) * GW + cx + DISC_DX[q]] & 0xFF) - mean);
+            boolean ok = false;
+            if ((float) dev / N > 3.5f) {
+                int[] sad = new int[S * S];
+                int best = Integer.MAX_VALUE, bi = 0;
+                long tot = 0;
+                for (int dy = -R2; dy <= R2; dy++) for (int dx = -R2; dx <= R2; dx++) {
+                    int sd = 0;
+                    int off = dy * GW + dx;
+                    for (int q = 0; q < N; q++) {
+                        int p0 = (cy + DISC_DY[q]) * GW + cx + DISC_DX[q];
+                        int d = (prev[p0] & 0xFF) - (gray[p0 + off] & 0xFF);
+                        sd += d < 0 ? -d : d;
+                    }
+                    int idx = (dy + R2) * S + (dx + R2);
+                    sad[idx] = sd; tot += sd;
+                    if (sd < best) { best = sd; bi = idx; }
+                }
+                int bx = bi % S, by = bi / S;
+                if (bx > 0 && bx < S - 1 && by > 0 && by < S - 1 && best < 0.75f * ((float) tot / (S * S))) {
+                    tcx[k] += ((bx - R2) + sub(sad[by * S + bx - 1], sad[bi], sad[by * S + bx + 1])) / GW;
+                    tcy[k] += ((by - R2) + sub(sad[(by - 1) * S + bx], sad[bi], sad[(by + 1) * S + bx])) / GH;
+                    ok = true;
+                }
+            }
+            if (ok) { tfl[k] = 0; tok[k] = true; }
+            else if (++tfl[k] > 3) tok[k] = false;
+        }
     }
 
     private void push(long t) {
         ht[hi] = t; hx[hi] = cumX; hy[hi] = cumY;
+        for (int k = 0; k < NT; k++) { thx[k][hi] = tcx[k]; thy[k][hi] = tcy[k]; }
         hi = (hi + 1) % HN;
         if (hn < HN) hn++;
     }
@@ -96,7 +158,7 @@ final class NvFlow {
      * box: the hand's box {x0, y0, x1, y1} as fractions of the picture, or null when there is no hand (then nothing is measured);
      * pts: the hand's points (see collect), or null.
      */
-    synchronized void feed(byte[] gray, long t, float[] box, float[] pts) {
+    synchronized void feed(byte[] gray, long t, float[] box, float[] pts, float[] tips) {
         lastT = t;
         boolean ok = false;
         if (havePrev && box != null) {
@@ -144,6 +206,7 @@ final class NvFlow {
                 }
             }
         }
+        if (havePrev) trackTips(gray, tips);
         if (box == null) { valid = false; fails = 0; }
         else if (ok) { fails = 0; valid = true; }
         else if (++fails > 6) valid = false;                  // lost for a while: say so, the renderer goes back to guessing from speed

@@ -25,6 +25,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile int lens = 1;
     public volatile float chroma = 0f;                    // lens colour fringes (red / blue edges): the three colours are drawn a hair apart at the edges, the other way round
     public volatile float fps = 0;
+    public volatile int fpsCap = 0;                        // 0 = as fast as the screen allows; 30 / 45 = slow down to save heat and battery
+    public volatile boolean autoRes = true;                // lower the size of the picture when the frame rate cannot be kept, and raise it again when there is room
+    public volatile float sceneScale = 1f;                 // 0.6 .. 1
+    private long lastScaleT = 0, lastFrameNs = 0;
     public volatile boolean predict = true;
     public volatile int skel = 1;           // 0 off, 1 skeleton, 2 glowing outline (like the web version)
     public volatile float predMs = 0;
@@ -285,9 +289,41 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         sux = mux + nx; suy = muy + ny; suz = muz + nz;
     }
 
+    /**
+     * A window that comes up on its standard place (the user has not moved it yet) steps aside, to the right first and then to the left,
+     * when another window is already there, so the menu and the settings do not lie on top of each other.
+     * Angles: positive yaw = to the right, positive pitch = up (the same as the angles the windows report about themselves).
+     */
+    private void avoidOverlap(Win w) {
+        if (w.hasSaved) return;                                   // the user chose that place: keep it
+        android.graphics.Bitmap bm = w.c.bitmap();
+        if (bm == null || bm.getWidth() <= 0) return;
+        float sc = w.wantScale > 0 ? w.wantScale : 1f, d = w.placeDist > 0f ? w.placeDist : PANEL_D;
+        float pw = w.widthM * sc * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
+        float hw = (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = (float) Math.toDegrees(Math.atan(ph / 2f / d));
+        float baseY = w.offYaw, baseP = w.offPitch;
+        for (int k = 0; k < 7; k++) {
+            int m = ((k + 1) / 2) * (k % 2 == 1 ? 1 : -1);        // 0, +1, -1, +2, -2, +3, -3 steps (a step = the window's own width + a gap)
+            // k=0 -> m=0; k=1 -> +1; k=2 -> -1 ...
+            float cy = baseY + m * (2f * hw + 3f), cp = baseP;
+            boolean hit = false;
+            for (Win o : wins) {
+                if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
+                android.graphics.Bitmap ob = o.c.bitmap();
+                if (ob == null || ob.getWidth() <= 0) continue;
+                float opw = o.widthM * o.scale * winZoom, oph = opw * ob.getHeight() / ob.getWidth();
+                float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / Math.max(0.3f, o.dist))), ohh = (float) Math.toDegrees(Math.atan(oph / 2f / Math.max(0.3f, o.dist)));
+                if (ohw > 45f) continue;                          // something huge (the cinema screen): do not dodge it
+                if (Math.abs(cy - o.yawA) < hw + ohw + 1.5f && Math.abs(cp - o.pitchA) < hh + ohh + 1.5f) { hit = true; break; }
+            }
+            if (!hit) { w.offYaw = cy; w.offPitch = cp; return; }
+        }
+    }
+
     private void updateWin(Win w, float[] rn, float t) {
         float ux = sux, uy = suy, uz = suz;
         if (w.placeReq || w.rot == null) {
+            avoidOverlap(w);
             android.opengl.Matrix.transposeM(tA, 0, rn, 0);
             w.rot = tA.clone();
             if (w.offYaw != 0f || w.offPitch != 0f) turnWin(w, rn, -w.offYaw, w.offPitch);
@@ -525,7 +561,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     @Override public void onSurfaceChanged(GL10 gl, int w, int h) { vw = w; vh = h; }
 
     private void makeScene(int iw, int ih) {
-        int w = Math.min(iw, 1280);
+        int w = Math.max(320, Math.round(Math.min(iw, 1280) * Math.max(0.6f, Math.min(1f, sceneScale))) & ~1);
         int h = Math.max(2, Math.round(w * (float) ih / iw));
         if (sceneTex[0] != 0) { GLES20.glDeleteTextures(1, sceneTex, 0); GLES20.glDeleteFramebuffers(1, fbo, 0); }
         GLES20.glGenTextures(1, sceneTex, 0);
@@ -548,6 +584,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // by their measured speed. Times are the moments the pictures were TAKEN (from the camera thread), not the moments this loop noticed
     // them, so the speed is not shaken by the 16 ms steps of the draw loop and the lead covers the real delay of the picture.
     private float rfX = 0, rfY = 0;
+    private float[] rTip = null;
+    private final float[] tsx = new float[6], tsy = new float[6];
+    private final boolean[] tuse = new boolean[6];
     private float[] dispDraw = new float[]{0}, corr = new float[1];
     private float[] drawRes = null;
     private long lastPredT = 0;
@@ -559,7 +598,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             long tc = cam.resultCapT;
             if (tc <= 0 || tc > now) tc = now;
             lastRes = r; handT = tc;
-            rfX = cam.resFlowX; rfY = cam.resFlowY;
+            rfX = cam.resFlowX; rfY = cam.resFlowY; rTip = cam.resTip;
             if (vel.length != r.length) vel = new float[r.length];
             if (prev != null && prev.length == r.length && r[0] >= 1 && tc - tPrev >= 8 && tc - tPrev < 350) {
                 float dt = (tc - tPrev) / 1000f;
@@ -584,6 +623,21 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         boolean newAns = r != drawRes;                       // a new answer of the model arrived since the last frame
         float[] prevDraw = null;
+        // each thumb / index / middle fingertip that is followed on its own is moved by its own amount (so a closing pinch shows up at the camera rate)
+        java.util.Arrays.fill(tuse, false);
+        if (fo && cam.tipsOn) {
+            float[] tn = cam.tipNow; float[] rt = rTip;
+            if (tn != null && rt != null && tn.length >= 18 && rt.length >= 18) {
+                int nh = Math.min(2, (int) r[0]);
+                for (int hnd = 0; hnd < nh; hnd++) for (int j = 0; j < 3; j++) {
+                    int sl = hnd * 3 + j;
+                    if (tn[sl * 3 + 2] > 0.5f && rt[sl * 3 + 2] > 0.5f) {
+                        float ex = tn[sl * 3] - rt[sl * 3], ey = tn[sl * 3 + 1] - rt[sl * 3 + 1];
+                        if (Math.abs(ex - shx) < 0.08f && Math.abs(ey - shy) < 0.08f) { tsx[sl] = ex; tsy[sl] = ey; tuse[sl] = true; }
+                    }
+                }
+            }
+        }
         if (dispDraw.length != r.length) { dispDraw = new float[r.length]; corr = new float[r.length]; newAns = false; }
         else if (newAns && dispDraw.length > 0 && dispDraw[0] >= 1 && r[0] >= 1) prevDraw = dispDraw.clone();
         drawRes = r;
@@ -592,7 +646,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float decay = (float) Math.exp(-fdt / 90f);
         for (int i = 0; i < r.length; i++) {
             float v = r[i];
-            if (i > 0) { int m = (i - 1) % 3; if (m == 0) v += shx; else if (m == 1) v += shy; }
+            if (i > 0) {
+                int m = (i - 1) % 3;
+                float ax = shx, ay = shy;
+                if (m != 2) {
+                    int hnd = (i - 1) / 63, lm = ((i - 1) % 63) / 3;
+                    if (hnd < 2) { int j = lm == 4 ? 0 : (lm == 8 ? 1 : (lm == 12 ? 2 : -1)); if (j >= 0 && tuse[hnd * 3 + j]) { ax = tsx[hnd * 3 + j]; ay = tsy[hnd * 3 + j]; } }
+                }
+                if (m == 0) v += ax; else if (m == 1) v += ay;
+            }
             disp[i] = v;
             if (i == 0 || (i - 1) % 3 == 2) { dispDraw[i] = v; continue; }
             // a new model answer corrects the points a little (the follower drifts a bit): instead of a jump, the difference melts away over ~90 ms
@@ -1212,10 +1274,25 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     @Override public void onDrawFrame(GL10 gl) {
+        int cap = fpsCap;
+        if (cap > 0) {                                     // slow down: wait until it is time for the next picture
+            long target = 1_000_000_000L / cap;
+            long el = System.nanoTime() - lastFrameNs;
+            if (el < target) { try { Thread.sleep((target - el) / 1_000_000L, (int) ((target - el) % 1_000_000L)); } catch (Throwable ignored) { } }
+        }
+        lastFrameNs = System.nanoTime();
         long now = System.nanoTime() / 1000000L;
         fc++;
         if (ft0 == 0) ft0 = now;
-        if (now - ft0 >= 1000) { fps = fc * 1000f / (now - ft0); fc = 0; ft0 = now; }
+        if (now - ft0 >= 1000) {
+            fps = fc * 1000f / (now - ft0); fc = 0; ft0 = now;
+            // automatic picture size: step down 10 % when the frame rate is clearly under what we aim at, step up when it is at the aim for a while
+            float aim = cap > 0 ? cap : 60f;
+            if (autoRes) {
+                if (fps < aim * 0.9f && now - lastScaleT > 2500 && sceneScale > 0.61f) { sceneScale = Math.max(0.6f, sceneScale - 0.1f); sceneW = 0; lastScaleT = now; }
+                else if (fps >= aim - 1.5f && sceneScale < 0.99f && now - lastScaleT > 9000) { sceneScale = Math.min(1f, sceneScale + 0.1f); sceneW = 0; lastScaleT = now; }
+            } else if (sceneScale < 1f) { sceneScale = 1f; sceneW = 0; }
+        }
 
         updateView();
         int iw = imgW, ih = imgH;

@@ -54,6 +54,10 @@ public class NvCam {
     public volatile float[] result = new float[]{0};
     public volatile boolean flowOn = true;         // follow the hand between the model's answers by looking at how the picture moved (NvFlow)
     public volatile boolean flowOk = false;
+    public volatile boolean tipsOn = true;         // follow thumb / index / middle fingertips on their own (a pinch closing is seen at the camera rate)
+    public volatile float[] tipNow = new float[NvFlow.NT * 3], resTip = new float[NvFlow.NT * 3];       // per fingertip: moves added up now / at the time of the model's picture, and whether they can be trusted
+    public static final int[] TIPS = {4, 8, 12};
+    private final float[] tmp2 = new float[2];
     public volatile float flowX = 0, flowY = 0, resFlowX = 0, resFlowY = 0;     // moves added up now / at the time of the picture behind `result`
     public volatile long flowT = 0;
     private final NvFlow flow = new NvFlow();
@@ -77,7 +81,7 @@ public class NvCam {
     // look at how the picture inside the hand's box moved since the last frame (see NvFlow)
     private void feedFlow(Image img, long now) {
         float[] rr = result;
-        float[] box = null, pts = null;
+        float[] box = null, pts = null, tips = null;
         if (rr != null && rr.length > 0 && rr[0] >= 1) {
             float sx = flow.cumX() - resFlowX, sy = flow.cumY() - resFlowY;           // the hand is where the model saw it plus what moved since
             float x0 = 1f, y0 = 1f, x1 = 0f, y1 = 0f;
@@ -91,6 +95,20 @@ public class NvCam {
                     if (y < y0) y0 = y; if (y > y1) y1 = y;
                 }
             }
+            if (tipsOn) {
+                tips = new float[NvFlow.NT * 2];
+                java.util.Arrays.fill(tips, Float.NaN);
+                float[] tn = tipNow, rt = resTip;
+                for (int hnd = 0; hnd < n && rr.length >= 1 + (hnd + 1) * 63; hnd++) for (int j = 0; j < 3; j++) {
+                    int slot = hnd * 3 + j, base = 1 + hnd * 63 + TIPS[j] * 3;
+                    float tx = rr[base] + sx, ty = rr[base + 1] + sy;                  // where this fingertip was in the last frame: the model's point + what has moved since
+                    if (tn != null && rt != null && tn[slot * 3 + 2] > 0.5f && rt[slot * 3 + 2] > 0.5f) {
+                        float ex = tn[slot * 3] - rt[slot * 3], ey = tn[slot * 3 + 1] - rt[slot * 3 + 1];
+                        if (Math.abs(ex - sx) < 0.08f && Math.abs(ey - sy) < 0.08f) { tx = rr[base] + ex; ty = rr[base + 1] + ey; }
+                    }
+                    tips[slot * 2] = tx; tips[slot * 2 + 1] = ty;
+                }
+            }
             if (x1 > x0 && y1 > y0) box = new float[]{Math.max(0f, x0 - 0.02f), Math.max(0f, y0 - 0.02f), Math.min(1f, x1 + 0.02f), Math.min(1f, y1 + 0.02f)};
         }
         Image.Plane yp = img.getPlanes()[0];
@@ -100,7 +118,10 @@ public class NvCam {
             int row = Math.min(h - 1, (2 * gy + 1) * h / (2 * NvFlow.GH)) * rs;
             for (int gx = 0; gx < NvFlow.GW; gx++) gray[gy * NvFlow.GW + gx] = yb.get(row + Math.min(w - 1, (2 * gx + 1) * w / (2 * NvFlow.GW)));
         }
-        flow.feed(gray, now, box, pts);
+        flow.feed(gray, now, box, pts, tips);
+        float[] tnw = new float[NvFlow.NT * 3];
+        flow.tipNow(tnw);
+        tipNow = tnw;
         flowX = flow.cumX(); flowY = flow.cumY(); flowT = now;
         flowOk = box != null && flow.valid();
     }
@@ -322,6 +343,9 @@ public class NvCam {
                         else {
                             resultCapT = ts;
                             flow.cumAt(ts, cat); resFlowX = cat[0]; resFlowY = cat[1];     // where the moves stood when that picture was taken (set before the points)
+                            float[] rt = new float[NvFlow.NT * 3];
+                            for (int k = 0; k < NvFlow.NT; k++) { flow.tipAt(k, ts, tmp2); rt[k * 3] = tmp2[0]; rt[k * 3 + 1] = tmp2[1]; rt[k * 3 + 2] = flow.tipValid(k) ? 1f : 0f; }
+                            resTip = rt;
                         }                       // when the picture the points belong to was taken (written before the points, so a reader of the new points sees this time)
                         result = res;
                         long t = System.nanoTime() / 1000000L;
