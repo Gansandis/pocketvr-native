@@ -645,18 +645,22 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         lastPredT = now;
         float decay = (float) Math.exp(-fdt / 90f);
         for (int i = 0; i < r.length; i++) {
-            float v = r[i];
+            float v = r[i], vt = r[i];
             if (i > 0) {
                 int m = (i - 1) % 3;
-                float ax = shx, ay = shy;
+                float ax = shx, ay = shy;                       // the outline / skeleton moves with the whole hand only: the single fingertips jitter a little and made it bounce
+                float bx = shx, by = shy;                       // the pointer and the pinch look at the fingertips' own movement
                 if (m != 2) {
                     int hnd = (i - 1) / 63, lm = ((i - 1) % 63) / 3;
-                    if (hnd < 2) { int j = lm == 4 ? 0 : (lm == 8 ? 1 : (lm == 12 ? 2 : -1)); if (j >= 0 && tuse[hnd * 3 + j]) { ax = tsx[hnd * 3 + j]; ay = tsy[hnd * 3 + j]; } }
+                    if (hnd < 2) { int j = lm == 4 ? 0 : (lm == 8 ? 1 : (lm == 12 ? 2 : -1)); if (j >= 0 && tuse[hnd * 3 + j]) { bx = tsx[hnd * 3 + j]; by = tsy[hnd * 3 + j]; } }
                 }
-                if (m == 0) v += ax; else if (m == 1) v += ay;
+                if (m == 0) { v += ax; vt += bx; } else if (m == 1) { v += ay; vt += by; }
             }
-            disp[i] = v;
+            disp[i] = vt;
             if (i == 0 || (i - 1) % 3 == 2) { dispDraw[i] = v; continue; }
+            // the drawn outline / skeleton moves only by the whole-hand shift: the fingertips followed on their own are for the pointer and the pinch,
+            // drawn they would pull the tips away from the rest of the finger and make the outline bounce
+            v = r[i] + (((i - 1) % 3 == 0) ? shx : shy);
             // a new model answer corrects the points a little (the follower drifts a bit): instead of a jump, the difference melts away over ~90 ms
             if (prevDraw != null && prevDraw.length == r.length) {
                 float c = prevDraw[i] - v;
