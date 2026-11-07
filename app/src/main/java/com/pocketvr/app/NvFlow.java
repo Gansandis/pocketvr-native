@@ -7,9 +7,8 @@ package com.pocketvr.app;
  * and adds the moves up as a fraction of the picture size. The renderer then moves the model's points on by "moves since the picture
  * that answer belongs to": the hand shows up where it is NOW, not where it was 70+ ms ago.
  *
- * Every hand has two followers of its own: one on the palm (wrist and knuckles) and one on the fingers. Two hands that move in different
- * ways do not pull on each other, and when a hand turns or rolls, the fingers move more than the palm: the difference between the two
- * followers tells how much each point has to be moved (see kFactors / shiftOf).
+ * Every hand has its own follower (the whole hand is compared in one go), so two hands that move in different ways do not pull on each other.
+ * The slots of the old palm / fingers split are kept but both hold the same move, so nothing is stretched (see kFactors / shiftOf).
  * No Android classes here, so it can be tested anywhere.
  */
 final class NvFlow {
@@ -188,12 +187,13 @@ final class NvFlow {
      */
     private boolean trackRegion(byte[] gray, float[] pts, int h, int reg, int k) {
         int o = h * 42;
-        boolean wantPalm = reg == 0;
+        boolean all = reg == 2;                          // 2 = the whole hand in one go: one move for the hand, nothing is stretched
+        boolean wantPalm = reg == 0 || all;
         float palm = (float) Math.hypot((pts[o + 18] - pts[o]) * GW, (pts[o + 19] - pts[o + 1]) * GH);       // wrist to middle-finger knuckle
         float rad = Math.max(3f, palm * 0.28f);
         float bx0 = 1e9f, by0 = 1e9f, bx1 = -1e9f, by1 = -1e9f;
         for (int lm = 0; lm < 21; lm++) {
-            if (PALM[lm] != wantPalm) continue;
+            if (!all && PALM[lm] != wantPalm) continue;
             float x = pts[o + lm * 2] * GW, y = pts[o + lm * 2 + 1] * GH;
             if (x < bx0) bx0 = x; if (x > bx1) bx1 = x;
             if (y < by0) by0 = y; if (y > by1) by1 = y;
@@ -202,9 +202,9 @@ final class NvFlow {
         int y0 = Math.max(R + 1, (int) (by0 - rad - 1f)), y1 = Math.min(GH - R - 2, (int) (by1 + rad + 2f));
         if (x1 - x0 < 8 || y1 - y0 < 8) return false;
         for (int y = y0; y < y1; y++) for (int x = x0; x < x1; x++) mask[y * GW + x] = 0;
-        for (int lm = 0; lm < 21; lm++) if (PALM[lm] == wantPalm) disc(pts[o + lm * 2] * GW, pts[o + lm * 2 + 1] * GH, rad, x0, y0, x1, y1);
+        for (int lm = 0; lm < 21; lm++) if (all || PALM[lm] == wantPalm) disc(pts[o + lm * 2] * GW, pts[o + lm * 2 + 1] * GH, rad, x0, y0, x1, y1);
         for (int[] bn : BONES) {
-            if (PALM[bn[1]] != wantPalm) continue;       // a bone belongs to the part its far end is in
+            if (!all && PALM[bn[1]] != wantPalm) continue;       // a bone belongs to the part its far end is in
             disc((pts[o + bn[0] * 2] + pts[o + bn[1] * 2]) * 0.5f * GW, (pts[o + bn[0] * 2 + 1] + pts[o + bn[1] * 2 + 1]) * 0.5f * GH, rad, x0, y0, x1, y1);
         }
         if (wantPalm) {                                  // fill the palm: between the wrist and the knuckles
@@ -261,14 +261,15 @@ final class NvFlow {
     synchronized void feed(byte[] gray, long t, float[] pts, float[] tips) {
         lastT = t;
         int nh = pts == null ? 0 : Math.min(2, pts.length / 42);
-        for (int k = 0; k < NTRK; k++) {
-            int h = k >> 1;
-            if (h >= nh) { valid[k] = false; fails[k] = 0; continue; }
+        for (int h = 0; h < 2; h++) {
+            int k = h * 2;
+            if (h >= nh) { valid[k] = valid[k + 1] = false; fails[k] = fails[k + 1] = 0; continue; }
             if (!havePrev) continue;
             boolean ok = false;
-            try { ok = trackRegion(gray, pts, h, k & 1, k); } catch (RuntimeException e) { ok = false; }
+            try { ok = trackRegion(gray, pts, h, 2, k); } catch (RuntimeException e) { ok = false; }
             if (ok) { fails[k] = 0; valid[k] = true; }
             else if (++fails[k] > 6) valid[k] = false;        // lost for a while: say so, the renderer goes back to guessing from speed
+            cx[k + 1] = cx[k]; cy[k + 1] = cy[k]; valid[k + 1] = valid[k]; fails[k + 1] = fails[k];     // the second follower is a copy: palm and fingers move together
         }
         if (havePrev) trackTips(gray, tips);
         System.arraycopy(gray, 0, prev, 0, GW * GH);
