@@ -892,6 +892,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (n <= 1 || d.length < 1 + n * 63) { selHand = 0; return d; }
         float ar = (float) Math.max(1, imgW) / Math.max(1, imgH);
         int best = 0; float bestScore = 1e9f;
+        if (palmMenu && n == 2) {                                      // the left hand carries the palm menu, so with two hands the right hand is always the pointer
+            best = rot180 ? 0 : 1;                                    // (otherwise an open left palm would also be read as pinches / pokes of the pointer)
+            selHand = best; handBase = best * 63;
+            oneHand[0] = 1f;
+            System.arraycopy(d, 1 + best * 63, oneHand, 1, 63);
+            selTx = oneHand[25]; selTy = oneHand[26];
+            return oneHand;
+        }
         for (int i = 0; i < n; i++) {
             int b = 1 + i * 63;
             float tx = d[b + 24], ty = d[b + 25], ax = d[b + 12], ay = d[b + 13], kx = d[b + 36], ky = d[b + 37];
@@ -945,7 +953,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
             // palm to the camera: for a left hand that shows the palm, the index knuckle -> pinky knuckle turn is one way round (the back of the hand: the other way)
             float v1x = (d[bL + 15] - wx) * ar, v1y = d[bL + 16] - wy, v2x = (d[bL + 51] - wx) * ar, v2y = d[bL + 52] - wy;
-            boolean facing = (v1x * v2y - v1y * v2x) < -0.10f * size * size;
+            boolean facing = (v1x * v2y - v1y * v2x) > 0.10f * size * size;      // (on the phone the palm side gave the opposite sign to the first guess)
             open = ext && facing;
             // where the icons go: on the palm, next to each other across it (index side / little finger side), so they stay on the right sides when the hand turns
             float x0 = spx(d, bL, 0), y0 = spy(d, bL, 0), x9 = spx(d, bL, 9), y9 = spy(d, bL, 9);
@@ -1113,7 +1121,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
         // thumb + middle finger held together for a moment: show / hide the menu
         boolean mpPrev = mpOn;
-        mpOn = mpOn ? (ratioM < 0.32f) : (ratioM < 0.20f && ratio > 0.35f);
+        // with two hands the pointing pose (index out, thumb on the middle finger) IS this gesture, so poking a palm icon opened the menu first: it is off while the palm menu is in use
+        boolean mpBlock = palmMenu && disp != null && disp.length > 0 && disp[0] >= 2f;
+        mpOn = !mpBlock && (mpOn ? (ratioM < 0.32f) : (ratioM < 0.20f && ratio > 0.35f));
         if (mpOn && !mpPrev) mpT0 = nowMs;
         if (!mpOn && mpPrev && !mpLatched && nowMs - mpT0 < 500) {        // a quick tap; two quick taps = put the screens back in front of you
             if (nowMs - mpTapT < 1000) { recenter = true; mpTapT = 0; } else mpTapT = nowMs;
