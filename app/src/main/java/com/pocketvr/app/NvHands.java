@@ -22,6 +22,8 @@ public class NvHands {
     private HandLandmarker lm;                 // the model asked for (one or two hands)
     private HandLandmarker lm1;                // when two hands are asked for: a one-hand copy, used while only one hand is in view
     private int lastN = 0;
+    /** per hand (same order as the result): how likely it is the user's LEFT hand, 0..1; -1 = not known. The model judges from how the hand looks as if the picture were a mirror, and the back camera does not mirror, so its "Right" is the user's left. */
+    public volatile float[] leftness = new float[]{-1f, -1f};
     private long lastProbe = 0;
     private static final long PROBE_MS = 450;  // how often the two-hand model looks for a second hand while only one is in view
     private long lastTs = 0;
@@ -72,9 +74,28 @@ public class NvHands {
             inferMs += ((System.nanoTime() - t0) / 1e6f - inferMs) * 0.2f;
             try { img.close(); } catch (Throwable ignored) { }
             List<List<NormalizedLandmark>> all = new java.util.ArrayList<>(r.landmarks());
-            if (all.size() > 1) {                                      // keep the two hands in a steady order (left to right in the picture)
-                java.util.Collections.sort(all, (a, b) -> Float.compare(a.isEmpty() ? 0f : a.get(0).x(), b.isEmpty() ? 0f : b.get(0).x()));
+            java.util.List<java.util.List<com.google.mediapipe.tasks.components.containers.Category>> hd = r.handednesses();
+            final float[] lf = new float[all.size()];
+            for (int i = 0; i < lf.length; i++) {
+                lf[i] = -1f;
+                try {
+                    com.google.mediapipe.tasks.components.containers.Category c = hd.get(i).get(0);
+                    boolean modelRight = "Right".equalsIgnoreCase(c.categoryName());
+                    lf[i] = modelRight ? c.score() : 1f - c.score();
+                } catch (Throwable ignored) { }
             }
+            Integer[] order = new Integer[all.size()];
+            for (int i = 0; i < order.length; i++) order[i] = i;
+            if (all.size() > 1) {                                      // keep the two hands in a steady order (left to right in the picture)
+                final List<List<NormalizedLandmark>> src = all;
+                java.util.Arrays.sort(order, (a, b) -> Float.compare(src.get(a).isEmpty() ? 0f : src.get(a).get(0).x(), src.get(b).isEmpty() ? 0f : src.get(b).get(0).x()));
+            }
+            float[] ln = new float[]{-1f, -1f};
+            for (int i = 0; i < order.length && i < 2; i++) ln[i] = lf[order[i]];
+            leftness = ln;
+            List<List<NormalizedLandmark>> sorted = new java.util.ArrayList<>();
+            for (int i = 0; i < order.length; i++) sorted.add(all.get(order[i]));
+            all = sorted;
             int n = Math.min(all.size(), 2);
             lastN = n;
             float[] out = new float[1 + n * 63];

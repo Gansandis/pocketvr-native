@@ -955,6 +955,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             // palm to the camera: for a left hand that shows the palm, the index knuckle -> pinky knuckle turn is one way round (the back of the hand: the other way)
             float v1x = (d[bL + 15] - wx) * ar, v1y = d[bL + 16] - wy, v2x = (d[bL + 51] - wx) * ar, v2y = d[bL + 52] - wy;
             boolean facing = (v1x * v2y - v1y * v2x) > 0.10f * size * size;      // (on the phone the palm side gave the opposite sign to the first guess)
+            if (!both) { float lf = cam.leftness(0); if (lf >= 0f && lf < 0.5f) facing = false; }      // a lone hand has to be the user's LEFT one (the model's own guess), so a right hand coming in with its back to the camera shows nothing
             open = ext && facing;
             // where the icons go: on the palm, next to each other across it (index side / little finger side), so they stay on the right sides when the hand turns
             float x0 = spx(d, bL, 0), y0 = spy(d, bL, 0), x9 = spx(d, bL, 9), y9 = spy(d, bL, 9);
@@ -1066,13 +1067,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         ratioT = nowMs;
         if (!pinching) {
             offSince = 0;
-            if (ratioF < 0.12f) { pinching = true; onSince = 0; }
-            else if (ratioF < 0.18f) { if (onSince == 0) onSince = nowMs; else if (nowMs - onSince >= 30) { pinching = true; onSince = 0; } }
+            if (ratioF < 0.15f) { pinching = true; onSince = 0; }
+            else if (ratioF < 0.23f) { if (onSince == 0) onSince = nowMs; else if (nowMs - onSince >= 30) { pinching = true; onSince = 0; } }
             else onSince = 0;
         } else {
             onSince = 0;
             if (ratioF > 0.45f) { pinching = false; offSince = 0; }
-            else if (ratioF > 0.31f) { if (offSince == 0) offSince = nowMs; else if (nowMs - offSince >= 50) { pinching = false; offSince = 0; } }
+            else if (ratioF > 0.34f) { if (offSince == 0) offSince = nowMs; else if (nowMs - offSince >= 50) { pinching = false; offSince = 0; } }
             else offSince = 0;
         }
         if (pinching) lastPinchT = nowMs;

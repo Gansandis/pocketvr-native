@@ -161,6 +161,7 @@ public class NvCam {
     private int[] pxBuf;
     private long camCount = 0, camT0 = 0, detCount = 0, detT0 = 0, lastDet = 0;
 
+    public float leftness(int i) { float[] l = hands.leftness; return i >= 0 && i < l.length ? l[i] : -1f; }
     public NvCam(Activity a, NvHands hh, Listener l) { act = a; hands = hh; lis = l; }
 
     public void start(final SurfaceTexture st) {
