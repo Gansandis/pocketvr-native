@@ -112,13 +112,22 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     /** once per picture: carry the last two readings on to this moment, so the view turns smoothly even if the sensor is slower than the screen */
+    private float[] rvSm = null;
     private void updateView() {
         float[] r1 = rotNow, r0 = rotPrev; long t1 = tLast, t0 = tPrev;
         long now = System.nanoTime();
         if (r1 == null) return;
         float span = (t1 - t0) / 1e9f, dt = (now - t1) / 1e9f;
-        if (r0 == null || span < 0.002f || span > 0.1f || dt <= 0f) { rotView = r1; return; }
-        float k = Math.min(dt, 0.025f) / span;                 // never look further ahead than 25 ms
+        if (r0 == null || span < 0.002f || span > 0.1f || dt <= 0f) { rotView = r1; rvSm = r1.clone(); return; }
+        // how fast the head is turning (rad/s): the angle of R1 * R0^T over the time between the two readings
+        float tr = 0f;
+        for (int r = 0; r < 3; r++) for (int j = 0; j < 3; j++) tr += r1[j * 4 + r] * r0[j * 4 + r];
+        float ang = (float) Math.acos(Math.max(-1f, Math.min(1f, (tr - 1f) * 0.5f)));
+        float speed = ang / span;
+        // sticky when still: the sensor's tiny noise must not make the windows tremble, so below a slow turn the view is not carried forward and is eased heavily;
+        // from a calm turn upwards it follows at once (no lag while you really move your head)
+        float f = Math.max(0f, Math.min(1f, (speed - 0.04f) / 0.30f));
+        float k = Math.min(dt, 0.025f) / span * f;             // never look further ahead than 25 ms
         float[] e = new float[9];
         for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) {
             float dl = 0f;
@@ -127,11 +136,18 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         float[] o = new float[16];
         for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) {
-            float s = 0f;
-            for (int j = 0; j < 3; j++) s += e[r * 3 + j] * r1[c * 4 + j];
-            o[c * 4 + r] = s;
+            float sm = 0f;
+            for (int j = 0; j < 3; j++) sm += e[r * 3 + j] * r1[c * 4 + j];
+            o[c * 4 + r] = sm;
         }
         ortho(o);
+        float[] pv = rvSm;
+        if (pv != null) {
+            float al = 0.10f + 0.90f * f;                      // still: 10 % of the way each picture; turning: all the way
+            for (int i = 0; i < 16; i++) o[i] = pv[i] + (o[i] - pv[i]) * al;
+            ortho(o);
+        }
+        rvSm = o.clone();
         rotView = o;
     }
     public float[] rotCopy() { return rotNow; }
