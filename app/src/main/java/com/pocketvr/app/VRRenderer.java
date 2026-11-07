@@ -933,6 +933,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private float spx(float[] d, int base, int k) { float hx = d[base + k * 3]; if (rot180) hx = 1f - hx; return (hx * 2f - 1f) * sceneW / 2f * camScale; }
     private float spy(float[] d, int base, int k) { float hy = d[base + k * 3 + 1]; if (rot180) hy = 1f - hy; return (1f - hy * 2f) * sceneH / 2f * camScale; }
 
+    private float pmCal = 0f;                                    // >0: the model's "left" label = the user's left hand (as assumed), <0: the other way round (learned whenever two hands are in view)
     private void palmMenu(long nowMs) {
         float[] d = dispDraw;                                    // what is drawn on the picture: the icon and the fingertip are lined up with what you see
         boolean two = palmMenu && d != null && d.length >= 64 && d[0] >= 1f && sceneW > 0;     // one hand is enough to SHOW the icons (the left palm); the other hand is only needed to poke
@@ -955,7 +956,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             // palm to the camera: for a left hand that shows the palm, the index knuckle -> pinky knuckle turn is one way round (the back of the hand: the other way)
             float v1x = (d[bL + 15] - wx) * ar, v1y = d[bL + 16] - wy, v2x = (d[bL + 51] - wx) * ar, v2y = d[bL + 52] - wy;
             boolean facing = (v1x * v2y - v1y * v2x) > 0.10f * size * size;      // (on the phone the palm side gave the opposite sign to the first guess)
-            if (!both) { float lf = cam.leftness(0); if (lf >= 0f && lf < 0.5f) facing = false; }      // a lone hand has to be the user's LEFT one (the model's own guess), so a right hand coming in with its back to the camera shows nothing
+            if (both) {                                                  // two hands in view: the left one in the picture IS the left hand, so this shows which way the model's left/right labels run on this phone
+                float l0 = cam.leftness(0), l1 = cam.leftness(1);
+                if (l0 >= 0f && l1 >= 0f && Math.abs(l0 - l1) > 0.3f) pmCal += ((l0 > l1 ? 1f : -1f) - pmCal) * 0.25f;
+            }
+            if (!both) { float lf = cam.leftness(0); if (lf >= 0f && pmCal < 0f) lf = 1f - lf; if (lf >= 0f && lf < 0.5f) facing = false; }      // a lone hand has to be the user's LEFT one (the model's own guess), so a right hand coming in with its back to the camera shows nothing
             open = ext && facing;
             // where the icons go: on the palm, next to each other across it (index side / little finger side), so they stay on the right sides when the hand turns
             float x0 = spx(d, bL, 0), y0 = spy(d, bL, 0), x9 = spx(d, bL, 9), y9 = spy(d, bL, 9);
