@@ -935,11 +935,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     private void palmMenu(long nowMs) {
         float[] d = dispDraw;                                    // what is drawn on the picture: the icon and the fingertip are lined up with what you see
-        boolean two = palmMenu && d != null && d.length >= 127 && d[0] >= 2f && sceneW > 0;
+        boolean two = palmMenu && d != null && d.length >= 64 && d[0] >= 1f && sceneW > 0;     // one hand is enough to SHOW the icons (the left palm); the other hand is only needed to poke
+        boolean both = two && d.length >= 127 && d[0] >= 2f;
         boolean open = false, fin = false;
         float tx = 0f, ty = 0f;
         if (two) {
-            int lh = rot180 ? 1 : 0, rh = 1 - lh;                 // hands are ordered left to right in the picture (the other way round when the picture is turned)
+            int lh = both ? (rot180 ? 1 : 0) : 0, rh = 1 - lh;     // hands are ordered left to right in the picture (the other way round when the picture is turned); a lone hand is read as the left one
             int bL = 1 + lh * 63, bR = 1 + rh * 63;
             float ar = (float) Math.max(1, imgW) / Math.max(1, imgH);
             float wx = d[bL], wy = d[bL + 1];
@@ -969,10 +970,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 pmR = Math.max(11f * u, Math.min(42f * u, 0.18f * L));
             } else open = false;
             // the finger of the other hand: its index tip, with the finger stretched
+            if (both) {
             float rwx = d[bR], rwy = d[bR + 1];
             float d8 = (float) Math.hypot((d[bR + 24] - rwx) * ar, d[bR + 25] - rwy), d6 = (float) Math.hypot((d[bR + 18] - rwx) * ar, d[bR + 19] - rwy);
             fin = d8 > d6 * 1.1f;
             tx = spx(d, bR, 8); ty = spy(d, bR, 8);
+            }
         }
         if (open) { pmLostT = 0; if (pmOpenT == 0) pmOpenT = nowMs; }
         else { if (pmLostT == 0) pmLostT = nowMs; if (nowMs - pmLostT > 150) pmOpenT = 0; }
