@@ -261,7 +261,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     // turn a window about the phone's own view axes (yaw about the vertical view axis, pitch about the horizontal one)
     private void turnWin(Win w, float[] rn, float th, float ph) {
-        android.opengl.Matrix.setRotateM(tA, 0, th, 0f, 1f, 0f);
+        // the sideways turn is about the world's UP (not the phone's own vertical axis): when the head is tilted down or up while a window is put up or moved,
+        // a turn about the phone's axis would put the window on a slanted circle, and it would slide up or down on screen as you turn your head to it
+        float gx = rn[8], gy = rn[9], gz = rn[10], gl = (float) Math.sqrt(gx * gx + gy * gy + gz * gz);
+        if (gl < 0.5f) { gx = 0f; gy = 1f; gz = 0f; } else { gx /= gl; gy /= gl; gz /= gl; }
+        android.opengl.Matrix.setRotateM(tA, 0, th, gx, gy, gz);
         android.opengl.Matrix.setRotateM(tB, 0, ph, 1f, 0f, 0f);
         android.opengl.Matrix.multiplyMM(tC, 0, tA, 0, tB, 0);
         android.opengl.Matrix.multiplyMM(tD, 0, tC, 0, rn, 0);
