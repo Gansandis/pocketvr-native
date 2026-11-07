@@ -337,15 +337,18 @@ public class NvCam {
                     }
                     float[] res = hands.detect(bmp, ts);          // the picture is reused for the next look, so it is not recycled here
                     if (res != null) {
+                        heldFlag = false;
+                        res = holdSecond(res, result, System.nanoTime() / 1000000L);
                         if (res[0] >= 1 && filt) smooth(res, ts);
                         long tn = System.nanoTime() / 1000000L;
                         if (res[0] >= 1) {
                             if (tn - lastHandT > 1000) { sessionT = tn; lastTwoT = tn; }       // a new time with hands in view
-                            if (res[0] >= 2) lastTwoT = tn;
+                            if (res[0] >= 2 && !heldFlag) lastTwoT = tn;        // (a hand that is only being held for a moment does not count as seen)
                             lastHandT = tn;
-                            // a second hand has not shown up for a while: keep looking for one hand only (much faster)
-                            if (handsN >= 2 && !autoDown && tn - lastTwoT > 5000) autoDown = true;
-                        } else if (tn - lastHandT > 1000 && autoDown) autoDown = false;          // hands were lowered: look for two again next time
+                            // (it used to drop to one-hand looking after 5 s with a single hand in view. That made the second hand impossible to find
+                            // until both hands were lowered, and switching needed the model to be opened again, which loses the hands for a moment. Not any more:
+                            // when two hands are chosen in the settings, two are looked for all the time.)
+                        } else if (tn - lastHandT > 1000 && autoDown) autoDown = false;
                         // one or two empty answers in a row (a blink of the model) must not drop the hand: keep the last good points for a moment
                         if (res[0] < 1 && result.length > 0 && result[0] >= 1 && tn - lastHandT < 260) res = result;
                         else {
@@ -374,6 +377,27 @@ public class NvCam {
         } finally {
             if (img != null) img.close();
         }
+    }
+
+    /**
+     * With two hands, the model now and then sees only one of them for a look or two. The other hand must not vanish (and the two hands must not swap
+     * places in the list): the missing one is kept at its last points for a short moment. The hands stay ordered left to right in the picture.
+     */
+    private volatile boolean heldFlag = false;
+    private float[] holdSecond(float[] res, float[] prev, long tn) {
+        if (res == null || res[0] != 1f || res.length < 64) return res;
+        if (prev == null || prev.length < 127 || prev[0] < 2f || tn - lastTwoT > 230) return res;
+        // which of the two earlier hands is the one that was seen again (nearest wrist)?
+        float nx = res[1], ny = res[2];
+        float d0 = (prev[1] - nx) * (prev[1] - nx) + (prev[2] - ny) * (prev[2] - ny);
+        float d1 = (prev[64] - nx) * (prev[64] - nx) + (prev[65] - ny) * (prev[65] - ny);
+        int seen = d0 <= d1 ? 0 : 1, gone = 1 - seen;
+        float[] out = new float[127];
+        out[0] = 2f;
+        System.arraycopy(res, 1, out, 1 + seen * 63, 63);                 // the hand that is seen (fresh points)
+        System.arraycopy(prev, 1 + gone * 63, out, 1 + gone * 63, 63);   // the hand that is missing (its last points)
+        heldFlag = true;
+        return out;
     }
 
     // One Euro filter on every point: the cut-off frequency rises with the speed of the point, so a still hand is calm

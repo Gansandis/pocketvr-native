@@ -461,7 +461,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (dragWin != null) {
             Win dw = dragWin;
             if (dw.rot != null && !Float.isNaN(dw.yawA) && !Float.isNaN(dw.pitchA)) {
-                dw.svYaw = dw.yawA; dw.svPitch = dw.pitchA; dw.svScale = dw.scale; dw.svDist = dw.dist; dw.hasSaved = true;
+                dw.svYaw = dw.yawA; dw.svPitch = dw.pitchA; dw.svScale = dw.scale; dw.svDist = dw.dist;      // (no longer remembered for next time: a window that is opened always slides in next to the others)
             }
             dw.c.setDragging(false);
         }
@@ -841,6 +841,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // finger pointer: index fingertip; pinch = thumb tip close to index tip (relative to hand size)
     private boolean pinching = false;
     private float pinchAmt = 0f, rippleX = 0f, rippleY = 0f;
+    private float ratioF = 0f; private long ratioT = 0, onSince = 0, offSince = 0;     // the finger gap, eased; when a change of the pinch state started
     private long popT = 0; private float popX = 0f, popY = 0f; private boolean popOk = false;
     private void holdPop(float nx, float ny, boolean ok) { popT = System.currentTimeMillis(); popX = nx; popY = ny; popOk = ok; }
     private long rippleT = 0;
@@ -887,7 +888,109 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         return oneHand;
     }
 
+    // ----- menu on the left palm (two hands): open the left hand with the palm to the camera and two round icons appear on it.
+    // Poke one with the index finger of the other hand and hold it there for a moment: left icon = open / close the menu, right icon = put the screens back in front of you.
+    public volatile boolean palmMenu = true;
+    private long pmOpenT = 0, pmLostT = 0, pmHotT = 0;
+    private float pmFade = 0f, pmDwell = 0f, pmAx = 0f, pmAy = 0f, pmBx = 0f, pmBy = 0f, pmR = 0f;
+    private int pmHot = -1;
+    private boolean pmLatch = false;
+
+    private float spx(float[] d, int base, int k) { float hx = d[base + k * 3]; if (rot180) hx = 1f - hx; return (hx * 2f - 1f) * sceneW / 2f * camScale; }
+    private float spy(float[] d, int base, int k) { float hy = d[base + k * 3 + 1]; if (rot180) hy = 1f - hy; return (1f - hy * 2f) * sceneH / 2f * camScale; }
+
+    private void palmMenu(long nowMs) {
+        float[] d = dispDraw;                                    // what is drawn on the picture: the icon and the fingertip are lined up with what you see
+        boolean two = palmMenu && d != null && d.length >= 127 && d[0] >= 2f && sceneW > 0;
+        boolean open = false, fin = false;
+        float tx = 0f, ty = 0f;
+        if (two) {
+            int lh = rot180 ? 1 : 0, rh = 1 - lh;                 // hands are ordered left to right in the picture (the other way round when the picture is turned)
+            int bL = 1 + lh * 63, bR = 1 + rh * 63;
+            float ar = (float) Math.max(1, imgW) / Math.max(1, imgH);
+            float wx = d[bL], wy = d[bL + 1];
+            float size = (float) Math.hypot((d[bL + 27] - wx) * ar, d[bL + 28] - wy);
+            boolean ext = size > 1e-3f;
+            int[] tp = {8, 12, 16, 20}, pp = {6, 10, 14, 18};
+            for (int q = 0; q < 4 && ext; q++) {
+                float dt = (float) Math.hypot((d[bL + tp[q] * 3] - wx) * ar, d[bL + tp[q] * 3 + 1] - wy);
+                float dp = (float) Math.hypot((d[bL + pp[q] * 3] - wx) * ar, d[bL + pp[q] * 3 + 1] - wy);
+                if (!(dt > dp * 1.12f)) ext = false;              // all four fingers stretched out
+            }
+            // palm to the camera: for a left hand that shows the palm, the index knuckle -> pinky knuckle turn is one way round (the back of the hand: the other way)
+            float v1x = (d[bL + 15] - wx) * ar, v1y = d[bL + 16] - wy, v2x = (d[bL + 51] - wx) * ar, v2y = d[bL + 52] - wy;
+            boolean facing = (v1x * v2y - v1y * v2x) < -0.10f * size * size;
+            open = ext && facing;
+            // where the icons go: on the palm, next to each other across it (index side / little finger side), so they stay on the right sides when the hand turns
+            float x0 = spx(d, bL, 0), y0 = spy(d, bL, 0), x9 = spx(d, bL, 9), y9 = spy(d, bL, 9);
+            float L = (float) Math.hypot(x9 - x0, y9 - y0);
+            float sxv = spx(d, bL, 5) - spx(d, bL, 17), syv = spy(d, bL, 5) - spy(d, bL, 17);
+            float sl = (float) Math.hypot(sxv, syv);
+            if (L > 1f && sl > 1f) {
+                sxv /= sl; syv /= sl;
+                float cx = x0 + (x9 - x0) * 0.52f, cy = y0 + (y9 - y0) * 0.52f, off = 0.25f * L;
+                float u = sceneH / 540f;
+                pmAx = cx + sxv * off; pmAy = cy + syv * off;
+                pmBx = cx - sxv * off; pmBy = cy - syv * off;
+                pmR = Math.max(11f * u, Math.min(42f * u, 0.18f * L));
+            } else open = false;
+            // the finger of the other hand: its index tip, with the finger stretched
+            float rwx = d[bR], rwy = d[bR + 1];
+            float d8 = (float) Math.hypot((d[bR + 24] - rwx) * ar, d[bR + 25] - rwy), d6 = (float) Math.hypot((d[bR + 18] - rwx) * ar, d[bR + 19] - rwy);
+            fin = d8 > d6 * 1.1f;
+            tx = spx(d, bR, 8); ty = spy(d, bR, 8);
+        }
+        if (open) { pmLostT = 0; if (pmOpenT == 0) pmOpenT = nowMs; }
+        else { if (pmLostT == 0) pmLostT = nowMs; if (nowMs - pmLostT > 150) pmOpenT = 0; }
+        boolean show = open && pmOpenT != 0 && nowMs - pmOpenT > 300;       // the palm has to stay open for a moment
+        pmFade += ((show ? 1f : 0f) - pmFade) * (show ? 0.25f : 0.35f);
+        if (pmFade < 0.02f && !show) pmFade = 0f;
+        int hot = -1;
+        if (show && fin) {
+            float dA = (float) Math.hypot(tx - pmAx, ty - pmAy), dB = (float) Math.hypot(tx - pmBx, ty - pmBy);
+            if (dA < pmR * 1.25f && dA <= dB) hot = 0; else if (dB < pmR * 1.25f) hot = 1;
+        }
+        if (hot != pmHot) { pmHot = hot; pmHotT = nowMs; if (hot < 0) pmLatch = false; }
+        pmDwell = (hot >= 0 && !pmLatch) ? Math.min(1f, (nowMs - pmHotT) / 380f) : 0f;
+        if (hot >= 0 && !pmLatch && pmDwell >= 1f) {
+            pmLatch = true;                                                // once per visit: take the finger away to use it again
+            float kx = sceneW / 2f * camScale, ky = sceneH / 2f * camScale;
+            if (hot == 0) { holdPop((hot == 0 ? pmAx : pmBx) / kx, pmAy / ky, false); toggleMenuGL(); }
+            else { holdPop(pmBx / kx, pmBy / ky, true); resetLayoutReq = true; recenter = true; }
+        }
+    }
+
+    private void drawPalmMenu() {
+        if (pmFade < 0.02f) return;
+        float u = sceneH / 540f, a = pmFade;
+        for (int i = 0; i < 2; i++) {
+            float x = i == 0 ? pmAx : pmBx, y = i == 0 ? pmAy : pmBy;
+            boolean hot = pmHot == i;
+            float rr = pmR * (hot ? 1.12f : 1f);
+            float cr = i == 0 ? 0.62f : 0.25f, cg = i == 0 ? 0.82f : 0.88f, cb = i == 0 ? 1f : 0.45f;
+            aaFade = 0.50f * a; aaBegin(); aaSeg(x, y, x, y, rr + 1.5f * u); aaFlush(1f, 1f, 1f);          // rim
+            aaFade = 0.88f * a; aaBegin(); aaSeg(x, y, x, y, rr); aaFlush(0.09f, 0.10f, 0.14f);            // dark glass
+            if (pmDwell > 0f && hot) { aaFade = a; aaBegin(); aaArc(x, y, rr * 0.80f, 0f, pmDwell, 2.6f * u); aaFlush(cr, cg, cb); }
+            else { aaFade = 0.22f * a; aaBegin(); aaArc(x, y, rr * 0.80f, 0f, 1f, 1.8f * u); aaFlush(1f, 1f, 1f); }
+            aaFade = a;
+            aaBegin();
+            if (i == 0) {                                                    // menu: four dots (a little grid of apps)
+                float g = rr * 0.26f;
+                for (int sx = -1; sx <= 1; sx += 2) for (int sy = -1; sy <= 1; sy += 2) aaSeg(x + sx * g, y + sy * g, x + sx * g, y + sy * g, rr * 0.12f);
+            } else {                                                         // put back in front: a small target
+                aaArc(x, y, rr * 0.30f, 0f, 1f, 1.8f * u);
+                aaSeg(x, y, x, y, 2.2f * u);
+                float a0 = rr * 0.46f, a1 = rr * 0.60f;
+                aaSeg(x - a1, y, x - a0, y, 1.8f * u); aaSeg(x + a0, y, x + a1, y, 1.8f * u);
+                aaSeg(x, y - a1, x, y - a0, 1.8f * u); aaSeg(x, y + a0, x, y + a1, 1.8f * u);
+            }
+            aaFlush(cr, cg, cb);
+        }
+        aaFade = 1f;
+    }
+
     private void cursor() {
+        palmMenu(System.currentTimeMillis());
         float[] r = pickHand(disp);
         long nowMs = System.currentTimeMillis();
         boolean hand = r.length >= 64 && r[0] >= 1;
@@ -914,13 +1017,30 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (rot180) { kxn = 1f - kxn; kyn = 1f - kyn; }
         float tnx = kxn * 2f - 1f, tny = 1f - kyn * 2f;
         float d = (float) Math.hypot((tx - ax) * ar, ty - ay);
-        float ratio = size > 1e-4f ? d / size : 9f;
+        // the hand size the finger gap is compared with: the length of the palm, but when the hand points at the camera that gets short, so the palm width counts too
+        float palmW = (float) Math.hypot((r[1 + 5 * 3] - r[1 + 17 * 3]) * ar, r[1 + 5 * 3 + 1] - r[1 + 17 * 3 + 1]);
+        float psize = Math.max(size, 1.15f * palmW);
+        float ratio = psize > 1e-4f ? d / psize : 9f;
         float dm = (float) Math.hypot((kx - ax) * ar, ky - ay);
-        float ratioM = size > 1e-4f ? dm / size : 9f;
-        if (pinching) { if (ratio > 0.30f) pinching = false; } else { if (ratio < 0.17f) pinching = true; }
+        float ratioM = psize > 1e-4f ? dm / psize : 9f;
+        // the gap is eased a little (one noisy look must not flip the pinch), and a change of state has to hold for a moment:
+        // closing: below 0.12 at once, below 0.18 for 30 ms; opening: above 0.45 at once, above 0.31 for 50 ms
+        ratioF = ratioF <= 0f || nowMs - ratioT > 300 ? ratio : ratioF + (ratio - ratioF) * 0.6f;
+        ratioT = nowMs;
+        if (!pinching) {
+            offSince = 0;
+            if (ratioF < 0.12f) { pinching = true; onSince = 0; }
+            else if (ratioF < 0.18f) { if (onSince == 0) onSince = nowMs; else if (nowMs - onSince >= 30) { pinching = true; onSince = 0; } }
+            else onSince = 0;
+        } else {
+            onSince = 0;
+            if (ratioF > 0.45f) { pinching = false; offSince = 0; }
+            else if (ratioF > 0.31f) { if (offSince == 0) offSince = nowMs; else if (nowMs - offSince >= 50) { pinching = false; offSince = 0; } }
+            else offSince = 0;
+        }
         if (pinching) lastPinchT = nowMs;
         // how closed the fingers are (0..1), eased: the pointer ring tightens as the fingers close; a ripple goes out when the pinch lands
-        float pinchTarget = pinching ? 1f : Math.max(0f, Math.min(0.85f, (0.36f - ratio) / (0.36f - 0.17f)));
+        float pinchTarget = pinching ? 1f : Math.max(0f, Math.min(0.85f, (0.36f - ratioF) / (0.36f - 0.17f)));
         pinchAmt += (pinchTarget - pinchAmt) * 0.35f;
         if (pinching && !prevPinch) { rippleT = nowMs; rippleX = cnx; rippleY = cny; }
 
@@ -1085,6 +1205,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float u = sceneH / 540f;
         // a small glass badge with three bars, one above the other, that light up from the top down while a gesture is held
         // (menu: thumb + middle finger; layout reset: OK sign). When all three are lit the badge pops and fades.
+        drawPalmMenu();
         if (mpProg > 0f) drawHold(mpNx, mpNy, mpProg, false, 1f, 1f);
         if (okProg > 0f && curOk) drawHold(cnx, cny, okProg, true, 1f, 1f);
         long pa0 = System.currentTimeMillis() - popT;
