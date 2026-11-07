@@ -916,6 +916,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // ----- menu on the left palm (two hands): open the left hand with the palm to the camera and two round icons appear on it.
     // Poke one with the index finger of the other hand and hold it there for a moment: left icon = open / close the menu, right icon = put the screens back in front of you.
     public volatile boolean palmMenu = true;
+    public volatile Runnable onPalmSettings;                  // the right icon: open / close the settings window (set by the activity)
     private long pmOpenT = 0, pmLostT = 0, pmHotT = 0;
     private float pmFade = 0f, pmDwell = 0f, pmAx = 0f, pmAy = 0f, pmBx = 0f, pmBy = 0f, pmR = 0f;
     private int pmHot = -1;
@@ -980,8 +981,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (hot >= 0 && !pmLatch && pmDwell >= 1f) {
             pmLatch = true;                                                // once per visit: take the finger away to use it again
             float kx = sceneW / 2f * camScale, ky = sceneH / 2f * camScale;
-            if (hot == 0) { holdPop((hot == 0 ? pmAx : pmBx) / kx, pmAy / ky, false); toggleMenuGL(); }
-            else { holdPop(pmBx / kx, pmBy / ky, true); resetLayoutReq = true; recenter = true; }
+            if (hot == 0) { holdPop(pmAx / kx, pmAy / ky, false); toggleMenuGL(); }
+            else { holdPop(pmBx / kx, pmBy / ky, false); Runnable rs = onPalmSettings; if (rs != null) { try { rs.run(); } catch (Throwable ignored) { } } }
         }
     }
 
@@ -992,7 +993,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float x = i == 0 ? pmAx : pmBx, y = i == 0 ? pmAy : pmBy;
             boolean hot = pmHot == i;
             float rr = pmR * (hot ? 1.12f : 1f);
-            float cr = i == 0 ? 0.62f : 0.25f, cg = i == 0 ? 0.82f : 0.88f, cb = i == 0 ? 1f : 0.45f;
+            float cr = i == 0 ? 0.62f : 1f, cg = i == 0 ? 0.82f : 0.78f, cb = i == 0 ? 1f : 0.35f;
             aaFade = 0.50f * a; aaBegin(); aaSeg(x, y, x, y, rr + 1.5f * u); aaFlush(1f, 1f, 1f);          // rim
             aaFade = 0.88f * a; aaBegin(); aaSeg(x, y, x, y, rr); aaFlush(0.09f, 0.10f, 0.14f);            // dark glass
             if (pmDwell > 0f && hot) { aaFade = a; aaBegin(); aaArc(x, y, rr * 0.80f, 0f, pmDwell, 2.6f * u); aaFlush(cr, cg, cb); }
@@ -1002,12 +1003,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (i == 0) {                                                    // menu: four dots (a little grid of apps)
                 float g = rr * 0.26f;
                 for (int sx = -1; sx <= 1; sx += 2) for (int sy = -1; sy <= 1; sy += 2) aaSeg(x + sx * g, y + sy * g, x + sx * g, y + sy * g, rr * 0.12f);
-            } else {                                                         // put back in front: a small target
-                aaArc(x, y, rr * 0.30f, 0f, 1f, 1.8f * u);
-                aaSeg(x, y, x, y, 2.2f * u);
-                float a0 = rr * 0.46f, a1 = rr * 0.60f;
-                aaSeg(x - a1, y, x - a0, y, 1.8f * u); aaSeg(x + a0, y, x + a1, y, 1.8f * u);
-                aaSeg(x, y - a1, x, y - a0, 1.8f * u); aaSeg(x, y + a0, x, y + a1, 1.8f * u);
+            } else {                                                         // settings: a gear (a ring with eight teeth)
+                aaArc(x, y, rr * 0.30f, 0f, 1f, 2.2f * u);
+                for (int q = 0; q < 8; q++) {
+                    float an = q * 0.7853982f, c = (float) Math.cos(an), sn = (float) Math.sin(an);
+                    aaSeg(x + c * rr * 0.42f, y + sn * rr * 0.42f, x + c * rr * 0.56f, y + sn * rr * 0.56f, 2.6f * u);
+                }
             }
             aaFlush(cr, cg, cb);
         }
