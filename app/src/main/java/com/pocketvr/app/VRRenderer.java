@@ -418,8 +418,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // keep it upright: undo any tilt that piled up while it was being moved (turn about its own centre, so it does not slide)
         android.opengl.Matrix.multiplyMM(tA, 0, rn, 0, w.rot, 0);
         float roll = (float) Math.toDegrees(Math.atan2(tA[1], tA[0]));
-        if (Math.abs(roll) > 0.2f) {
-            android.opengl.Matrix.setRotateM(tB, 0, -roll * 0.25f, 0f, 0f, 1f);
+        if (Math.abs(roll) > 0.05f) {
+            android.opengl.Matrix.setRotateM(tB, 0, -roll, 0f, 0f, 1f);                          // all of it, at once: tilting the phone must not tilt the windows
             android.opengl.Matrix.multiplyMM(tC, 0, w.rot, 0, tB, 0);
             w.rot = tC.clone();
         }
