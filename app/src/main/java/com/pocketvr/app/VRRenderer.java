@@ -166,6 +166,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         public volatile float svYaw = 0, svPitch = 0, svScale = 1f, svDist = 1.5f, placeDist = 0f;
         public volatile float wantScale = 0;                 // size to take when (re)placed in front of the user; 0 = normal
         public volatile boolean newOpen = false;             // just opened (not just re-centred): it comes in with a slide
+        float slideDegP = 0f;                                // the same, upwards
         float slideDeg = 0f;                                 // at the start of the slide the window is this many degrees to the right of where it ends up (it starts behind its neighbour)
         float animA = 1f, animS = 1f;                        // fade and size while it comes in
         boolean animOn = false;
@@ -312,38 +313,61 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         return false;
     }
 
+    private static final float OPEN_MAXW = 0.85f;               // a window opens at most this wide (metres at the standard distance): not too big for the view
+    private static final float MAX_FRONT_YAW = 75f;              // a new window never goes further round than this: never to the side of you or behind you
+    private float openScale(Win w) { return Math.min(1f, OPEN_MAXW / Math.max(0.1f, w.widthM)); }
+
+    /**
+     * A new window sits right next to the windows that are already up (not next to your body): flush against the right or left side of one of them,
+     * or just above / below it, never on top of another one. Of all the free places beside the open windows it takes the one nearest to where you look,
+     * so the group grows outwards from the middle. It never goes round to the side or behind you, and it slides out from behind its neighbour (see updateWin).
+     * Angles: positive yaw = to the right, positive pitch = up.
+     */
     private void avoidOverlap(Win w) {
-        w.slideDeg = 0f;
-        if (w.hasSaved) return;                                   // the user chose that place: keep it
+        w.slideDeg = 0f; w.slideDegP = 0f;
+        if (w.hasSaved) return;
         android.graphics.Bitmap bm = w.c.bitmap();
         if (bm == null || bm.getWidth() <= 0) return;
-        float sc = w.wantScale > 0 ? w.wantScale : 1f, d = w.placeDist > 0f ? w.placeDist : PANEL_D;
+        float sc = w.wantScale > 0 ? w.wantScale : openScale(w), d = w.placeDist > 0f ? w.placeDist : PANEL_D;
         float pw = w.widthM * sc * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
         float hw = (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = (float) Math.toDegrees(Math.atan(ph / 2f / d));
         float baseY = w.offYaw, baseP = w.offPitch;
-        if (!hitsAt(w, baseY, baseP, hw, hh)) return;             // the standard place is free
         final float gap = 2.0f;                                   // degrees between two windows
-        float[] cand = new float[2 * wins.size()], from = new float[2 * wins.size()];
+        int cap = 4 * wins.size() + 4;
+        float[] cy = new float[cap], cp = new float[cap], fy = new float[cap], fp = new float[cap];
         int nc = 0;
         for (Win o : wins) {
             if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
             android.graphics.Bitmap ob = o.c.bitmap();
             if (ob == null || ob.getWidth() <= 0) continue;
-            float opw = o.widthM * o.scale * winZoom;
-            float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / Math.max(0.3f, o.dist)));
-            if (ohw > 45f) continue;
-            cand[nc] = o.yawA + ohw + hw + gap; from[nc] = o.yawA; nc++;     // against its right side
-            cand[nc] = o.yawA - ohw - hw - gap; from[nc] = o.yawA; nc++;     // against its left side
+            float opw = o.widthM * o.scale * winZoom, oph = opw * ob.getHeight() / ob.getWidth();
+            float od = Math.max(0.3f, o.dist);
+            float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / od)), ohh = (float) Math.toDegrees(Math.atan(oph / 2f / od));
+            if (ohw > 45f || Math.abs(o.yawA) > 100f) continue;       // the cinema screen, or a window that is far round to the side: not one to sit next to
+            cy[nc] = o.yawA + ohw + hw + gap; cp[nc] = o.pitchA; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // right of it
+            cy[nc] = o.yawA - ohw - hw - gap; cp[nc] = o.pitchA; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // left of it
+            cy[nc] = o.yawA; cp[nc] = o.pitchA + ohh + hh + gap; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // above it
+            cy[nc] = o.yawA; cp[nc] = o.pitchA - ohh - hh - gap; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // below it
         }
-        int best = -1; float bestD = 1e9f;
+        if (nc == 0) return;                                      // nothing in front to sit next to: the standard place
+        int best = -1; float bestC = 1e9f;
         for (int i = 0; i < nc; i++) {
-            if (hitsAt(w, cand[i], baseP, hw, hh)) continue;
-            float dd = Math.abs(cand[i] - baseY) + (cand[i] < from[i] ? 0.01f : 0f);     // the right side wins a tie
-            if (dd < bestD) { bestD = dd; best = i; }
+            if (Math.abs(cy[i]) > MAX_FRONT_YAW || Math.abs(cp[i]) > 50f) continue;
+            if (hitsAt(w, cy[i], cp[i], hw, hh)) continue;
+            boolean vert = cy[i] == fy[i];                        // above / below a window: only when beside is not possible (or the window wants to be low, like the keyboard)
+            float c = 0.75f * Math.abs(cy[i]) + 0.25f * Math.abs(cy[i] - baseY) + Math.abs(cp[i] - baseP) + (vert ? 30f : 0f) + (cy[i] < fy[i] ? 0.01f : 0f);     // the right side wins a tie
+            if (c < bestC) { bestC = c; best = i; }
         }
-        if (best < 0) return;
-        w.offYaw = cand[best]; w.offPitch = baseP;
-        w.slideDeg = from[best] - cand[best];                     // it starts at the neighbour's middle and slides out to its place
+        if (best < 0) {                                           // no free place beside anything: stack above / below the standard place
+            for (int k = 1; k <= 4; k++) for (int sg = -1; sg <= 1; sg += 2) {
+                float p = baseP + sg * k * (hh * 2f + gap);
+                if (Math.abs(p) <= 50f && !hitsAt(w, baseY, p, hw, hh)) { w.offPitch = p; return; }
+            }
+            return;
+        }
+        w.offYaw = cy[best]; w.offPitch = cp[best];
+        w.slideDeg = fy[best] - cy[best];                         // it starts at the middle of its neighbour and slides out to its place
+        w.slideDegP = fp[best] - cp[best];
     }
 
     private static final float ANIM_MS = 520f;                     // how long a window takes to slide in
@@ -357,7 +381,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             android.opengl.Matrix.transposeM(tA, 0, rn, 0);
             w.rot = tA.clone();
             if (w.offYaw != 0f || w.offPitch != 0f) turnWin(w, rn, -w.offYaw, w.offPitch);
-            w.scale = w.wantScale > 0 ? w.wantScale : 1f;
+            w.scale = w.wantScale > 0 ? w.wantScale : openScale(w);
             w.dist = w.placeDist > 0f ? w.placeDist : PANEL_D;
             w.wx = ux; w.wy = uy; w.wz = uz;
             w.placeReq = false;
@@ -390,7 +414,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             bz = 0.010f * (float) Math.sin(t * 0.4f + 2f + w.phase);
         }
         // coming in: it starts behind its neighbour (a bit further away, a bit small, see-through, turned towards the middle) and slides out to its place
-        float sx = 0f, sz = 0f, tilt = 0f;
+        float sx = 0f, sy = 0f, sz = 0f, tilt = 0f;
         w.animA = 1f; w.animS = 1f;
         if (w.animOn) {
             float x = (System.nanoTime() - w.animT0) / 1e6f / ANIM_MS;
@@ -398,13 +422,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             else {
                 float rest = 1f - x, e = 1f - rest * rest * rest, left = 1f - e;                 // ease out: quick at first, settles softly
                 sx = w.dist * (float) Math.tan(Math.toRadians(w.slideDeg)) * left;               // sideways, along the window's own right
+                sy = w.dist * (float) Math.tan(Math.toRadians(w.slideDegP)) * left;              // and upwards / downwards
                 sz = -0.16f * left;                                                              // further away at first, comes forward
                 tilt = Math.signum(w.slideDeg) * 14f * left;
                 w.animA = Math.min(1f, x * 2.6f);
                 w.animS = 0.9f + 0.1f * e;
             }
         }
-        android.opengl.Matrix.translateM(mM, 0, w.rot, 0, bx + sx, by, -w.dist + bz + sz);
+        android.opengl.Matrix.translateM(mM, 0, w.rot, 0, bx + sx, by + sy, -w.dist + bz + sz);
         if (tilt != 0f) android.opengl.Matrix.rotateM(mM, 0, tilt, 0f, 1f, 0f);
         shiftBy(w, mM, ux, uy, uz);
         android.opengl.Matrix.multiplyMM(w.mv, 0, rn, 0, mM, 0);
