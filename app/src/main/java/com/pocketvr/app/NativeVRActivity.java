@@ -137,8 +137,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.109 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
-                            f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err));
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.114 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                            f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err)));
                 } else hud.setText("");
             }
             ui.postDelayed(this, 500);
@@ -415,20 +415,22 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
 
     private void buildSettings() {
         final NvSettings s = settings;
-        s.cat("🎛", "ควบคุม");
+        s.cat("","Hands");
         s.toggle("✋", "คาดการณ์มือ (ตามมือทัน)", () -> rend.predict, () -> rend.predict = !rend.predict);
         s.cycle("🔍", "ความละเอียดตรวจมือ", () -> cam.detW + " px" + (cam.detW <= 320 ? " (เร็ว)" : cam.detW >= 640 ? " (แม่นสุด)" : ""), () -> cam.detW = cam.detW <= 320 ? 480 : (cam.detW <= 480 ? 640 : 320));
         s.cycle("🙌", "จำนวนมือที่ตรวจ", () -> cam.handsN == 2 ? "2 ข้าง (เปลี่ยนเป็น 1 เองถ้าไม่ใช้)" : "ข้างเดียว (เร็ว)", () -> cam.handsN = cam.handsN == 2 ? 1 : 2);
         s.toggle("🎞", "ตามมือต่อระหว่างโมเดล (ลดหน่วง)", () -> cam.flowOn, () -> cam.flowOn = !cam.flowOn);
         s.toggle("🤏", "ตามปลายนิ้วต่อระหว่างโมเดล (ท่าจีบไวขึ้น)", () -> cam.tipsOn, () -> cam.tipsOn = !cam.tipsOn);
+        s.toggle("🙋", "ตรวจเฉพาะมือผู้ใช้ (ตัดมือคนอื่นที่อยู่ไกลออกไป)", () -> hands.onlyMine, () -> hands.onlyMine = !hands.onlyMine);
         s.toggle("🖐", "เมนูบนฝ่ามือซ้าย (แบมือซ้าย จิ้มไอคอนด้วยนิ้วมือขวา)", () -> rend.palmMenu, () -> rend.palmMenu = !rend.palmMenu);
+        s.cycle("🫱", "มือหลัก (ตอนยกสองมือ)", () -> rend.mainHand == 0 ? "มือซ้าย" : "มือขวา", () -> rend.mainHand = rend.mainHand == 0 ? 1 : 0);
+
+        s.cat("","Performance");
         s.cycle("🌡", "ความร้อน / ประหยัดพลังงาน", () -> (eco == 0 ? "ปิด" : eco == 1 ? "อัตโนมัติ" : eco == 2 ? "ประหยัด 45 fps" : "ประหยัดมาก 30 fps") + " • " + Math.round(tempC) + "°C" + (ecoLevel > 0 ? " (กำลังลดความเร็ว)" : ""), () -> eco = (eco + 1) % 4);
         s.toggle("🖼", "ปรับความละเอียดภาพอัตโนมัติ (ให้ลื่น)", () -> rend.autoRes, () -> rend.autoRes = !rend.autoRes);
         s.cycle("🧠", "ตัวประมวลผลตรวจมือ", () -> cam.handsGpu ? "การ์ดจอ GPU (ค่าเดิม)" : "CPU (ลองถ้าภาพแลค)", () -> cam.handsGpu = !cam.handsGpu);
-        s.cycle("🫱", "มือหลัก (ตอนยกสองมือ)", () -> rend.mainHand == 0 ? "มือซ้าย" : "มือขวา", () -> rend.mainHand = rend.mainHand == 0 ? 1 : 0);
-        s.toggle("🎈", "หน้าต่างลอยเบาๆ", () -> rend.floaty, () -> rend.floaty = !rend.floaty);
 
-        s.cat("🖥", "แสดงผล");
+        s.cat("","Display");
         s.step("🪟", "ความทึบของแผง", () -> Math.round(NvUi.glass * 100f / 255f) + " %",
                 () -> { NvUi.glass = Math.max(0x40, NvUi.glass - 0x10); refreshGlass(); },
                 () -> { NvUi.glass = Math.min(0xFF, NvUi.glass + 0x10); refreshGlass(); });
@@ -438,8 +440,9 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.step("✨", "ความคมภาพกล้อง", () -> rend.sharpen <= 0.01f ? "ปิด (เร็วสุด)" : Math.round(rend.sharpen * 100f) + " %",
                 () -> rend.sharpen = Math.max(0f, Math.round((rend.sharpen - 0.1f) * 10f) / 10f),
                 () -> rend.sharpen = Math.min(1f, Math.round((rend.sharpen + 0.1f) * 10f) / 10f));
+        s.toggle("🎈", "หน้าต่างลอยเบาๆ", () -> rend.floaty, () -> rend.floaty = !rend.floaty);
 
-        s.cat("🥽", "โหมด VR");
+        s.cat("","VR");
         s.toggle("🥽", "แยกจอซ้าย-ขวา", () -> rend.stereo, () -> rend.stereo = !rend.stereo);
         s.cycle("👓", "เลนส์ (ชดเชยความโค้ง)", () -> rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง", () -> rend.lens = (rend.lens + 1) % 4);
         s.step("🔭", "มุมมองต่อตา (ให้ตรงกับเลนส์แว่น)", () -> Math.round(rend.vrFov) + " °",
@@ -457,11 +460,9 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 () -> rend.eyeShift = Math.max(-0.20f, Math.round((rend.eyeShift - 0.03f) * 100f) / 100f),
                 () -> rend.eyeShift = Math.min(0.40f, Math.round((rend.eyeShift + 0.03f) * 100f) / 100f));
 
-        s.cat("🧭", "ทิศและตำแหน่ง");
+        s.cat("","Position");
         s.toggle("🧭", "เข็มทิศช่วยแก้ทิศ (กันจอไหล)", () -> compass, () -> compass = !compass);
         s.action("📍", "จัดหน้าต่างมาตรงหน้า", "จัดกลางใหม่", () -> rend.recenter = true);
-
-        s.cat("🧪", "ทดลอง");
         s.cycle("🚶", "เดินรอบได้", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด %.1f,%.1f ม.", motion.px, motion.py) : "ผิดพลาด") : "ปิดอยู่", () -> {
             motion.enabled = !motion.enabled;
             motion.reset();
@@ -474,11 +475,12 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             if (!motion.enabled) return;
             if (!motion.calibrating) motion.calStart(); else motion.calEnd(1.0f);
         });
-        s.step("⏱", "หน่วงภาพกล้อง", () -> motion.tsReal ? "ใช้เวลาจากภาพ" : motion.lagMs + " ms",
+        s.step("⏱", "หน่วงภาพกล้องตอนเดิน", () -> motion.tsReal ? "ใช้เวลาจากภาพ" : motion.lagMs + " ms",
                 () -> motion.lagMs = Math.max(20, motion.lagMs - 20),
                 () -> motion.lagMs = Math.min(200, motion.lagMs + 20));
 
-        s.cat("⚙", "ระบบ");
+        s.cat("","System");
+        s.cycle("", "ภาษา", () -> Tr.thai ? "ไทย" : "English", () -> { Tr.setThai(!Tr.thai); refreshGlass(); settings.markDirty(); });
         s.cycle("🔌", "Shizuku (เปิดแอปจริงแบบลอย)", () -> NvShizuku.statusText() + (NvShizuku.ready() ? " | " + NvShizuku.inputInfo() : ""), () -> {
             NvShizuku.request();
             if (NvShizuku.ready()) { NvShizuku.restartInput(getPackageCodePath()); menu.toast("ตัวช่วยสัมผัสเร็ว: เริ่มใหม่"); }
@@ -490,17 +492,18 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             finish();
         }));
         s.action("⏻", "ออกจากแอป", "ออก", () -> runOnUiThread(() -> finishAffinity()));
+
         s.build();
     }
 
     // ================= saved settings (kept when the app is closed) =================
-    private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck3", "flow", "eco", "autoRes", "tips", "pmenu"};
+    private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck4", "flow", "eco", "autoRes", "tips", "pmenu", "lang"};
     private double[] defaults;
     private double[] lastSaved;
 
     private double[] snapPrefs() {
         return new double[]{rend.sel, rend.pokeS, rend.predict ? 1 : 0, cam.detW, rend.floaty ? 1 : 0, NvUi.glass, rend.cursorSz, rend.skel, hudOn ? 1 : 0,
-                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs, rend.mainHand, rend.chroma, cam.handsGpu ? 1 : 0, rend.neck ? 1 : 0, cam.flowOn ? 1 : 0, eco, rend.autoRes ? 1 : 0, cam.tipsOn ? 1 : 0, rend.palmMenu ? 1 : 0};
+                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs, rend.mainHand, rend.chroma, cam.handsGpu ? 1 : 0, rend.neck ? 1 : 0, cam.flowOn ? 1 : 0, eco, rend.autoRes ? 1 : 0, cam.tipsOn ? 1 : 0, rend.palmMenu ? 1 : 0, Tr.thai ? 1 : 0};
     }
 
     private void applyPrefs(double[] v) {
@@ -508,7 +511,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         NvUi.glass = (int) v[5]; rend.cursorSz = (int) v[6]; rend.skel = (int) v[7]; hudOn = v[8] > 0.5;
         rend.sharpen = (float) v[9]; rend.stereo = v[10] > 0.5; rend.lens = (int) v[11]; rend.eyeShift = (float) v[12]; compass = v[13] > 0.5;
         motion.depthM = (float) v[14]; motion.lagMs = (int) v[15]; cam.handsN = Math.max(1, Math.min(2, (int) v[16])); rend.vrFov = (float) Math.max(50, Math.min(110, v[17]));
-        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19])); rend.mainHand = v[20] > 0.5 ? 1 : 0; rend.chroma = (float) Math.max(-0.06, Math.min(0.06, v[21])); cam.handsGpu = v[22] > 0.5; rend.neck = v[23] > 0.5; cam.flowOn = v[24] > 0.5; eco = Math.max(0, Math.min(3, (int) v[25])); rend.autoRes = v[26] > 0.5; cam.tipsOn = v[27] > 0.5; rend.palmMenu = v[28] > 0.5;
+        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19])); rend.mainHand = v[20] > 0.5 ? 1 : 0; rend.chroma = (float) Math.max(-0.06, Math.min(0.06, v[21])); cam.handsGpu = v[22] > 0.5; rend.neck = v[23] > 0.5; cam.flowOn = v[24] > 0.5; eco = Math.max(0, Math.min(3, (int) v[25])); rend.autoRes = v[26] > 0.5; cam.tipsOn = v[27] > 0.5; rend.palmMenu = v[28] > 0.5; Tr.setThai(v.length > 29 && v[29] > 0.5);
     }
 
     // ----- where the windows were left (turn, height, size, distance) -----
@@ -565,8 +568,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     private void buildMenu() {
         buildSettings();
         final int GA = 0xFF5A5A63, GB = 0xFF38383E;
-        final java.util.List<NvUi.Btn> tools = menu.addTab("🧰", "เครื่องมือ", "เครื่องมือและระบบ");
-        final java.util.List<NvUi.Btn> webs = menu.addTab("🌐", "เว็บแอป", "เว็บแอปยอดนิยม (เปิดเป็นหน้าต่างลอย)");
+        final java.util.List<NvUi.Btn> webs = menu.addTab("", "เว็บแอป", "เว็บแอปยอดนิยม (เปิดเป็นหน้าต่างลอย)");
+        final java.util.List<NvUi.Btn> tools = menu.addTab("", "เครื่องมือ", "เครื่องมือและระบบ");
         java.util.Set<String> shownW = new java.util.HashSet<>();
         for (String[] w : WEB) {
             if (!shownW.add(w[2])) continue;

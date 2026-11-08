@@ -72,6 +72,7 @@ public class NvPanel implements NvContent {
     }
 
     private void text(String s, float cx, float cy, float size, int color, Paint.Align al, float maxW) {
+        s = Tr.t(s);
         p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(color); p.setTextSize(size); p.setTextAlign(al);
         while (maxW > 0 && p.measureText(s) > maxW && size > 8) { size -= 1; p.setTextSize(size); }
         cv.drawText(s, cx, cy + size * 0.35f, p);
@@ -120,12 +121,12 @@ public class NvPanel implements NvContent {
             NvGlass.ring(cv, p, r, hover == b ? NvGlass.RING : 0x33FFFFFF, (hover == b ? 2.4f : 1.2f) * u, 24 * u);
             if (on) stroke(r, 0xFF9ED8FF, 2.5f * u, 24 * u);
             float h = r.height();
-            if (b.icon != null || !b.emoji.isEmpty()) {
+            if (b.icon != null) {
                 if (b.icon != null) {
                     float s = h * 0.46f;
                     RectF d = new RectF(r.centerX() - s / 2, r.top + h * 0.10f, r.centerX() + s / 2, r.top + h * 0.10f + s);
                     cv.drawBitmap(b.icon, null, d, p);
-                } else text(b.emoji, r.centerX(), r.top + h * 0.34f, h * 0.34f, 0xFFFFFFFF, Paint.Align.CENTER, 0);
+                }
                 text(b.label.get(), r.centerX(), r.top + h * 0.72f, 14 * u, 0xFFFFFFFF, Paint.Align.CENTER, r.width() - 10 * u);
                 if (b.sub != null) text(b.sub.get(), r.centerX(), r.top + h * 0.88f, 11 * u, 0xCCFFFFFF, Paint.Align.CENTER, r.width() - 10 * u);
             } else {

@@ -22,6 +22,8 @@ public class NvHands {
     private HandLandmarker lm;                 // the model asked for (one or two hands)
     private HandLandmarker lm1;                // when two hands are asked for: a one-hand copy, used while only one hand is in view
     private int lastN = 0;
+    public volatile boolean onlyMine = true;               // keep only the hands of the user: a hand that is small in the picture (far away = someone else) is dropped
+    public static final float MIN_HAND = 0.08f;           // smallest wrist-to-middle-knuckle length (as a share of the picture height) that counts as the user's hand
     /** per hand (same order as the result): how likely it is the user's LEFT hand, 0..1; -1 = not known. The model judges from how the hand looks as if the picture were a mirror, and the back camera does not mirror, so its "Right" is the user's left. */
     public volatile float[] leftness = new float[]{-1f, -1f};
     private long lastProbe = 0;
@@ -83,6 +85,24 @@ public class NvHands {
                     boolean modelRight = "Right".equalsIgnoreCase(c.categoryName());
                     lf[i] = modelRight ? c.score() : 1f - c.score();
                 } catch (Throwable ignored) { }
+            }
+            if (onlyMine && !all.isEmpty()) {
+                float arr = (float) bmp.getWidth() / Math.max(1, bmp.getHeight());
+                float[] sz = new float[all.size()];
+                float mx = 0f;
+                for (int i = 0; i < sz.length; i++) {
+                    List<NormalizedLandmark> hh = all.get(i);
+                    sz[i] = hh.size() > 9 ? (float) Math.hypot((hh.get(9).x() - hh.get(0).x()) * arr, hh.get(9).y() - hh.get(0).y()) : 0f;
+                    mx = Math.max(mx, sz[i]);
+                }
+                List<List<NormalizedLandmark>> kept = new java.util.ArrayList<>();
+                float[] lk = new float[all.size()];
+                int nk = 0;
+                for (int i = 0; i < sz.length; i++) {
+                    if (sz[i] >= MIN_HAND && sz[i] >= 0.5f * mx) { kept.add(all.get(i)); lk[nk++] = lf[i]; }      // near enough, and not much smaller than the nearest hand
+                }
+                all = kept;
+                System.arraycopy(lk, 0, lf, 0, nk);
             }
             Integer[] order = new Integer[all.size()];
             for (int i = 0; i < order.length; i++) order[i] = i;

@@ -299,7 +299,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.dist = L; w.dragD0 = L;
     }
 
-    public volatile boolean neck = true;                   // the eyes sit in front of the neck: turning the head also moves the eyes a little (gives depth to the windows)
+    public volatile boolean neck = false;                   // the eyes sit in front of the neck: turning the head also moves the eyes a little (gives depth to the windows)
     private float mux = 0, muy = 0, muz = 0;
     private void smoothUser() {
         NvMotion mo = motion;
@@ -457,26 +457,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         android.opengl.Matrix.invertM(w.inv, 0, w.mv, 0);
     }
 
-    private float rfPhi = 0f;
-    /** the head's turn without the tilt of the phone: the windows are placed with this, so tilting the phone sideways does not move or turn them (the camera picture still tilts) */
-    private float[] rollFree(float[] rn) {
-        if (rn == null) return null;
-        float ux = rn[8], uy = rn[9];                               // where the world's "up" points, seen from the phone
-        float rho = (float) Math.hypot(ux, uy);
-        if (rho > 0.25f) {                                          // looking nearly straight up or down the tilt is not defined: keep the last one
-            float phi = (float) Math.toDegrees(Math.atan2(ux, uy));
-            float dd = phi - rfPhi;
-            while (dd > 180f) dd -= 360f; while (dd < -180f) dd += 360f;
-            rfPhi += dd * Math.min(1f, (rho - 0.25f) / 0.15f);
-        }
-        float[] rz = new float[16], o = new float[16];
-        android.opengl.Matrix.setRotateM(rz, 0, rfPhi, 0f, 0f, 1f);
-        android.opengl.Matrix.multiplyMM(o, 0, rz, 0, rn, 0);
-        return o;
-    }
-
     private void computePanel() {
-        float[] rn = rotView;                                        // windows are fixed in the room: no following of the phone's tilt (rollFree() is not used any more)
+        float[] rn = rotView;                                        // windows are fixed in the room: they do not follow the phone's tilt
         if (recenter) {
             recenter = false;
             if (resetLayoutReq) {                                    // the OK sign: forget where the windows were left, back to the standard places and sizes

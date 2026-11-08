@@ -273,6 +273,7 @@ public class NvMedia implements NvContent {
     }
 
     private void text(String s, float cx, float cy, float size, int color, Paint.Align al, float maxW) {
+        s = Tr.x(s);
         p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(color); p.setTextSize(size); p.setTextAlign(al);
         while (maxW > 0 && p.measureText(s) > maxW && size > 10) { size -= 1; p.setTextSize(size); }
         cv.drawText(s, cx, cy + size * 0.35f, p);

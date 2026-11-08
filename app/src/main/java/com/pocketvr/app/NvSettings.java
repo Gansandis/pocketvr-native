@@ -167,6 +167,7 @@ public class NvSettings implements NvContent {
     }
 
     private void text(String s, float cx, float cy, float size, int color, Paint.Align al, float maxW) {
+        s = Tr.t(s);
         p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(color); p.setTextSize(size); p.setTextAlign(al);
         while (maxW > 0 && p.measureText(s) > maxW && size > 10) { size -= 1; p.setTextSize(size); }
         cv.drawText(s, cx, cy + size * 0.35f, p);
@@ -207,9 +208,9 @@ public class NvSettings implements NvContent {
         NvPanel.grips(cv, p, pr, 36, 1.4f);
         NvGlass.font(p, true);
 
-        text("⚙  ตั้งค่า", 34, 40, 33, NvGlass.TEXT, Paint.Align.LEFT, 400);
+        text("ตั้งค่า", 34, 40, 33, NvGlass.TEXT, Paint.Align.LEFT, 400);
         Cat cur = cats.isEmpty() ? null : cats.get(Math.min(sel, cats.size() - 1));
-        if (cur != null) text(cur.emoji + "  " + cur.name, 284, 40, 29, NvGlass.TEXT, Paint.Align.LEFT, 500);
+        if (cur != null) text(cur.name, 284, 40, 29, NvGlass.TEXT, Paint.Align.LEFT, 500);
         NvGlass.fill(cv, p, closeR, hoverClose ? 0xFFE5484D : 0x33FFFFFF, closeR.height() / 2);
         if (hoverClose) NvGlass.ring(cv, p, closeR, NvGlass.RING, 2.4f, closeR.height() / 2);
         text("✕", closeR.centerX(), closeR.centerY(), 28, NvGlass.TEXT, Paint.Align.CENTER, 0);
@@ -228,8 +229,7 @@ public class NvSettings implements NvContent {
             cv.scale(sc, sc, c.r.centerX(), c.r.centerY());
             if (active || ah > 0.02f || ap > 0.02f) NvGlass.controlA(cv, p, c.r, rad, 1.4f, active, ah, ap);
             NvGlass.font(p, active);
-            text(c.emoji, c.r.left + 34, c.r.centerY(), 30, 0xFFFFFFFF, Paint.Align.CENTER, 0);
-            text(c.name, c.r.left + 66, c.r.centerY(), 25, active ? NvGlass.TEXT : 0xCCFFFFFF, Paint.Align.LEFT, c.r.width() - 78);
+            text(c.name, c.r.left + 28, c.r.centerY(), 25, active ? NvGlass.TEXT : 0xCCFFFFFF, Paint.Align.LEFT, c.r.width() - 44);
             cv.restore();
         }
 
@@ -242,10 +242,9 @@ public class NvSettings implements NvContent {
             for (Row r : cur.rows) {
                 RectF rowR = new RectF(rx, ry, rx + rw, ry + ROW_H);
                 NvGlass.control(cv, p, rowR, 28, 1.2f, false, false, false);
-                text(r.emoji, rowR.left + 36, rowR.centerY(), 32, 0xFFFFFFFF, Paint.Align.CENTER, 0);
                 NvGlass.font(p, true);
-                float labelMax = rw - 36 - 70 - (r.kind == TOGGLE ? 150 : r.kind == CYCLE ? 360 : r.kind == STEP ? 360 : 280);
-                text(r.label, rowR.left + 72, rowR.centerY(), 26, 0xFFFFFFFF, Paint.Align.LEFT, Math.max(120, labelMax));
+                float labelMax = rw - 36 - 28 - (r.kind == TOGGLE ? 150 : r.kind == CYCLE ? 360 : r.kind == STEP ? 360 : 280);
+                text(r.label, rowR.left + 30, rowR.centerY(), 26, 0xFFFFFFFF, Paint.Align.LEFT, Math.max(120, labelMax));
                 try {
                     switch (r.kind) {
                         case TOGGLE: {

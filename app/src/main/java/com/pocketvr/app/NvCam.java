@@ -317,6 +317,8 @@ public class NvCam {
             float[] rr = result;
             if (rr != null && rr.length > 0 && rr[0] >= 1) lastSeenHand = now;
             long pace = detPaceMs;
+            float im = hands.inferMs;                                      // the phone slows the processor down as it heats up (the model then takes 130 -> 190 ms), and a model that never rests heats it more:
+            if (im > 110f) pace = Math.max(pace, (long) (im * 0.4f));       // so once it is slow, give it a rest between two looks (about 60 % of the time busy). The hand is followed by the picture's motion in between.
             if (now - lastSeenHand > 3000) pace = Math.max(pace, 80);     // no hand in sight for a while: look less often (saves heat), wake up fast when one appears
             if (handsFailed || now - lastDet < pace || !detBusy.compareAndSet(false, true)) return;
             lastDet = now;

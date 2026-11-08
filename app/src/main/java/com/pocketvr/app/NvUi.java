@@ -97,7 +97,7 @@ public class NvUi implements NvContent {
     /** A new category in the side bar (before the apps tab). Returns the list to put its cards in. */
     public List<Btn> addTab(String emoji, String name, String title) {
         List<Btn> l = new ArrayList<>();
-        addTabInternal(emoji, name, title, l, true);
+        addTabInternal(emoji, name, title, l, false);          // order: Home, Apps, Web apps, Tools
         return l;
     }
 
@@ -152,16 +152,16 @@ public class NvUi implements NvContent {
         visible.clear();
         // dock
         int n = dock.size();
-        float d = 50 * u, gap = 10 * u;
-        float dw = n * d + (n + 1) * gap, dh = d + 2 * gap * 0.8f;
+        float d = 50 * u, gap = 10 * u, bw = 104 * u;                       // dock buttons are words in capsules (no pictures)
+        float dw = n * bw + (n + 1) * gap, dh = d + 2 * gap * 0.8f;
         float dx = (W - dw) / 2f, dy = H - 38 * u - dh;
         float hbw = 150 * u;
         handle.r.set(W / 2f - hbw / 2f, H - 44 * u, W / 2f + hbw / 2f, H - 6 * u);
         visible.add(handle);
         dockR.set(dx, dy, dx + dw, dy + dh);
         for (int i = 0; i < n; i++) {
-            float x = dx + gap + i * (d + gap), y = dy + (dh - d) / 2f;
-            dock.get(i).r.set(x, y, x + d, y + d);
+            float x = dx + gap + i * (bw + gap), y = dy + (dh - d) / 2f;
+            dock.get(i).r.set(x, y, x + bw, y + d);
             visible.add(dock.get(i));
         }
         if (!open) { pH = 0; return; }
@@ -231,6 +231,7 @@ public class NvUi implements NvContent {
     private void text(String s, float cx, float cy, float size, int color, float maxW) { textA(s, cx, cy, size, color, maxW, Paint.Align.CENTER); }
 
     private void textA(String s, float cx, float cy, float size, int color, float maxW, Paint.Align al) {
+        s = Tr.t(s);
         p.setShader(null);
         p.setStyle(Paint.Style.FILL);
         p.setColor(color);
@@ -258,7 +259,7 @@ public class NvUi implements NvContent {
         NvGlass.font(p, true);
         if (!toast.isEmpty()) {
             p.setTextSize(20 * u);
-            float tw = Math.min(W * 0.8f, p.measureText(toast) + 44 * u);
+            float tw = Math.min(W * 0.8f, p.measureText(Tr.t(toast)) + 44 * u);
             RectF tr = new RectF(W / 2f - tw / 2f, H * 0.05f - 22 * u, W / 2f + tw / 2f, H * 0.05f + 22 * u);
             NvGlass.fill(cv, p, tr, 0xD0262932, tr.height() / 2);
             NvGlass.ring(cv, p, tr, 0x55FFFFFF, 1.2f * u, tr.height() / 2);
@@ -276,9 +277,10 @@ public class NvUi implements NvContent {
             float sc = 1f + 0.12f * b.ah - 0.10f * b.ap;
             cv.save();
             cv.scale(sc, sc, b.r.centerX(), b.r.centerY());
-            NvGlass.fill(cv, p, b.r, NvGlass.lerp(on ? 0xF2FFFFFF : 0x26FFFFFF, on ? 0xFFFFFFFF : 0x59FFFFFF, b.ah), b.r.width() / 2);
-            if (b.ah > 0.02f) NvGlass.ring(cv, p, b.r, NvGlass.lerp(0x00FFFFFF, NvGlass.RING, b.ah), 2.4f * u, b.r.width() / 2);
-            text(b.emoji, b.r.centerX(), b.r.centerY(), 24 * u, 0xFFFFFFFF, 0);
+            NvGlass.fill(cv, p, b.r, NvGlass.lerp(on ? 0xF2FFFFFF : 0x26FFFFFF, on ? 0xFFFFFFFF : 0x59FFFFFF, b.ah), b.r.height() / 2);
+            if (b.ah > 0.02f) NvGlass.ring(cv, p, b.r, NvGlass.lerp(0x00FFFFFF, NvGlass.RING, b.ah), 2.4f * u, b.r.height() / 2);
+            NvGlass.font(p, true);
+            text(b.label.get(), b.r.centerX(), b.r.centerY(), 17 * u, on ? 0xFF1C1E26 : NvGlass.TEXT, b.r.width() - 16 * u);
             cv.restore();
         }
         if (!open) return;
@@ -287,7 +289,7 @@ public class NvUi implements NvContent {
         NvGlass.panel(cv, p, pr, 34 * u, u);
         NvPanel.grips(cv, p, pr, 34 * u, u);
         NvGlass.font(p, true);
-        textA("🥽  PocketVR", pX + 26 * u, pY + 32 * u, 25 * u, NvGlass.TEXT, sbW - 34 * u, Paint.Align.LEFT);
+        textA("PocketVR", pX + 26 * u, pY + 32 * u, 25 * u, NvGlass.TEXT, sbW - 34 * u, Paint.Align.LEFT);
         Tab ct = tabs.get(Math.min(tab, tabs.size() - 1));
         textA(ct.title, pX + sbW + 16 * u, pY + 32 * u, 26 * u, NvGlass.TEXT, pW - sbW - 44 * u, Paint.Align.LEFT);
         // a thin line between the side bar and the content
@@ -303,8 +305,7 @@ public class NvUi implements NvContent {
             cv.scale(sc, sc, t.r.centerX(), t.r.centerY());
             if (act || t.ah > 0.02f || t.ap > 0.02f) NvGlass.controlA(cv, p, t.r, rad, u, act, t.ah, t.ap);
             NvGlass.font(p, act);
-            text(t.emoji, t.r.left + 30 * u, t.r.centerY(), 25 * u, 0xFFFFFFFF, 0);
-            textA(t.label.get(), t.r.left + 56 * u, t.r.centerY(), 21 * u, act ? NvGlass.TEXT : 0xCCFFFFFF, t.r.width() - 70 * u, Paint.Align.LEFT);
+            textA(t.label.get(), t.r.left + 24 * u, t.r.centerY(), 21 * u, act ? NvGlass.TEXT : 0xCCFFFFFF, t.r.width() - 40 * u, Paint.Align.LEFT);
             cv.restore();
         }
         // content (cut off at the edges of the list, so it can be scrolled)
@@ -327,21 +328,18 @@ public class NvUi implements NvContent {
                     float s2 = h * 0.46f;
                     RectF d = new RectF(r.centerX() - s2 / 2, r.top + h * 0.10f, r.centerX() + s2 / 2, r.top + h * 0.10f + s2);
                     cv.drawBitmap(b.icon, null, d, p);
-                } else text(b.emoji, r.centerX(), r.top + h * 0.34f, h * 0.34f, 0xFFFFFFFF, 0);
+                }
                 NvGlass.font(p, true);
-                text(b.label.get(), r.centerX(), r.top + h * (b.sub != null ? 0.70f : 0.76f), 14 * u, NvGlass.TEXT, r.width() - 10 * u);
+                if (b.icon != null) text(b.label.get(), r.centerX(), r.top + h * (b.sub != null ? 0.70f : 0.76f), 14 * u, NvGlass.TEXT, r.width() - 10 * u);
+                else text(b.label.get(), r.centerX(), r.top + h * (b.sub != null ? 0.42f : 0.5f), 17 * u, NvGlass.TEXT, r.width() - 14 * u);
                 NvGlass.font(p, false);
-                if (b.sub != null) text(b.sub.get(), r.centerX(), r.top + h * 0.89f, 11 * u, 0xFFA9D4FF, r.width() - 10 * u);
+                if (b.sub != null) text(b.sub.get(), r.centerX(), r.top + h * (b.icon != null ? 0.89f : 0.68f), 12 * u, 0xFFA9D4FF, r.width() - 10 * u);
                 cv.restore();
                 continue;
             }
             // list row: round coloured badge, name + hint, arrow
-            float bs = h - 16 * u;
-            RectF bd = new RectF(r.left + 9 * u, r.top + 8 * u, r.left + 9 * u + bs, r.top + 8 * u + bs);
-            NvGlass.badge(cv, p, bd, on ? 0xFF4DA3FF : b.c1, on ? 0xFF0A84FF : b.c2);
-            text(b.emoji, bd.centerX(), bd.centerY(), bs * 0.5f, 0xFFFFFFFF, 0);
             float right = 34 * u;
-            float lx = bd.right + 16 * u, lw = r.right - lx - right;
+            float lx = r.left + 24 * u, lw = r.right - lx - right;
             NvGlass.font(p, true);
             if (b.sub != null) {
                 textA(b.label.get(), lx, r.centerY() - h * 0.16f, 22 * u, NvGlass.TEXT, lw, Paint.Align.LEFT);
