@@ -299,7 +299,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.dist = L; w.dragD0 = L;
     }
 
-    public volatile boolean neck = false;                   // the eyes sit in front of the neck: turning the head also moves the eyes a little (gives depth to the windows)
+    public volatile boolean neck = true;                   // the eyes sit in front of the neck: turning the head also moves the eyes a little (gives depth to the windows)
     private float mux = 0, muy = 0, muz = 0;
     private void smoothUser() {
         NvMotion mo = motion;
