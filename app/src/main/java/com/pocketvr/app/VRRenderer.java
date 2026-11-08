@@ -422,7 +422,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // keep it upright: undo any tilt that piled up while it was being moved (turn about its own centre, so it does not slide)
         android.opengl.Matrix.multiplyMM(tA, 0, rn, 0, w.rot, 0);
         float roll = (float) Math.toDegrees(Math.atan2(tA[1], tA[0]));
-        if (Math.abs(roll) > 0.2f) {
+        if (dragWin == w && Math.abs(roll) > 0.2f) {                // only while a window is being moved (a still window is never turned: it stays exactly where it is in the room)
             android.opengl.Matrix.setRotateM(tB, 0, -roll * 0.25f, 0f, 0f, 1f);
             android.opengl.Matrix.multiplyMM(tC, 0, w.rot, 0, tB, 0);
             w.rot = tC.clone();
@@ -476,7 +476,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     private void computePanel() {
-        float[] rn = rollFree(rotView);
+        float[] rn = rotView;                                        // windows are fixed in the room: no following of the phone's tilt (rollFree() is not used any more)
         if (recenter) {
             recenter = false;
             if (resetLayoutReq) {                                    // the OK sign: forget where the windows were left, back to the standard places and sizes
