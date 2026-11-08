@@ -22,6 +22,9 @@ public class NvHands {
     private HandLandmarker lm;                 // the model asked for (one or two hands)
     private HandLandmarker lm1;                // when two hands are asked for: a one-hand copy, used while only one hand is in view
     private int lastN = 0;
+    private final float[] prevX = new float[2], prevY = new float[2];     // where the hands were last time (wrist), to tell a hand that is being followed from a new one
+    private int prevN = 0;
+    private long prevT = 0;
     public volatile boolean onlyMine = true;               // keep only the hands of the user: a hand that is small in the picture (far away = someone else) is dropped
     public static final float MIN_HAND = 0.08f;           // smallest wrist-to-middle-knuckle length (as a share of the picture height) that counts as the user's hand
     /** per hand (same order as the result): how likely it is the user's LEFT hand, 0..1; -1 = not known. The model judges from how the hand looks as if the picture were a mirror, and the back camera does not mirror, so its "Right" is the user's left. */
@@ -62,6 +65,16 @@ public class NvHands {
         }
     }
 
+    /** the shape of a hand: the palm is about as wide as it is long (a foot is much longer than wide) and the fingers are not tiny next to the palm */
+    private static boolean plausible(List<NormalizedLandmark> h, float ar) {
+        if (h.size() < 21) return false;
+        float pl = (float) Math.hypot((h.get(9).x() - h.get(0).x()) * ar, h.get(9).y() - h.get(0).y());
+        float pw = (float) Math.hypot((h.get(5).x() - h.get(17).x()) * ar, h.get(5).y() - h.get(17).y());
+        if (pl < 1e-4f) return false;
+        float r = pw / pl;
+        return r > 0.35f && r < 1.9f;                             // wide limits: a hand turned or foreshortened still passes
+    }
+
     public float[] detect(Bitmap bmp, long tsMs) {
         if (lm == null) return null;
         try {
@@ -100,10 +113,21 @@ public class NvHands {
                 List<List<NormalizedLandmark>> kept = new java.util.ArrayList<>();
                 float[] lk = new float[all.size()];
                 int nk = 0;
+                long nowT = System.nanoTime() / 1000000L;
+                if (nowT - prevT > 500) prevN = 0;                       // nothing was followed a moment ago: every hand is a new one
                 for (int i = 0; i < sz.length; i++) {
-                    if (sz[i] >= MIN_HAND && sz[i] >= 0.5f * mx && sc[i] >= 0.75f) {      // (a foot or a bag the model takes for a hand is usually less sure whether it is a left or a right one)
-                     kept.add(all.get(i)); lk[nk++] = lf[i]; }      // near enough, and not much smaller than the nearest hand
+                    List<NormalizedLandmark> hh = all.get(i);
+                    float wx = hh.get(0).x(), wy = hh.get(0).y(), my = 0f;
+                    for (NormalizedLandmark q : hh) my += q.y();
+                    my /= hh.size();
+                    boolean cont = false;                                // a hand that is already being followed (it may go down to the bottom of the picture)
+                    for (int k = 0; k < prevN; k++) if (Math.hypot((wx - prevX[k]) * arr, wy - prevY[k]) < 0.22f) cont = true;
+                    boolean lowNew = !cont && (wy > 0.74f || my > 0.80f);      // a NEW hand that shows up at the very bottom of the picture is a foot, a knee, a bag... (your hands rise into view from the middle)
+                    if (sz[i] >= MIN_HAND && sz[i] >= 0.5f * mx && sc[i] >= 0.75f && !lowNew && plausible(hh, arr)) { kept.add(hh); lk[nk++] = lf[i]; }
                 }
+                prevN = 0;
+                for (List<NormalizedLandmark> hh : kept) if (prevN < 2) { prevX[prevN] = hh.get(0).x(); prevY[prevN] = hh.get(0).y(); prevN++; }
+                if (prevN > 0) prevT = nowT;
                 all = kept;
                 System.arraycopy(lk, 0, lf, 0, nk);
             }
