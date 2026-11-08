@@ -168,8 +168,8 @@ public class NvUi implements NvContent {
         pW = W * safe;
         pX = (W - pW) / 2f;
         pY = H * 0.04f;
-        float ov = dh * 0.5f + 2 * u;                       // the dock floats over the bottom edge of the panel, like a visionOS ornament
-        pH = dy - 12 * u - pY + ov;
+        float ov = 0f;                                      // the dock sits below the panel, not over its edge
+        pH = dy - 16 * u - pY;
         sbW = Math.min(214 * u, pW * 0.27f);
         float tabH = Math.min(56 * u, (pH - 76 * u) / Math.max(1, tabs.size()) - 6 * u);
         for (int i = 0; i < tabs.size(); i++) {

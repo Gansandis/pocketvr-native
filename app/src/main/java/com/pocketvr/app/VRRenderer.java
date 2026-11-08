@@ -374,7 +374,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         if (nc == 0) return;                                      // nothing in front to sit next to: the standard place
         int best = -1; float bestC = 1e9f;
+        boolean anchorOnly = false;                                // a free place next to the main menu beats every other place
+        for (int i = 0; i < nc; i++) if (isAnchor[i] && Math.abs(cy[i]) <= MAX_FRONT_YAW && Math.abs(cp[i]) <= 50f && !hitsAt(w, cy[i], cp[i], hw, hh)) { anchorOnly = true; break; }
         for (int i = 0; i < nc; i++) {
+            if (anchorOnly && !isAnchor[i]) continue;
             if (Math.abs(cy[i]) > MAX_FRONT_YAW || Math.abs(cp[i]) > 50f) continue;
             if (hitsAt(w, cy[i], cp[i], hw, hh)) continue;
             boolean vert = cy[i] == fy[i];                        // above / below a window: only when beside is not possible (or the window wants to be low, like the keyboard)

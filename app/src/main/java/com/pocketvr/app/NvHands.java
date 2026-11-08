@@ -40,9 +40,9 @@ public class NvHands {
                     .setBaseOptions(bo.build())
                     .setRunningMode(RunningMode.VIDEO)
                     .setNumHands(hands)
-                    .setMinHandDetectionConfidence(0.5f)
-                    .setMinHandPresenceConfidence(0.3f)
-                    .setMinTrackingConfidence(0.3f)
+                    .setMinHandDetectionConfidence(0.65f)
+                    .setMinHandPresenceConfidence(0.45f)
+                    .setMinTrackingConfidence(0.45f)
                     .build();
             lm = HandLandmarker.createFromOptions(ctx, opt);
             lm1 = null; lastN = 0; lastProbe = 0;
@@ -50,7 +50,7 @@ public class NvHands {
                 try {                                                  // which is what made the points late and jerky. So a one-hand copy does the everyday work and the
                     HandLandmarker.HandLandmarkerOptions o1 = HandLandmarker.HandLandmarkerOptions.builder()      // two-hand model only looks for a second hand now and then.
                             .setBaseOptions(bo.build()).setRunningMode(RunningMode.VIDEO).setNumHands(1)
-                            .setMinHandDetectionConfidence(0.5f).setMinHandPresenceConfidence(0.3f).setMinTrackingConfidence(0.3f).build();
+                            .setMinHandDetectionConfidence(0.65f).setMinHandPresenceConfidence(0.45f).setMinTrackingConfidence(0.45f).build();
                     lm1 = HandLandmarker.createFromOptions(ctx, o1);
                 } catch (Throwable t) { lm1 = null; }
             }
@@ -78,10 +78,12 @@ public class NvHands {
             List<List<NormalizedLandmark>> all = new java.util.ArrayList<>(r.landmarks());
             java.util.List<java.util.List<com.google.mediapipe.tasks.components.containers.Category>> hd = r.handednesses();
             final float[] lf = new float[all.size()];
+            final float[] sc = new float[all.size()];
             for (int i = 0; i < lf.length; i++) {
-                lf[i] = -1f;
+                lf[i] = -1f; sc[i] = 1f;
                 try {
                     com.google.mediapipe.tasks.components.containers.Category c = hd.get(i).get(0);
+                    sc[i] = c.score();
                     boolean modelRight = "Right".equalsIgnoreCase(c.categoryName());
                     lf[i] = modelRight ? c.score() : 1f - c.score();
                 } catch (Throwable ignored) { }
@@ -99,7 +101,8 @@ public class NvHands {
                 float[] lk = new float[all.size()];
                 int nk = 0;
                 for (int i = 0; i < sz.length; i++) {
-                    if (sz[i] >= MIN_HAND && sz[i] >= 0.5f * mx) { kept.add(all.get(i)); lk[nk++] = lf[i]; }      // near enough, and not much smaller than the nearest hand
+                    if (sz[i] >= MIN_HAND && sz[i] >= 0.5f * mx && sc[i] >= 0.75f) {      // (a foot or a bag the model takes for a hand is usually less sure whether it is a left or a right one)
+                     kept.add(all.get(i)); lk[nk++] = lf[i]; }      // near enough, and not much smaller than the nearest hand
                 }
                 all = kept;
                 System.arraycopy(lk, 0, lf, 0, nk);
