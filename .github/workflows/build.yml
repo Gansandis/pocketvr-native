@@ -40,7 +40,30 @@ jobs:
           fi
           grep -n "shizuku" app/build.gradle || echo "WARNING: Shizuku lines were not added"
 
+      # downloading Gradle sometimes fails with a 504 from the server: try again (twice) before giving up
       - uses: gradle/actions/setup-gradle@v3
+        id: gradle1
+        continue-on-error: true
+        with:
+          gradle-version: '8.7'
+
+      - name: Wait before retrying Gradle download
+        if: steps.gradle1.outcome == 'failure'
+        run: sleep 25
+
+      - uses: gradle/actions/setup-gradle@v3
+        id: gradle2
+        if: steps.gradle1.outcome == 'failure'
+        continue-on-error: true
+        with:
+          gradle-version: '8.7'
+
+      - name: Wait before the last Gradle retry
+        if: steps.gradle1.outcome == 'failure' && steps.gradle2.outcome == 'failure'
+        run: sleep 45
+
+      - uses: gradle/actions/setup-gradle@v3
+        if: steps.gradle1.outcome == 'failure' && steps.gradle2.outcome == 'failure'
         with:
           gradle-version: '8.7'
 
@@ -54,7 +77,7 @@ jobs:
           # safety net 1: if only the new native VR screen breaks the build, replace it with an empty stub
           echo "falling back: stub for the native VR screen"
           D=app/src/main/java/com/pocketvr/app
-          rm -f $D/NvCam.java $D/NvHands.java $D/VRRenderer.java $D/NvUi.java $D/NvContent.java $D/NvPanel.java $D/NvKeyboard.java $D/NvBrowser.java $D/NvMotion.java $D/NvMedia.java $D/NvVideo.java $D/NvSettings.java $D/NvShizuku.java $D/NvAppWin.java $D/NvInputServer.java $D/NvGlass.java
+          rm -f $D/NvCam.java $D/NvHands.java $D/VRRenderer.java $D/NvUi.java $D/NvContent.java $D/NvPanel.java $D/NvKeyboard.java $D/NvBrowser.java $D/NvMotion.java $D/NvMedia.java $D/NvVideo.java $D/NvSettings.java $D/NvShizuku.java $D/NvAppWin.java $D/NvInputServer.java $D/NvGlass.java $D/NvSplash.java
           sed -i '/dev.rikka.shizuku/d' app/build.gradle
           sed -i '/SHIZUKU-BEGIN/,/SHIZUKU-END/d' app/src/main/AndroidManifest.xml
           cat > $D/NativeVRActivity.java <<'STUB'
