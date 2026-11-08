@@ -289,6 +289,19 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.rot = tC.clone();
     }
 
+    // remove the sideways tilt (roll) from a window turn: keep where it faces, make its top edge point up (world up = +Z of the rotation sensor)
+    private static void levelRoll(float[] r) {
+        float bx = r[8], by = r[9], bz = r[10];                       // the window's back axis in the room
+        if (Math.abs(bz) > 0.97f) return;                              // facing straight up or down: no sideways direction to level against
+        float rx = -by, ry = bx;                                       // right = up x back, with up = (0,0,1)
+        float rl = (float) Math.sqrt(rx * rx + ry * ry);
+        if (rl < 1e-4f) return;
+        rx /= rl; ry /= rl;
+        float ux = by * 0f - bz * ry, uy = bz * rx - bx * 0f, uz = bx * ry - by * rx;   // up = back x right
+        r[0] = rx; r[1] = ry; r[2] = 0f;
+        r[4] = ux; r[5] = uy; r[6] = uz;
+    }
+
     private float sux = 0, suy = 0, suz = 0;          // smoothed user position, so the estimate arriving in small steps looks smooth
     // When you have walked away from the spot where a window was put up, turning/pushing it "about that old spot" goes the wrong way.
     // So at the moment of grabbing, the window is re-based on where you stand now: same place in the room, now measured from you,
@@ -419,6 +432,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             else w.animOn = false;
             android.opengl.Matrix.transposeM(tA, 0, rn, 0);
             w.rot = tA.clone();
+            levelRoll(w.rot);                                          // stand upright in the room, whatever the phone's tilt was when it was put up
             if (w.offYaw != 0f || w.offPitch != 0f) turnWin(w, rn, -w.offYaw, w.offPitch);
             w.scale = w.wantScale > 0 ? w.wantScale : openScale(w);
             w.dist = w.placeDist > 0f ? w.placeDist : PANEL_D;
