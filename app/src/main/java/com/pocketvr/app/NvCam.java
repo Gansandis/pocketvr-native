@@ -162,6 +162,32 @@ public class NvCam {
     private long camCount = 0, camT0 = 0, detCount = 0, detT0 = 0, lastDet = 0;
 
     public float leftness(int i) { float[] l = hands.leftness; return i >= 0 && i < l.length ? l[i] : -1f; }
+    // ---- seeing in the dark: a longer exposure (lower frame rate allowed) and a brighter exposure target; the picture is also lifted a little when drawn (VRRenderer.lift)
+    public volatile int night = 0;                          // 0 off, 1 medium, 2 high
+    private volatile CaptureRequest.Builder reqB;
+    private volatile Range<Integer> fpsNight, fpsDay;
+    private volatile int aeMax = 0;
+
+    private void applyNightOn(CaptureRequest.Builder b) {
+        int lv = night;
+        try {
+            b.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, lv == 0 ? 0 : Math.round(aeMax * (lv == 1 ? 0.6f : 1.0f)));
+            Range<Integer> r = lv > 0 && fpsNight != null ? fpsNight : fpsDay;
+            if (r != null) b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, r);
+        } catch (Throwable ignored) { }
+    }
+
+    /** change the night setting while the camera runs */
+    public void setNight(int level) {
+        night = Math.max(0, Math.min(2, level));
+        CaptureRequest.Builder b = reqB; CameraCaptureSession s = sess;
+        if (b == null || s == null) return;
+        try {
+            applyNightOn(b);
+            s.setRepeatingRequest(b.build(), null, h);
+        } catch (Throwable ignored) { }
+    }
+
     public NvCam(Activity a, NvHands hh, Listener l) { act = a; hands = hh; lis = l; }
 
     public void start(final SurfaceTexture st) {
@@ -254,6 +280,12 @@ public class NvCam {
             sensorOri = so != null ? so : -1; prevW = prev.getWidth(); prevH = prev.getHeight(); curRot180 = rot180;
             lis.onImageSize(prev.getWidth(), prev.getHeight(), rot180);
 
+            Range<Integer> aer = cc.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE);
+            aeMax = aer != null ? aer.getUpper() : 0;
+            Range<Integer> lowFps = null;                                     // the range that lets the camera slow down most (longer exposure in the dark)
+            Range<Integer>[] rs0 = cc.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
+            if (rs0 != null) for (Range<Integer> r : rs0) if (r.getUpper() >= 24 && r.getUpper() <= 30 && (lowFps == null || r.getLower() < lowFps.getLower())) lowFps = r;
+            fpsNight = lowFps;
             Range<Integer> fps = null, fps30 = null;
             Range<Integer>[] rs = cc.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES);
             if (rs != null) {
@@ -265,6 +297,7 @@ public class NvCam {
             }
             if (fps == null) fps = fps30;
             final Range<Integer> fpsF = fps, fps30F = fps30;
+            fpsDay = fpsF;
             cm.openCamera(id, new CameraDevice.StateCallback() {
                 @Override public void onOpened(CameraDevice camera) {
                     if (!running) { camera.close(); return; }
@@ -280,7 +313,9 @@ public class NvCam {
                                     b.addTarget(reader.getSurface());
                                     b.set(CaptureRequest.CONTROL_AF_MODE, CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_VIDEO);
                                     if (fpsF != null) b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, fpsF);
+                                    reqB = b;
                                     try {
+                                        applyNightOn(b);
                                         s.setRepeatingRequest(b.build(), null, h);
                                     } catch (Throwable hi) {                  // the 60 range was refused: go back to 30
                                         if (fps30F == null || fps30F == fpsF) throw hi;

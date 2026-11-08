@@ -38,6 +38,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile boolean recenter = false;
     public volatile boolean cinema = false;                // dark room: no camera picture, only the windows marked showInCinema
     public volatile float eyeShift = 0.12f;                // VR split view: how far each eye's picture is moved towards the nose (fixes a doubled picture)
+    public volatile float lift = 0f;                      // brightens a dark camera picture (0 = off)
     public volatile float sharpen = 0.5f;                  // camera picture sharpening 0..1
     private boolean shown(Win w) { return w.visible && (!cinema || w.showInCinema); }
     private final float[] mP = new float[16], mM = new float[16];
@@ -114,11 +115,23 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     /** once per picture: carry the last two readings on to this moment, so the view turns smoothly even if the sensor is slower than the screen */
     private float[] rvSm = null;
     private void updateView() {
-        float[] r1 = rotNow, r0 = rotPrev; long t1 = tLast, t0 = tPrev;
+        float[] r1 = rotNow; long t1 = tLast;
         long now = System.nanoTime();
         if (r1 == null) return;
+        // the turning speed is measured over about 40 ms, not between the last two readings: the readings reach the app in bunches, so two neighbours can be
+        // 0.3 ms or 9 ms apart in arrival time, and a speed taken from them jumps about (the windows then sway while you turn)
+        float[] r0 = null; long t0 = 0;
+        synchronized (rhLock) {
+            int n = rhT.length;
+            for (int k = 1; k < n; k++) {
+                int idx = ((rhI - 1 - k) % n + n) % n;
+                if (rhM[idx] == null || rhT[idx] == 0 || rhT[idx] > t1) break;
+                r0 = rhM[idx]; t0 = rhT[idx];
+                if (t1 - rhT[idx] >= 40_000_000L) break;
+            }
+        }
         float span = (t1 - t0) / 1e9f, dt = (now - t1) / 1e9f;
-        if (r0 == null || span < 0.002f || span > 0.1f || dt <= 0f) { rotView = r1; rvSm = r1.clone(); return; }
+        if (r0 == null || span < 0.012f || span > 0.25f || dt <= 0f) { rotView = r1; rvSm = r1.clone(); return; }
         // how fast the head is turning (rad/s): the angle of R1 * R0^T over the time between the two readings
         float tr = 0f;
         for (int r = 0; r < 3; r++) for (int j = 0; j < 3; j++) tr += r1[j * 4 + r] * r0[j * 4 + r];
@@ -126,7 +139,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float speed = ang / span;
         // sticky when still: the sensor's tiny noise must not make the windows tremble, so below a slow turn the view is not carried forward and is eased heavily;
         // from a calm turn upwards it follows at once (no lag while you really move your head)
-        float f = Math.max(0f, Math.min(1f, (speed - 0.008f) / 0.04f));      // (it was 0.04 .. 0.34 rad/s: a slow turn was eased more than a quicker one, and the windows swayed while turning)
+        float f = Math.max(0f, Math.min(1f, (speed - 0.02f) / 0.06f));        // 1 deg/s and slower: held still; 4.6 deg/s and faster: follows at once      // (it was 0.04 .. 0.34 rad/s: a slow turn was eased more than a quicker one, and the windows swayed while turning)
         float k = Math.min(dt, 0.025f) / span * f;             // never look further ahead than 25 ms
         float[] e = new float[9];
         for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) {
@@ -143,7 +156,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         ortho(o);
         float[] pv = rvSm;
         if (pv != null) {
-            float al = 0.30f + 0.70f * f;                      // still: 10 % of the way each picture; turning: all the way
+            float al = 0.08f + 0.92f * f;                       // held still: only 8 % of the way each picture, so hand tremor and sensor noise do not show                      // still: 10 % of the way each picture; turning: all the way
             for (int i = 0; i < 16; i++) o[i] = pv[i] + (o[i] - pv[i]) * al;
             ortho(o);
         }
@@ -584,11 +597,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCam = prog(
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
-            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; varying vec2 pp;" +
+            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; varying vec2 pp;" +
             "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
             " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.); return; }" +
             " vec2 t=q*0.5+0.5; t=mix(t,1.-t,rf); vec2 uv=vec2(t.x,1.-t.y); vec4 c=texture2D(tex,uv);" +
-            " if(amt>0.){ vec4 b=(texture2D(tex,uv+vec2(px.x,0.))+texture2D(tex,uv-vec2(px.x,0.))+texture2D(tex,uv+vec2(0.,px.y))+texture2D(tex,uv-vec2(0.,px.y)))*0.25; c=clamp(c+(c-b)*amt,0.,1.); } gl_FragColor=c; }");
+            " if(amt>0.){ vec4 b=(texture2D(tex,uv+vec2(px.x,0.))+texture2D(tex,uv-vec2(px.x,0.))+texture2D(tex,uv+vec2(0.,px.y))+texture2D(tex,uv-vec2(0.,px.y)))*0.25; c=clamp(c+(c-b)*amt,0.,1.); }" +
+            " if(lift>0.){ c.rgb=min(pow(c.rgb,vec3(1./(1.+lift*0.8)))*(1.+lift*0.5),vec3(1.)); } gl_FragColor=c; }");
         progCol = prog(
             "attribute vec2 p; uniform float ps; void main(){ gl_Position=vec4(p,0.,1.); gl_PointSize=ps; }",
             "precision mediump float; uniform vec4 col; uniform float rnd; void main(){ if (rnd>0.5 && length(gl_PointCoord-0.5)>0.5) discard; gl_FragColor=col; }");
@@ -1687,6 +1701,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform1f(ul(progCam, "rf"), rot180 ? 1f : 0f);
         GLES20.glUniform2f(ul(progCam, "px"), 1f / Math.max(1, imgW), 1f / Math.max(1, imgH));
         GLES20.glUniform1f(ul(progCam, "amt"), sharpen);
+        GLES20.glUniform1f(ul(progCam, "lift"), lift);
         drawQuad(progCam);
         }
         computePanel();
