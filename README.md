@@ -61,4 +61,4 @@ The app is built by GitHub Actions. Push the sources to `app/src/main/java/com/p
 - Shizuku (optional) for floating real apps.
 
 ## License
-Add your licence here before publishing.
+All rights reserved. This project is shared for people to try; please ask before reusing the code.
