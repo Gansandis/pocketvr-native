@@ -174,6 +174,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     /** A floating window in the room: it keeps its place when the phone turns, can float a little, be grabbed by its bar, and be pulled bigger or smaller. */
     public static class Win {
+        public boolean anchor = false;                      // the main menu: new windows prefer to sit right next to it
         public final NvContent c;
         public final float widthM;
         public volatile boolean visible = false, placeReq = false, showInCinema = false;
@@ -328,13 +329,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float opw = o.widthM * o.scale * winZoom, oph = opw * ob.getHeight() / ob.getWidth();
             float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / Math.max(0.3f, o.dist))), ohh = (float) Math.toDegrees(Math.atan(oph / 2f / Math.max(0.3f, o.dist)));
             if (ohw > 45f) continue;                          // something huge (the cinema screen): do not dodge it
-            if (Math.abs(cy - o.yawA) < hw + ohw + 1.0f && Math.abs(cp - o.pitchA) < hh + ohh + 1.5f) return true;
+            if (Math.abs(cy - o.yawA) < hw + ohw * 1.1f + 1.5f && Math.abs(cp - o.pitchA) < hh + ohh * 1.1f + 2.0f) return true;
         }
         return false;
     }
 
     private static final float OPEN_MAXW = 0.85f;               // a window opens at most this wide (metres at the standard distance): not too big for the view
-    private static final float MAX_FRONT_YAW = 75f;              // a new window never goes further round than this: never to the side of you or behind you
+    private static final float MAX_FRONT_YAW = 65f;              // a new window never goes further round than this: never to the side of you or behind you
     private float openScale(Win w) { return Math.min(1f, OPEN_MAXW / Math.max(0.1f, w.widthM)); }
 
     /**
@@ -350,11 +351,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (bm == null || bm.getWidth() <= 0) return;
         float sc = w.wantScale > 0 ? w.wantScale : openScale(w), d = w.placeDist > 0f ? w.placeDist : PANEL_D;
         float pw = w.widthM * sc * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
-        float hw = (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = (float) Math.toDegrees(Math.atan(ph / 2f / d));
+        float hw = 1.1f * (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = 1.1f * (float) Math.toDegrees(Math.atan(ph / 2f / d));
         float baseY = w.offYaw, baseP = w.offPitch;
-        final float gap = 2.0f;                                   // degrees between two windows
+        final float gap = 4.0f;                                   // degrees between two windows (a window seen from the side looks wider than its middle suggests)
         int cap = 4 * wins.size() + 4;
         float[] cy = new float[cap], cp = new float[cap], fy = new float[cap], fp = new float[cap];
+        boolean[] isAnchor = new boolean[cap];
         int nc = 0;
         for (Win o : wins) {
             if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
@@ -362,8 +364,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (ob == null || ob.getWidth() <= 0) continue;
             float opw = o.widthM * o.scale * winZoom, oph = opw * ob.getHeight() / ob.getWidth();
             float od = Math.max(0.3f, o.dist);
-            float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / od)), ohh = (float) Math.toDegrees(Math.atan(oph / 2f / od));
-            if (ohw > 45f || Math.abs(o.yawA) > 100f) continue;       // the cinema screen, or a window that is far round to the side: not one to sit next to
+            float ohw = 1.1f * (float) Math.toDegrees(Math.atan(opw / 2f / od)), ohh = 1.1f * (float) Math.toDegrees(Math.atan(oph / 2f / od));
+            if (ohw > 50f || Math.abs(o.yawA) > 100f) continue;       // the cinema screen, or a window that is far round to the side: not one to sit next to
+            isAnchor[nc] = isAnchor[nc + 1] = isAnchor[nc + 2] = isAnchor[nc + 3] = o.anchor;
             cy[nc] = o.yawA + ohw + hw + gap; cp[nc] = o.pitchA; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // right of it
             cy[nc] = o.yawA - ohw - hw - gap; cp[nc] = o.pitchA; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // left of it
             cy[nc] = o.yawA; cp[nc] = o.pitchA + ohh + hh + gap; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // above it
@@ -375,7 +378,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (Math.abs(cy[i]) > MAX_FRONT_YAW || Math.abs(cp[i]) > 50f) continue;
             if (hitsAt(w, cy[i], cp[i], hw, hh)) continue;
             boolean vert = cy[i] == fy[i];                        // above / below a window: only when beside is not possible (or the window wants to be low, like the keyboard)
-            float c = 0.75f * Math.abs(cy[i]) + 0.25f * Math.abs(cy[i] - baseY) + Math.abs(cp[i] - baseP) + (vert ? 30f : 0f) + (cy[i] < fy[i] ? 0.01f : 0f);     // the right side wins a tie
+            float c = 0.75f * Math.abs(cy[i]) + 0.25f * Math.abs(cy[i] - baseY) + Math.abs(cp[i] - baseP) + (vert ? 30f : 0f) + (isAnchor[i] ? -25f : 0f) + (cy[i] < fy[i] ? 0.01f : 0f);     // the right side wins a tie
             if (c < bestC) { bestC = c; best = i; }
         }
         if (best < 0) {                                           // no free place beside anything: stack above / below the standard place
