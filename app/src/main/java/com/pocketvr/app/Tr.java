@@ -194,6 +194,8 @@ public final class Tr {
         {"วัดได้ ", "Measured "},
         {" ม.", " m"},
         {"หน่วงภาพกล้องตอนเดิน", "Walking camera delay"},
+        {"ระยะมือที่รับ", "Hand range"},
+        {"ล็อกมือผู้ใช้ (ตามมือที่อยู่ในภาพต่อเนื่อง 1 วินาที มือใหม่จากที่อื่นไม่รับ)", "Lock onto my hands (after 1 s in view; new hands from elsewhere are ignored)"},
         {"หยุด", "Pause"},
         {"แอปนี้ไม่ยอมอยู่ในหน้าต่างลอย (เด้งไปจอจริง)", "This app will not stay in a floating window (it jumps to the real screen)"},
         {"ใช้แบบลอยไม่ได้ ลองแอปอื่น หรือกด ⟳", "Floating does not work here. Try another app, or press Refresh"},

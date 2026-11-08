@@ -22,12 +22,16 @@ public class NvHands {
     private HandLandmarker lm;                 // the model asked for (one or two hands)
     private HandLandmarker lm1;                // when two hands are asked for: a one-hand copy, used while only one hand is in view
     private int lastN = 0;
-    private final float[] prevX = new float[2], prevY = new float[2];     // where the hands were last time (wrist), to tell a hand that is being followed from a new one
-    private int prevN = 0;
-    private long prevT = 0;
+    public volatile float maxDistM = 0.85f;                 // hands further from the camera than this (estimated from the size of the palm) are other people's
+    public volatile boolean lockMine = false;               // follow only the hands that have been in view for a second (a new hand from elsewhere is ignored)
+    private boolean locked = false;
+    private long nearSince = 0, lastNear = 0, lastKept = 0;
+    private final float[] lkX = new float[2], lkY = new float[2], lkD = new float[2];
+    private int lkN = 0;
+    public static final float HFOV_DEG = 65f;                // the back camera's picture width angle (a typical phone), used to turn the size of a palm into a distance
+    public static final float NEAR_SHARE = 0.6f;          // a hand has to be at least this big compared with the biggest one in the picture
     public volatile boolean onlyMine = true;               // keep only the hands of the user: a hand that is small in the picture (far away = someone else) is dropped
-    public static final float MIN_HAND = 0.08f;           // smallest wrist-to-middle-knuckle length (as a share of the picture height) that counts as the user's hand
-    /** per hand (same order as the result): how likely it is the user's LEFT hand, 0..1; -1 = not known. The model judges from how the hand looks as if the picture were a mirror, and the back camera does not mirror, so its "Right" is the user's left. */
+        /** per hand (same order as the result): how likely it is the user's LEFT hand, 0..1; -1 = not known. The model judges from how the hand looks as if the picture were a mirror, and the back camera does not mirror, so its "Right" is the user's left. */
     public volatile float[] leftness = new float[]{-1f, -1f};
     private long lastProbe = 0;
     private static final long PROBE_MS = 450;  // how often the two-hand model looks for a second hand while only one is in view
@@ -43,9 +47,9 @@ public class NvHands {
                     .setBaseOptions(bo.build())
                     .setRunningMode(RunningMode.VIDEO)
                     .setNumHands(hands)
-                    .setMinHandDetectionConfidence(0.65f)
-                    .setMinHandPresenceConfidence(0.45f)
-                    .setMinTrackingConfidence(0.45f)
+                    .setMinHandDetectionConfidence(0.5f)
+                    .setMinHandPresenceConfidence(0.3f)
+                    .setMinTrackingConfidence(0.3f)
                     .build();
             lm = HandLandmarker.createFromOptions(ctx, opt);
             lm1 = null; lastN = 0; lastProbe = 0;
@@ -53,7 +57,7 @@ public class NvHands {
                 try {                                                  // which is what made the points late and jerky. So a one-hand copy does the everyday work and the
                     HandLandmarker.HandLandmarkerOptions o1 = HandLandmarker.HandLandmarkerOptions.builder()      // two-hand model only looks for a second hand now and then.
                             .setBaseOptions(bo.build()).setRunningMode(RunningMode.VIDEO).setNumHands(1)
-                            .setMinHandDetectionConfidence(0.65f).setMinHandPresenceConfidence(0.45f).setMinTrackingConfidence(0.45f).build();
+                            .setMinHandDetectionConfidence(0.5f).setMinHandPresenceConfidence(0.3f).setMinTrackingConfidence(0.3f).build();
                     lm1 = HandLandmarker.createFromOptions(ctx, o1);
                 } catch (Throwable t) { lm1 = null; }
             }
@@ -113,21 +117,42 @@ public class NvHands {
                 List<List<NormalizedLandmark>> kept = new java.util.ArrayList<>();
                 float[] lk = new float[all.size()];
                 int nk = 0;
-                long nowT = System.nanoTime() / 1000000L;
-                if (nowT - prevT > 500) prevN = 0;                       // nothing was followed a moment ago: every hand is a new one
-                for (int i = 0; i < sz.length; i++) {
+                final float fw = 0.5f / (float) Math.tan(Math.toRadians(HFOV_DEG / 2.0));
+                float[] dist = new float[sz.length];
+                boolean[] okc = new boolean[sz.length];
+                for (int i = 0; i < sz.length; i++) {              // how far is each hand: a palm is about 8-9 cm wide and 10 cm long, so size in the picture gives the distance
                     List<NormalizedLandmark> hh = all.get(i);
-                    float wx = hh.get(0).x(), wy = hh.get(0).y(), my = 0f;
-                    for (NormalizedLandmark q : hh) my += q.y();
-                    my /= hh.size();
-                    boolean cont = false;                                // a hand that is already being followed (it may go down to the bottom of the picture)
-                    for (int k = 0; k < prevN; k++) if (Math.hypot((wx - prevX[k]) * arr, wy - prevY[k]) < 0.22f) cont = true;
-                    boolean lowNew = !cont && (wy > 0.74f || my > 0.80f);      // a NEW hand that shows up at the very bottom of the picture is a foot, a knee, a bag... (your hands rise into view from the middle)
-                    if (sz[i] >= MIN_HAND && sz[i] >= 0.5f * mx && sc[i] >= 0.75f && !lowNew && plausible(hh, arr)) { kept.add(hh); lk[nk++] = lf[i]; }
+                    float pwN = hh.size() > 17 ? (float) Math.hypot(hh.get(5).x() - hh.get(17).x(), (hh.get(5).y() - hh.get(17).y()) / arr) : 0f;
+                    float plN = hh.size() > 9 ? (float) Math.hypot(hh.get(9).x() - hh.get(0).x(), (hh.get(9).y() - hh.get(0).y()) / arr) : 0f;
+                    float sc2 = Math.max(pwN / 0.085f, plN / 0.10f);
+                    dist[i] = sc2 > 1e-4f ? fw / sc2 : 99f;
+                    okc[i] = dist[i] <= maxDistM && sz[i] >= NEAR_SHARE * mx && plausible(hh, arr);
                 }
-                prevN = 0;
-                for (List<NormalizedLandmark> hh : kept) if (prevN < 2) { prevX[prevN] = hh.get(0).x(); prevY[prevN] = hh.get(0).y(); prevN++; }
-                if (prevN > 0) prevT = nowT;
+                long nowT = System.nanoTime() / 1000000L;
+                boolean[] take = new boolean[sz.length];
+                if (lockMine && locked) {
+                    int keep = 0; float refD = 0f;
+                    for (int i = 0; i < sz.length; i++) {          // a hand that carries on from where a followed hand was
+                        if (!okc[i]) continue;
+                        List<NormalizedLandmark> hh = all.get(i);
+                        for (int k = 0; k < lkN; k++) if (Math.hypot(hh.get(0).x() - lkX[k], (hh.get(0).y() - lkY[k]) / arr) < 0.25f) { take[i] = true; refD = dist[i]; keep++; break; }
+                    }
+                    if (keep > 0 && keep < 2) {                      // a second hand: only one at about the same distance as the first (your two hands are at the same arm's length)
+                        for (int i = 0; i < sz.length && keep < 2; i++) if (okc[i] && !take[i] && Math.abs(dist[i] - refD) < 0.3f * refD) { take[i] = true; keep++; }
+                    }
+                } else {
+                    for (int i = 0; i < sz.length; i++) take[i] = okc[i];
+                }
+                for (int i = 0; i < sz.length; i++) if (take[i]) { kept.add(all.get(i)); lk[nk++] = lf[i]; }
+                if (nk > 0) {                                        // remember where they are; a hand that is followed for a second becomes "mine"
+                    lkN = 0;
+                    for (List<NormalizedLandmark> hh : kept) if (lkN < 2) { lkX[lkN] = hh.get(0).x(); lkY[lkN] = hh.get(0).y(); lkD[lkN] = 0f; lkN++; }
+                    lastKept = nowT;
+                    if (nowT - lastNear > 350) nearSince = nowT;
+                    lastNear = nowT;
+                    if (!locked && nowT - nearSince >= 1000) locked = true;
+                } else if (locked && nowT - lastKept > 1500) { locked = false; nearSince = 0; lkN = 0; }
+                if (!lockMine) locked = false;
                 all = kept;
                 System.arraycopy(lk, 0, lf, 0, nk);
             }
