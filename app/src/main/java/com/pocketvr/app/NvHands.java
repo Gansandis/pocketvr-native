@@ -29,12 +29,13 @@ public class NvHands {
     private final float[] lkX = new float[2], lkY = new float[2], lkD = new float[2];
     private int lkN = 0;
     public static final float HFOV_DEG = 65f;                // the back camera's picture width angle (a typical phone), used to turn the size of a palm into a distance
-    public static final float NEAR_SHARE = 0.6f;          // a hand has to be at least this big compared with the biggest one in the picture
+    public static final float NEAR_SHARE = 0.4f;          // a hand has to be at least this big compared with the biggest one in the picture
     public volatile boolean onlyMine = true;               // keep only the hands of the user: a hand that is small in the picture (far away = someone else) is dropped
         /** per hand (same order as the result): how likely it is the user's LEFT hand, 0..1; -1 = not known. The model judges from how the hand looks as if the picture were a mirror, and the back camera does not mirror, so its "Right" is the user's left. */
     public volatile float[] leftness = new float[]{-1f, -1f};
-    private long lastProbe = 0;
-    private static final long PROBE_MS = 450;  // how often the two-hand model looks for a second hand while only one is in view
+    private long lastProbe = 0, lastTwoSeen = 0;
+    private static final long HOLD_TWO_MS = 1500;
+    private static final long PROBE_MS = 300;  // how often the two-hand model looks for a second hand while only one is in view
     private long lastTs = 0;
     public volatile String error = "";
     public volatile float inferMs = 0;
@@ -76,7 +77,7 @@ public class NvHands {
         float pw = (float) Math.hypot((h.get(5).x() - h.get(17).x()) * ar, h.get(5).y() - h.get(17).y());
         if (pl < 1e-4f) return false;
         float r = pw / pl;
-        return r > 0.35f && r < 1.9f;                             // wide limits: a hand turned or foreshortened still passes
+        return r > 0.25f && r < 2.6f;                             // wide limits: a hand turned, pointing at the camera or foreshortened still passes
     }
 
     public float[] detect(Bitmap bmp, long tsMs) {
@@ -84,8 +85,9 @@ public class NvHands {
         try {
             long wall = System.nanoTime() / 1000000L;
             HandLandmarker use = lm;
-            if (lm1 != null && lastN < 2 && wall - lastProbe < PROBE_MS) use = lm1;      // one hand (or none) in view: the cheap model, unless it is time to look for a second hand
-            else if (lm1 != null && lastN < 2) lastProbe = wall;
+            boolean twoLately = lastN >= 2 || wall - lastTwoSeen < HOLD_TWO_MS;           // two hands were in view a moment ago: stay on the two-hand model (a one-frame miss must not drop the second hand)
+            if (lm1 != null && !twoLately && wall - lastProbe < PROBE_MS) use = lm1;      // one hand (or none) in view: the cheap model, unless it is time to look for a second hand
+            else if (lm1 != null && !twoLately) lastProbe = wall;
             lastTs = Math.max(lastTs + 1, tsMs);
             MPImage img = new BitmapImageBuilder(bmp).build();
             long t0 = System.nanoTime();
@@ -170,6 +172,7 @@ public class NvHands {
             all = sorted;
             int n = Math.min(all.size(), 2);
             lastN = n;
+            if (n >= 2) lastTwoSeen = System.nanoTime() / 1000000L;
             float[] out = new float[1 + n * 63];
             out[0] = n;
             for (int i = 0; i < n; i++) {
