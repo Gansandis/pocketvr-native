@@ -305,7 +305,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     // The window stands like a wall (top edge up, no sideways tilt) and leans a little towards the eyes: below eye level it tilts its face up, above eye level it tilts down,
     // by half the angle it sits above / below (at most TILT_MAX), so it is easy to read without ever lying flat. It turns about its own centre, so it does not move.
-    private static final float TILT_K = 0.5f, TILT_MAX = 30f;
+    private static final float TILT_K = 0.75f, TILT_MAX = 40f;
     private void uprightAboutCentre(Win w) {
         float[] r = w.rot;
         if (r == null) return;
@@ -382,20 +382,45 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
      * flush against the side of one of them (nearest to the standard place, the right side first), so the windows form a row and never lie on top of each other.
      * It then slides out from behind that neighbour into its place (see updateWin). Angles: positive yaw = to the right, positive pitch = up.
      */
+    private float hitPw = 0.5f, hitD = 1.5f;                      // the window being placed: its drawn width (m) and distance (m)
+    // does a window put at yaw / pitch (degrees right / up of straight ahead) land on another window? Measured along the room's horizontal (same as where it is put),
+    // so a window right beside its neighbour is not counted as overlapping it when the head is tilted up or down
     private boolean hitsAt(Win w, float cy, float cp, float hw, float hh) {
+        float[] rv = rotView; float ux = rv[8], uy = rv[9], uz = rv[10];
+        float fx = 0f, fy = 0f, fz = -1f, dp = fz * uz;
+        fx -= dp * ux; fy -= dp * uy; fz -= dp * uz;                // straight ahead, flattened onto the room's horizontal
+        float fl = (float) Math.sqrt(fx * fx + fy * fy + fz * fz);
+        boolean flat = fl > 0.2f;
+        float hx = 0f, hy = 0f, hz = 0f;
+        if (flat) { fx /= fl; fy /= fl; fz /= fl; hx = uy * fz - uz * fy; hy = uz * fx - ux * fz; hz = ux * fy - uy * fx; }
+        float[] nc = viewDir(cy, cp);
+        float elC = (float) Math.asin(Math.max(-1f, Math.min(1f, nc[0] * ux + nc[1] * uy + nc[2] * uz)));
+        float azC = flat ? (float) Math.atan2(nc[0] * hx + nc[1] * hy + nc[2] * hz, nc[0] * fx + nc[1] * fy + nc[2] * fz) : 0f;
+        float hwC = flat ? (float) Math.toDegrees(Math.atan(hitPw / 2f / (hitD * Math.max(0.3f, (float) Math.cos(elC))))) : hw;
         for (Win o : wins) {
             if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
             android.graphics.Bitmap ob = o.c.bitmap();
             if (ob == null || ob.getWidth() <= 0) continue;
             float opw0 = o.widthM * o.scale * winZoom, oph = opw0 * ob.getHeight() / ob.getWidth(), opw = opw0 * o.c.visFrac();
-            float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / Math.max(0.3f, o.dist))), ohh = (float) Math.toDegrees(Math.atan(oph / 2f / Math.max(0.3f, o.dist)));
-            if (ohw > 45f) continue;                          // something huge (the cinema screen): do not dodge it
-            if (Math.abs(cy - o.yawA) < hw + ohw * 1.04f + 0.5f && Math.abs(cp - o.pitchA) < hh + ohh * 1.04f + 0.5f) return true;
+            float od = Math.max(0.3f, o.dist);
+            float ohh = (float) Math.toDegrees(Math.atan(oph / 2f / od));
+            float ohwView = (float) Math.toDegrees(Math.atan(opw / 2f / od));
+            if (ohwView > 45f) continue;                       // something huge (the cinema screen): do not dodge it
+            if (!flat) {
+                if (Math.abs(cy - o.yawA) < hw + ohwView + 0.3f && Math.abs(cp - o.pitchA) < hh + ohh + 0.3f) return true;
+                continue;
+            }
+            float[] no = viewDir(o.yawA, o.pitchA);
+            float elO = (float) Math.asin(Math.max(-1f, Math.min(1f, no[0] * ux + no[1] * uy + no[2] * uz)));
+            float azO = (float) Math.atan2(no[0] * hx + no[1] * hy + no[2] * hz, no[0] * fx + no[1] * fy + no[2] * fz);
+            float dAz = Math.abs(azC - azO); if (dAz > Math.PI) dAz = (float) (2 * Math.PI) - dAz;
+            float ohwAz = (float) Math.toDegrees(Math.atan(opw / 2f / (od * Math.max(0.3f, (float) Math.cos(elO)))));
+            float dEl = (float) Math.toDegrees(Math.abs(elC - elO));
+            if (Math.toDegrees(dAz) < hwC + ohwAz + 0.3f && dEl < hh + ohh + 0.3f) return true;
         }
         return false;
     }
 
-    private static final float OPEN_MAXW = 0.85f;               // a window opens at most this wide (metres at the standard distance): not too big for the view
     private static final float MAX_FRONT_YAW = 65f;              // a new window never goes further round than this: never to the side of you or behind you
     private float openScale(Win w) { return Math.min(1f, OPEN_MAXW / Math.max(0.1f, w.widthM)); }
 
@@ -405,6 +430,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
      * so the group grows outwards from the middle. It never goes round to the side or behind you, and it slides out from behind its neighbour (see updateWin).
      * Angles: positive yaw = to the right, positive pitch = up.
      */
+    // direction (unit vector in the phone's view) of a spot yaw / pitch degrees to the right / up of straight ahead
+    private static float[] viewDir(float yawDeg, float pitchDeg) {
+        float x = (float) Math.tan(Math.toRadians(yawDeg)), y = (float) Math.tan(Math.toRadians(pitchDeg)), z = -1f;
+        float l = (float) Math.sqrt(x * x + y * y + 1f);
+        return new float[]{x / l, y / l, z / l};
+    }
+    // turn a direction about the room's up axis (k = up, in view coords) by deg degrees (positive = to the left seen from above)
+    private static float[] turnAboutUp(float[] n, float deg, float kx, float ky, float kz) {
+        float c = (float) Math.cos(Math.toRadians(deg)), s = (float) Math.sin(Math.toRadians(deg));
+        float dot = kx * n[0] + ky * n[1] + kz * n[2];
+        float cx = ky * n[2] - kz * n[1], cy = kz * n[0] - kx * n[2], cz = kx * n[1] - ky * n[0];
+        return new float[]{n[0] * c + cx * s + kx * dot * (1 - c), n[1] * c + cy * s + ky * dot * (1 - c), n[2] * c + cz * s + kz * dot * (1 - c)};
+    }
+
     private void avoidOverlap(Win w) {
         w.slideDeg = 0f; w.slideDegP = 0f;
         if (w.hasSaved) return;
@@ -412,9 +451,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (bm == null || bm.getWidth() <= 0) return;
         float sc = w.wantScale > 0 ? w.wantScale : openScale(w), d = w.placeDist > 0f ? w.placeDist : PANEL_D;
         float pw = w.widthM * sc * winZoom * w.c.visFrac(), ph = w.widthM * sc * winZoom * bm.getHeight() / bm.getWidth();
-        float hw = 1.04f * (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = 1.04f * (float) Math.toDegrees(Math.atan(ph / 2f / d));
+        float hw = (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = (float) Math.toDegrees(Math.atan(ph / 2f / d));
         float baseY = w.offYaw, baseP = w.offPitch;
-        final float gap = 2.0f;                                   // degrees between two windows (a window seen from the side looks wider than its middle suggests)
+        hitPw = pw; hitD = d;
+        float[] rv = rotView; float wux = rv[8], wuy = rv[9], wuz = rv[10];            // the room's up, seen from the phone
+        final float gap = 0.8f;                                   // degrees between two windows (a window seen from the side looks wider than its middle suggests)
         int cap = 4 * wins.size() + 4;
         float[] cy = new float[cap], cp = new float[cap], fy = new float[cap], fp = new float[cap];
         boolean[] isAnchor = new boolean[cap];
@@ -425,11 +466,21 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (ob == null || ob.getWidth() <= 0) continue;
             float opw0 = o.widthM * o.scale * winZoom, oph = opw0 * ob.getHeight() / ob.getWidth(), opw = opw0 * o.c.visFrac();
             float od = Math.max(0.3f, o.dist);
-            float ohw = 1.04f * (float) Math.toDegrees(Math.atan(opw / 2f / od)), ohh = 1.04f * (float) Math.toDegrees(Math.atan(oph / 2f / od));
+            float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / od)), ohh = (float) Math.toDegrees(Math.atan(oph / 2f / od));
             if (ohw > 50f || Math.abs(o.yawA) > 100f) continue;       // the cinema screen, or a window that is far round to the side: not one to sit next to
             isAnchor[nc] = isAnchor[nc + 1] = isAnchor[nc + 2] = isAnchor[nc + 3] = o.anchor;
-            cy[nc] = o.yawA + ohw + hw + gap; cp[nc] = o.pitchA; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // right of it
-            cy[nc] = o.yawA - ohw - hw - gap; cp[nc] = o.pitchA; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // left of it
+            // beside it: along the room's horizontal (the same height in the room), not along the phone's own left-right, so the two stay edge to edge when the head is tilted
+            float[] nv = viewDir(o.yawA, o.pitchA);
+            float sinEl = nv[0] * wux + nv[1] * wuy + nv[2] * wuz;
+            float cosEl = Math.max(0.3f, (float) Math.sqrt(Math.max(0f, 1f - sinEl * sinEl)));
+            float wo = (float) Math.toDegrees(Math.atan(opw / 2f / (od * cosEl))), wn = (float) Math.toDegrees(Math.atan(pw / 2f / (d * cosEl)));
+            float dA = wo + wn + gap;
+            for (int sd = 1; sd >= -1; sd -= 2) {
+                float[] q = turnAboutUp(nv, -sd * dA, wux, wuy, wuz);
+                cy[nc] = q[2] < -0.2f ? (float) Math.toDegrees(Math.atan2(q[0], -q[2])) : 999f;
+                cp[nc] = q[2] < -0.2f ? (float) Math.toDegrees(Math.atan2(q[1], -q[2])) : 0f;
+                fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;                                                                  // sd=+1: right of it, sd=-1: left of it
+            }
             cy[nc] = o.yawA; cp[nc] = o.pitchA + ohh + hh + gap; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // above it
             cy[nc] = o.yawA; cp[nc] = o.pitchA - ohh - hh - gap; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // below it
         }
