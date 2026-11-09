@@ -139,7 +139,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float speed = ang / span;
         // sticky when still: the sensor's tiny noise must not make the windows tremble, so below a slow turn the view is not carried forward and is eased heavily;
         // from a calm turn upwards it follows at once (no lag while you really move your head)
-        float f = Math.max(0f, Math.min(1f, (speed - 0.02f) / 0.06f));        // 1 deg/s and slower: held still; 4.6 deg/s and faster: follows at once      // (it was 0.04 .. 0.34 rad/s: a slow turn was eased more than a quicker one, and the windows swayed while turning)
+        float f = Math.max(0f, Math.min(1f, (speed - 0.035f) / 0.07f));        // 1 deg/s and slower: held still; 4.6 deg/s and faster: follows at once      // (it was 0.04 .. 0.34 rad/s: a slow turn was eased more than a quicker one, and the windows swayed while turning)
         float k = Math.min(dt, 0.025f) / span * f;             // never look further ahead than 25 ms
         float[] e = new float[9];
         for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) {
@@ -156,7 +156,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         ortho(o);
         float[] pv = rvSm;
         if (pv != null) {
-            float al = 0.08f + 0.92f * f;                       // held still: only 8 % of the way each picture, so hand tremor and sensor noise do not show                      // still: 10 % of the way each picture; turning: all the way
+            float tq = 0f;
+            for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) tq += o[c * 4 + r] * pv[c * 4 + r];
+            float dev = (float) Math.acos(Math.max(-1f, Math.min(1f, (tq - 1f) * 0.5f)));     // how far the new turn is from what is shown now (rad)
+            float al = 0.05f + 0.95f * f;
+            if (f < 0.5f && dev < 0.0022f) al = 0f;                    // still and less than ~0.13 deg off: it does not move at all (no trembling)
+            else if (f < 0.5f) al = Math.max(al, 0.05f * Math.min(1f, dev / 0.01f));
+                                  // held still: only 8 % of the way each picture, so hand tremor and sensor noise do not show                      // still: 10 % of the way each picture; turning: all the way
             for (int i = 0; i < 16; i++) o[i] = pv[i] + (o[i] - pv[i]) * al;
             ortho(o);
         }
@@ -387,11 +393,16 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     public volatile boolean neck = false;                   // the eyes sit in front of the neck: turning the head also moves the eyes a little (gives depth to the windows)
-    private float mux = 0, muy = 0, muz = 0;
+    private float mux = 0, muy = 0, muz = 0, hpx = 0, hpy = 0, hpz = 0;
     private void smoothUser() {
         NvMotion mo = motion;
-        if (mo != null && mo.enabled) { mux += (mo.px - mux) * 0.18f; muy += (mo.py - muy) * 0.18f; muz += (mo.pz - muz) * 0.18f; }
-        else { mux = muy = muz = 0f; }
+        if (mo != null && mo.enabled) {
+            // dead zone: the held position only follows when the tracked position is more than 2.5 cm away from it, so small jitter in the tracking never moves the windows
+            float dx = mo.px - hpx, dy = mo.py - hpy, dz = mo.pz - hpz, dl = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
+            if (dl > 0.025f) { float g = (1f - 0.025f / dl) * 0.2f; hpx += dx * g; hpy += dy * g; hpz += dz * g; }
+            mux += (hpx - mux) * 0.12f; muy += (hpy - muy) * 0.12f; muz += (hpz - muz) * 0.12f;
+        }
+        else { mux = muy = muz = hpx = hpy = hpz = 0f; }
         float nx = 0f, ny = 0f, nz = 0f;
         float[] rn = rotView;
         if (neck && rn != null) {
