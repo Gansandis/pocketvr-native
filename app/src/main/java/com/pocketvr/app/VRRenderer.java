@@ -421,6 +421,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         return false;
     }
 
+    private static final float OPEN_MAXW = 0.85f;               // a window opens at most this wide (metres at the standard distance): not too big for the view
     private static final float MAX_FRONT_YAW = 65f;              // a new window never goes further round than this: never to the side of you or behind you
     private float openScale(Win w) { return Math.min(1f, OPEN_MAXW / Math.max(0.1f, w.widthM)); }
 
