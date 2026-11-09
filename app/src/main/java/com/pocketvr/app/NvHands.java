@@ -34,8 +34,8 @@ public class NvHands {
         /** per hand (same order as the result): how likely it is the user's LEFT hand, 0..1; -1 = not known. The model judges from how the hand looks as if the picture were a mirror, and the back camera does not mirror, so its "Right" is the user's left. */
     public volatile float[] leftness = new float[]{-1f, -1f};
     private long lastProbe = 0, lastTwoSeen = 0;
-    private static final long HOLD_TWO_MS = 1500;
-    private static final long PROBE_MS = 300;  // how often the two-hand model looks for a second hand while only one is in view
+    private static final long HOLD_TWO_MS = 250;
+    private static final long PROBE_MS = 450;  // how often the two-hand model looks for a second hand while only one is in view
     private long lastTs = 0;
     public volatile String error = "";
     public volatile float inferMs = 0;
