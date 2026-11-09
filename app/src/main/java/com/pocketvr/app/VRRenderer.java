@@ -409,7 +409,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
      */
     public volatile String placeDbg = "";                          // what the last placement did (shown in the HUD, to find out why a window did not land beside another)
     private float rowUx = 0f, rowUy = 1f, rowUz = 0f;                // the 'up' of the row of windows being built (the main menu's own up, in the phone's view): beside = along its own horizontal
-    private float hitPw = 0.5f, hitD = 1.5f;                      // the window being placed: its drawn width (m) and distance (m)
+    private float hitPw = 0.5f, hitPh = 0.4f, hitD = 1.5f;
+    // a window tilted towards the eyes has its near edge closer than its middle, so it looks wider there: the distance (horizontal, m) of that near edge
+    private static float nearD(float dh, float halfH, float sinTilt) { return Math.max(0.3f * dh, dh - halfH * Math.abs(sinTilt)); }
+    private static float tiltSinOfEl(float elDeg) { return (float) Math.sin(Math.toRadians(Math.min(TILT_MAX, Math.abs(TILT_K * elDeg)))); }                      // the window being placed: its drawn width (m) and distance (m)
     // does a window put in the direction n (unit vector in the phone's view) land on another window? Measured along the row's horizontal (the same as where it is put),
     // so a window right beside its neighbour is not counted as overlapping it when the head is tilted up or down
     private boolean hitsAt(Win w, float[] nc, float hw, float hh) {
@@ -422,7 +425,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (flat) { fx /= fl; fy /= fl; fz /= fl; hx = uy * fz - uz * fy; hy = uz * fx - ux * fz; hz = ux * fy - uy * fx; }
         float elC = (float) Math.asin(Math.max(-1f, Math.min(1f, nc[0] * ux + nc[1] * uy + nc[2] * uz)));
         float azC = flat ? (float) Math.atan2(nc[0] * hx + nc[1] * hy + nc[2] * hz, nc[0] * fx + nc[1] * fy + nc[2] * fz) : 0f;
-        float hwC = flat ? (float) Math.toDegrees(Math.atan(hitPw / 2f / (hitD * Math.max(0.3f, (float) Math.cos(elC))))) : hw;
+        float hwC = flat ? (float) Math.toDegrees(Math.atan(hitPw / 2f / nearD(hitD * Math.max(0.3f, (float) Math.cos(elC)), hitPh / 2f, tiltSinOfEl((float) Math.toDegrees(elC))))) : hw;
         float cyaw = (float) Math.toDegrees(Math.atan2(nc[0], -nc[2])), cpit = (float) Math.toDegrees(Math.asin(Math.max(-1f, Math.min(1f, nc[1]))));
         for (Win o : wins) {
             if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
@@ -443,7 +446,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float elO = (float) Math.asin(Math.max(-1f, Math.min(1f, no[0] * ux + no[1] * uy + no[2] * uz)));
             float azO = (float) Math.atan2(no[0] * hx + no[1] * hy + no[2] * hz, no[0] * fx + no[1] * fy + no[2] * fz);
             float dAz = Math.abs(azC - azO); if (dAz > Math.PI) dAz = (float) (2 * Math.PI) - dAz;
-            float ohwAz = (float) Math.toDegrees(Math.atan(opw / 2f / (od * Math.max(0.3f, (float) Math.cos(elO)))));
+            float ohwAz = (float) Math.toDegrees(Math.atan(opw / 2f / nearD(od * Math.max(0.3f, (float) Math.cos(elO)), oph / 2f, o.rot[10])));
             float dEl = (float) Math.toDegrees(Math.abs(elC - elO));
             if (Math.toDegrees(dAz) < hwC + ohwAz + 0.3f && dEl < hh + ohh + 0.3f) return true;
         }
@@ -503,7 +506,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float pw = w.widthM * sc * winZoom * w.c.visFrac(), ph = w.widthM * sc * winZoom * bm.getHeight() / bm.getWidth();
         float hw = (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = (float) Math.toDegrees(Math.atan(ph / 2f / d));
         float baseY = w.offYaw, baseP = w.offPitch;
-        hitPw = pw; hitD = d;
+        hitPw = pw; hitPh = ph; hitD = d;
         float[] rv = rotView; float wux = rv[8], wuy = rv[9], wuz = rv[10];            // the room's up, seen from the phone
         rowUx = wux; rowUy = wuy; rowUz = wuz;
         for (Win an : wins) if (an != w && an.anchor && shown(an) && an.rot != null && !an.placeReq) { float[] ua = upInView(an, rv); rowUx = ua[0]; rowUy = ua[1]; rowUz = ua[2]; break; }
@@ -528,7 +531,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float[] kr = {rv[0] * kx + rv[4] * ky + rv[8] * kz, rv[1] * kx + rv[5] * ky + rv[9] * kz, rv[2] * kx + rv[6] * ky + rv[10] * kz};
             float sinEl = nv[0] * ko[0] + nv[1] * ko[1] + nv[2] * ko[2];
             float cosEl = Math.max(0.3f, (float) Math.sqrt(Math.max(0f, 1f - sinEl * sinEl)));
-            float wo = (float) Math.toDegrees(Math.atan(opw / 2f / (od * cosEl))), wn = (float) Math.toDegrees(Math.atan(pw / 2f / (d * cosEl)));
+            float elNb = asinDeg(nv[0] * wux + nv[1] * wuy + nv[2] * wuz);                                  // the neighbour's height above eye level: both windows lean by about this much
+            float wo = (float) Math.toDegrees(Math.atan(opw / 2f / nearD(od * cosEl, oph / 2f, o.rot[10])));
+            float wn = (float) Math.toDegrees(Math.atan(pw / 2f / nearD(d * cosEl, ph / 2f, tiltSinOfEl(elNb))));
             float dA = wo + wn + gap, ev = ohh + hh + gap;
             for (int v4 = 0; v4 < 4; v4++) {
                 float[] q; float slY = 0f, slP = 0f;
