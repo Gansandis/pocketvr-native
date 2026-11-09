@@ -289,6 +289,35 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.rot = tC.clone();
     }
 
+    // put a window at the exact place yaw/pitch degrees (right / up) from where the phone looks, facing the viewer.
+    // The neighbours' places (yawA / pitchA) are measured this way, so the new window lands right beside them even when the head is tilted up or down
+    // (a turn about the world's vertical would put it on a slanted circle and it would not line up with its neighbour)
+    private void aimWin(Win w, float yawDeg, float pitchDeg) {
+        float dx = (float) Math.tan(Math.toRadians(yawDeg)), dy = (float) Math.tan(Math.toRadians(pitchDeg)), dz = -1f;
+        float l = (float) Math.sqrt(dx * dx + dy * dy + 1f);
+        dx /= l; dy /= l; dz /= l;
+        float ang = (float) Math.toDegrees(Math.acos(Math.max(-1f, Math.min(1f, -dz))));
+        if (ang < 0.01f || Float.isNaN(ang)) return;
+        android.opengl.Matrix.setRotateM(tE, 0, ang, dy, -dx, 0f);   // the smallest turn that takes straight ahead (0,0,-1) to that direction
+        android.opengl.Matrix.multiplyMM(tF, 0, w.rot, 0, tE, 0);
+        w.rot = tF.clone();
+    }
+
+    // make the window stand straight up like a wall (its face is vertical, its top edge points up), turning about its own centre so it does not move
+    // (when you look down it would otherwise lean back like something lying on the floor; looking up it would lean forward)
+    private static void uprightAboutCentre(Win w) {
+        float[] r = w.rot;
+        if (r == null) return;
+        float bx = r[8], by = r[9], bz = r[10];
+        float hl = (float) Math.sqrt(bx * bx + by * by);
+        if (hl < 0.2f) { levelRoll(r); return; }                       // facing almost straight up or down: only the sideways tilt is taken out
+        float nx = bx / hl, ny = by / hl;
+        w.wx += w.dist * (nx - bx); w.wy += w.dist * (ny - by); w.wz += w.dist * (0f - bz);     // the centre stays where it is, so the origin moves with the turn
+        r[0] = -ny; r[1] = nx; r[2] = 0f;
+        r[4] = 0f;  r[5] = 0f; r[6] = 1f;
+        r[8] = nx;  r[9] = ny; r[10] = 0f;
+    }
+
     // remove the sideways tilt (roll) from a window turn: keep where it faces, make its top edge point up (world up = +Z of the rotation sensor)
     private static void levelRoll(float[] r) {
         float bx = r[8], by = r[9], bz = r[10];                       // the window's back axis in the room
@@ -352,10 +381,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
             android.graphics.Bitmap ob = o.c.bitmap();
             if (ob == null || ob.getWidth() <= 0) continue;
-            float opw = o.widthM * o.scale * winZoom, oph = opw * ob.getHeight() / ob.getWidth();
+            float opw0 = o.widthM * o.scale * winZoom, oph = opw0 * ob.getHeight() / ob.getWidth(), opw = opw0 * o.c.visFrac();
             float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / Math.max(0.3f, o.dist))), ohh = (float) Math.toDegrees(Math.atan(oph / 2f / Math.max(0.3f, o.dist)));
             if (ohw > 45f) continue;                          // something huge (the cinema screen): do not dodge it
-            if (Math.abs(cy - o.yawA) < hw + ohw * 1.1f + 1.5f && Math.abs(cp - o.pitchA) < hh + ohh * 1.1f + 2.0f) return true;
+            if (Math.abs(cy - o.yawA) < hw + ohw * 1.04f + 0.5f && Math.abs(cp - o.pitchA) < hh + ohh * 1.04f + 0.5f) return true;
         }
         return false;
     }
@@ -376,10 +405,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         android.graphics.Bitmap bm = w.c.bitmap();
         if (bm == null || bm.getWidth() <= 0) return;
         float sc = w.wantScale > 0 ? w.wantScale : openScale(w), d = w.placeDist > 0f ? w.placeDist : PANEL_D;
-        float pw = w.widthM * sc * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
-        float hw = 1.1f * (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = 1.1f * (float) Math.toDegrees(Math.atan(ph / 2f / d));
+        float pw = w.widthM * sc * winZoom * w.c.visFrac(), ph = w.widthM * sc * winZoom * bm.getHeight() / bm.getWidth();
+        float hw = 1.04f * (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = 1.04f * (float) Math.toDegrees(Math.atan(ph / 2f / d));
         float baseY = w.offYaw, baseP = w.offPitch;
-        final float gap = 4.0f;                                   // degrees between two windows (a window seen from the side looks wider than its middle suggests)
+        final float gap = 2.0f;                                   // degrees between two windows (a window seen from the side looks wider than its middle suggests)
         int cap = 4 * wins.size() + 4;
         float[] cy = new float[cap], cp = new float[cap], fy = new float[cap], fp = new float[cap];
         boolean[] isAnchor = new boolean[cap];
@@ -388,9 +417,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
             android.graphics.Bitmap ob = o.c.bitmap();
             if (ob == null || ob.getWidth() <= 0) continue;
-            float opw = o.widthM * o.scale * winZoom, oph = opw * ob.getHeight() / ob.getWidth();
+            float opw0 = o.widthM * o.scale * winZoom, oph = opw0 * ob.getHeight() / ob.getWidth(), opw = opw0 * o.c.visFrac();
             float od = Math.max(0.3f, o.dist);
-            float ohw = 1.1f * (float) Math.toDegrees(Math.atan(opw / 2f / od)), ohh = 1.1f * (float) Math.toDegrees(Math.atan(oph / 2f / od));
+            float ohw = 1.04f * (float) Math.toDegrees(Math.atan(opw / 2f / od)), ohh = 1.04f * (float) Math.toDegrees(Math.atan(oph / 2f / od));
             if (ohw > 50f || Math.abs(o.yawA) > 100f) continue;       // the cinema screen, or a window that is far round to the side: not one to sit next to
             isAnchor[nc] = isAnchor[nc + 1] = isAnchor[nc + 2] = isAnchor[nc + 3] = o.anchor;
             cy[nc] = o.yawA + ohw + hw + gap; cp[nc] = o.pitchA; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // right of it
@@ -432,11 +461,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             else w.animOn = false;
             android.opengl.Matrix.transposeM(tA, 0, rn, 0);
             w.rot = tA.clone();
-            levelRoll(w.rot);                                          // stand upright in the room, whatever the phone's tilt was when it was put up
-            if (w.offYaw != 0f || w.offPitch != 0f) turnWin(w, rn, -w.offYaw, w.offPitch);
+            if (w.offYaw != 0f || w.offPitch != 0f) aimWin(w, w.offYaw, w.offPitch);
             w.scale = w.wantScale > 0 ? w.wantScale : openScale(w);
             w.dist = w.placeDist > 0f ? w.placeDist : PANEL_D;
             w.wx = ux; w.wy = uy; w.wz = uz;
+            uprightAboutCentre(w);                                     // a wall standing straight up in the room, wherever the head was pitched when it was put up
             w.placeReq = false;
         }
         // where the window centre is now, seen from the phone: angle to the right and angle upwards
@@ -451,6 +480,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             th = Math.max(-7f, Math.min(7f, th));              // at most a few degrees per frame, so nothing can snap away
             ph = Math.max(-7f, Math.min(7f, ph));
             if (th != 0f || ph != 0f) turnWin(w, rn, th, ph);
+            uprightAboutCentre(w);                             // and it stays standing straight while it is carried up or down
         }
         // keep it upright: undo any tilt that piled up while it was being moved (turn about its own centre, so it does not slide)
         android.opengl.Matrix.multiplyMM(tA, 0, rn, 0, w.rot, 0);
