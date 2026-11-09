@@ -303,19 +303,25 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.rot = tF.clone();
     }
 
-    // make the window stand straight up like a wall (its face is vertical, its top edge points up), turning about its own centre so it does not move
-    // (when you look down it would otherwise lean back like something lying on the floor; looking up it would lean forward)
-    private static void uprightAboutCentre(Win w) {
+    // The window stands like a wall (top edge up, no sideways tilt) and leans a little towards the eyes: below eye level it tilts its face up, above eye level it tilts down,
+    // by half the angle it sits above / below (at most TILT_MAX), so it is easy to read without ever lying flat. It turns about its own centre, so it does not move.
+    private static final float TILT_K = 0.5f, TILT_MAX = 30f;
+    private void uprightAboutCentre(Win w) {
         float[] r = w.rot;
         if (r == null) return;
         float bx = r[8], by = r[9], bz = r[10];
         float hl = (float) Math.sqrt(bx * bx + by * by);
         if (hl < 0.2f) { levelRoll(r); return; }                       // facing almost straight up or down: only the sideways tilt is taken out
         float nx = bx / hl, ny = by / hl;
-        w.wx += w.dist * (nx - bx); w.wy += w.dist * (ny - by); w.wz += w.dist * (0f - bz);     // the centre stays where it is, so the origin moves with the turn
+        float cx = w.wx - bx * w.dist - sux, cy = w.wy - by * w.dist - suy, cz = w.wz - bz * w.dist - suz;     // where its middle is, seen from the eyes
+        float el = (float) Math.toDegrees(Math.atan2(cz, Math.sqrt(cx * cx + cy * cy)));                      // + above eye level, - below
+        float t = Math.max(-TILT_MAX, Math.min(TILT_MAX, -TILT_K * el));                                       // + = face tilted up
+        float ct = (float) Math.cos(Math.toRadians(t)), st = (float) Math.sin(Math.toRadians(t));
+        float mx = nx * ct, my = ny * ct, mz = st;                                                             // the new back axis (points to the eyes)
+        w.wx += w.dist * (mx - bx); w.wy += w.dist * (my - by); w.wz += w.dist * (mz - bz);                    // the middle stays where it is: the origin moves with the turn
         r[0] = -ny; r[1] = nx; r[2] = 0f;
-        r[4] = 0f;  r[5] = 0f; r[6] = 1f;
-        r[8] = nx;  r[9] = ny; r[10] = 0f;
+        r[4] = -st * nx; r[5] = -st * ny; r[6] = ct;
+        r[8] = mx; r[9] = my; r[10] = mz;
     }
 
     // remove the sideways tilt (roll) from a window turn: keep where it faces, make its top edge point up (world up = +Z of the rotation sensor)
