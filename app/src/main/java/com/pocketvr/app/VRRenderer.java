@@ -403,6 +403,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
      * flush against the side of one of them (nearest to the standard place, the right side first), so the windows form a row and never lie on top of each other.
      * It then slides out from behind that neighbour into its place (see updateWin). Angles: positive yaw = to the right, positive pitch = up.
      */
+    public volatile String placeDbg = "";                          // what the last placement did (shown in the HUD, to find out why a window did not land beside another)
     private float hitPw = 0.5f, hitD = 1.5f;                      // the window being placed: its drawn width (m) and distance (m)
     // does a window put at yaw / pitch (degrees right / up of straight ahead) land on another window? Measured along the room's horizontal (same as where it is put),
     // so a window right beside its neighbour is not counted as overlapping it when the head is tilted up or down
@@ -470,7 +471,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.slideDeg = 0f; w.slideDegP = 0f;
         if (w.hasSaved) return;
         android.graphics.Bitmap bm = w.c.bitmap();
-        if (bm == null || bm.getWidth() <= 0) return;
+        if (bm == null || bm.getWidth() <= 0) { placeDbg = "place: no picture yet"; return; }
         float sc = w.wantScale > 0 ? w.wantScale : openScale(w), d = w.placeDist > 0f ? w.placeDist : PANEL_D;
         float pw = w.widthM * sc * winZoom * w.c.visFrac(), ph = w.widthM * sc * winZoom * bm.getHeight() / bm.getWidth();
         float hw = (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = (float) Math.toDegrees(Math.atan(ph / 2f / d));
@@ -506,7 +507,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             cy[nc] = o.yawA; cp[nc] = o.pitchA + ohh + hh + gap; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // above it
             cy[nc] = o.yawA; cp[nc] = o.pitchA - ohh - hh - gap; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // below it
         }
-        if (nc == 0) return;                                      // nothing in front to sit next to: the standard place
+        if (nc == 0) { placeDbg = "place: nothing to sit next to (menu shown=" + (menuWin != null && shown(menuWin)) + ")"; return; }                                      // nothing in front to sit next to: the standard place
         int best = -1; float bestC = 1e9f;
         boolean anchorOnly = false;                                // a free place next to the main menu beats every other place
         for (int i = 0; i < nc; i++) if (isAnchor[i] && Math.abs(cy[i]) <= MAX_FRONT_YAW && Math.abs(cp[i]) <= 50f && !hitsAt(w, cy[i], cp[i], hw, hh)) { anchorOnly = true; break; }
@@ -519,12 +520,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (c < bestC) { bestC = c; best = i; }
         }
         if (best < 0) {                                           // no free place beside anything: stack above / below the standard place
+            placeDbg = "place: no free spot beside anything (" + nc + " tried)";
             for (int k = 1; k <= 4; k++) for (int sg = -1; sg <= 1; sg += 2) {
                 float p = baseP + sg * k * (hh * 2f + gap);
                 if (Math.abs(p) <= 50f && !hitsAt(w, baseY, p, hw, hh)) { w.offPitch = p; return; }
             }
             return;
         }
+        placeDbg = String.format(java.util.Locale.US, "place: %d spots, menu-first=%b, pick %d at yaw %.0f pitch %.0f (half-width %.0f deg)", nc, anchorOnly, best, cy[best], cp[best], hw);
         w.offYaw = cy[best]; w.offPitch = cp[best];
         w.slideDeg = fy[best] - cy[best];                         // it starts at the middle of its neighbour and slides out to its place
         w.slideDegP = fp[best] - cp[best];
