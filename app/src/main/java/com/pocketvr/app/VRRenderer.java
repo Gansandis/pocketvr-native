@@ -487,6 +487,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void avoidOverlap(Win w) {
         w.slideDeg = 0f; w.slideDegP = 0f; w.aimV = null;
         if (w.hasSaved) return;
+        if (w.anchor) return;                                     // the main menu always opens straight in front of you, other windows make room by sitting beside it
         if (w.shrunk) { w.wantScale = 0f; w.shrunk = false; }
         android.graphics.Bitmap bm = w.c.bitmap();
         if (bm == null || bm.getWidth() <= 0) { placeDbg = "place: no picture yet"; return; }
@@ -546,10 +547,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (nc == 0) { placeDbg = "place: nothing to sit next to (menu shown=" + (menuWin != null && shown(menuWin)) + ")"; return true; }      // nothing to sit next to: the standard place
         int best = -1; float bestC = 1e9f;
         boolean anchorOnly = false;                                // a free place next to the main menu beats every other place
-        for (int i = 0; i < nc; i++) if (isAnchor[i] && Math.abs(cy[i]) <= maxYaw && Math.abs(cp[i]) <= 50f && !hitsAt(w, cv[i], hw, hh)) { anchorOnly = true; break; }
+        for (int i = 0; i < nc; i++) if (isAnchor[i] && (stack || !isVert[i]) && Math.abs(cy[i]) <= maxYaw && Math.abs(cp[i]) <= 50f && !hitsAt(w, cv[i], hw, hh)) { anchorOnly = true; break; }
         for (int i = 0; i < nc; i++) {
             if (anchorOnly && !isAnchor[i]) continue;
             if (Math.abs(cy[i]) > maxYaw || Math.abs(cp[i]) > 50f) continue;
+            if (isVert[i] && !stack) continue;                        // above / below only as the very last resort: windows must line up beside each other
             if (hitsAt(w, cv[i], hw, hh)) continue;
             float c = 0.75f * Math.abs(cy[i]) + 0.25f * Math.abs(cy[i] - baseY) + Math.abs(cp[i] - baseP) + (isVert[i] ? 30f : 0f) + (isAnchor[i] ? -25f : 0f) + (sY[i] > 0f ? 0.01f : 0f);     // the right side wins a tie
             if (c < bestC) { bestC = c; best = i; }
