@@ -207,6 +207,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float scale = 1f;
         int tex = 0;
         final float[] mv = new float[16], mvp = new float[16], inv = new float[16];
+        float[] aimV = null;                               // where (a direction in the phone's view) it is to be put when it is placed next to others
+        boolean shrunk = false;                            // it was made smaller to fit beside the others (back to the usual size next time it opens)
         float rollKeep = 0f;                               // degrees of the phone's own tilt it keeps (so it looks straight to the eyes when the head is a little tilted)
         float wx, wy, wz;                                  // where the user stood when this window was put up (walk-around)
         float yawA, pitchA, dragYawOff, dragPitchOff, dragS0 = 1f, dragSize0 = 1f, dist = 1.5f, dragD0 = 1.5f;
@@ -293,13 +295,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // put a window at the exact place yaw/pitch degrees (right / up) from where the phone looks, facing the viewer.
     // The neighbours' places (yawA / pitchA) are measured this way, so the new window lands right beside them even when the head is tilted up or down
     // (a turn about the world's vertical would put it on a slanted circle and it would not line up with its neighbour)
-    private void aimWin(Win w, float yawDeg, float pitchDeg) {
-        float dx = (float) Math.tan(Math.toRadians(yawDeg)), dy = (float) Math.tan(Math.toRadians(pitchDeg)), dz = -1f;
-        float l = (float) Math.sqrt(dx * dx + dy * dy + 1f);
-        dx /= l; dy /= l; dz /= l;
-        float ang = (float) Math.toDegrees(Math.acos(Math.max(-1f, Math.min(1f, -dz))));
+    private void aimWin(Win w, float yawDeg, float pitchDeg) { aimDir(w, viewDir(yawDeg, pitchDeg)); }
+
+    // turn the window (which faces straight ahead) by the smallest turn so that its middle is in the direction d (unit vector in the phone's view)
+    private void aimDir(Win w, float[] d) {
+        float ang = (float) Math.toDegrees(Math.acos(Math.max(-1f, Math.min(1f, -d[2]))));
         if (ang < 0.01f || Float.isNaN(ang)) return;
-        android.opengl.Matrix.setRotateM(tE, 0, ang, dy, -dx, 0f);   // the smallest turn that takes straight ahead (0,0,-1) to that direction
+        float ax = d[1], ay = -d[0], al = (float) Math.sqrt(ax * ax + ay * ay);
+        if (al < 1e-4f) { ax = 0f; ay = 1f; } else { ax /= al; ay /= al; }
+        android.opengl.Matrix.setRotateM(tE, 0, ang, ax, ay, 0f);
         android.opengl.Matrix.multiplyMM(tF, 0, w.rot, 0, tE, 0);
         w.rot = tF.clone();
     }
@@ -406,20 +410,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile String placeDbg = "";                          // what the last placement did (shown in the HUD, to find out why a window did not land beside another)
     private float rowUx = 0f, rowUy = 1f, rowUz = 0f;                // the 'up' of the row of windows being built (the main menu's own up, in the phone's view): beside = along its own horizontal
     private float hitPw = 0.5f, hitD = 1.5f;                      // the window being placed: its drawn width (m) and distance (m)
-    // does a window put at yaw / pitch (degrees right / up of straight ahead) land on another window? Measured along the room's horizontal (same as where it is put),
+    // does a window put in the direction n (unit vector in the phone's view) land on another window? Measured along the row's horizontal (the same as where it is put),
     // so a window right beside its neighbour is not counted as overlapping it when the head is tilted up or down
-    private boolean hitsAt(Win w, float cy, float cp, float hw, float hh) {
+    private boolean hitsAt(Win w, float[] nc, float hw, float hh) {
         float ux = rowUx, uy = rowUy, uz = rowUz;
         float fx = 0f, fy = 0f, fz = -1f, dp = fz * uz;
-        fx -= dp * ux; fy -= dp * uy; fz -= dp * uz;                // straight ahead, flattened onto the room's horizontal
+        fx -= dp * ux; fy -= dp * uy; fz -= dp * uz;                // straight ahead, flattened onto the row's horizontal
         float fl = (float) Math.sqrt(fx * fx + fy * fy + fz * fz);
         boolean flat = fl > 0.2f;
         float hx = 0f, hy = 0f, hz = 0f;
         if (flat) { fx /= fl; fy /= fl; fz /= fl; hx = uy * fz - uz * fy; hy = uz * fx - ux * fz; hz = ux * fy - uy * fx; }
-        float[] nc = viewDir(cy, cp);
         float elC = (float) Math.asin(Math.max(-1f, Math.min(1f, nc[0] * ux + nc[1] * uy + nc[2] * uz)));
         float azC = flat ? (float) Math.atan2(nc[0] * hx + nc[1] * hy + nc[2] * hz, nc[0] * fx + nc[1] * fy + nc[2] * fz) : 0f;
         float hwC = flat ? (float) Math.toDegrees(Math.atan(hitPw / 2f / (hitD * Math.max(0.3f, (float) Math.cos(elC))))) : hw;
+        float cyaw = (float) Math.toDegrees(Math.atan2(nc[0], -nc[2])), cpit = (float) Math.toDegrees(Math.asin(Math.max(-1f, Math.min(1f, nc[1]))));
         for (Win o : wins) {
             if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
             android.graphics.Bitmap ob = o.c.bitmap();
@@ -430,10 +434,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float ohwView = (float) Math.toDegrees(Math.atan(opw / 2f / od));
             if (ohwView > 45f) continue;                       // something huge (the cinema screen): do not dodge it
             if (!flat) {
-                if (Math.abs(cy - o.yawA) < hw + ohwView + 0.3f && Math.abs(cp - o.pitchA) < hh + ohh + 0.3f) return true;
+                float dy = Math.abs(cyaw - o.yawA); if (dy > 180f) dy = 360f - dy;
+                if (dy < hw + ohwView + 0.3f && Math.abs(cpit - o.pitchA) < hh + ohh + 0.3f) return true;
                 continue;
             }
             float[] no = viewDir(o.yawA, o.pitchA);
+            if (Math.abs(o.yawA) > 90f) { no[0] = (float) (Math.sin(Math.toRadians(o.yawA)) * Math.cos(Math.toRadians(o.pitchA))); no[1] = (float) Math.sin(Math.toRadians(o.pitchA)); no[2] = (float) (-Math.cos(Math.toRadians(o.yawA)) * Math.cos(Math.toRadians(o.pitchA))); }
             float elO = (float) Math.asin(Math.max(-1f, Math.min(1f, no[0] * ux + no[1] * uy + no[2] * uz)));
             float azO = (float) Math.atan2(no[0] * hx + no[1] * hy + no[2] * hz, no[0] * fx + no[1] * fy + no[2] * fz);
             float dAz = Math.abs(azC - azO); if (dAz > Math.PI) dAz = (float) (2 * Math.PI) - dAz;
@@ -476,11 +482,24 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         return l > 1e-4f ? new float[]{vx / l, vy / l, vz / l} : new float[]{rn[8], rn[9], rn[10]};
     }
     private void avoidOverlap(Win w) {
-        w.slideDeg = 0f; w.slideDegP = 0f;
+        w.slideDeg = 0f; w.slideDegP = 0f; w.aimV = null;
         if (w.hasSaved) return;
+        if (w.shrunk) { w.wantScale = 0f; w.shrunk = false; }
         android.graphics.Bitmap bm = w.c.bitmap();
         if (bm == null || bm.getWidth() <= 0) { placeDbg = "place: no picture yet"; return; }
-        float sc = w.wantScale > 0 ? w.wantScale : openScale(w), d = w.placeDist > 0f ? w.placeDist : PANEL_D;
+        // it must join the others: first beside the main menu in front of you, then smaller, then further and further round the side (a row around you: turn your head to it)
+        if (tryPlace(w, bm, 1f, MAX_FRONT_YAW, false)) return;
+        if (tryPlace(w, bm, 0.8f, MAX_FRONT_YAW, false)) return;
+        if (tryPlace(w, bm, 0.65f, MAX_FRONT_YAW, false)) return;
+        if (tryPlace(w, bm, 1f, 120f, false)) return;
+        if (tryPlace(w, bm, 1f, 175f, false)) return;
+        tryPlace(w, bm, 0.65f, 175f, true);                       // the last resort (not joined to the menu): stacked above / below the standard place
+    }
+
+    private static float asinDeg(float x) { return (float) Math.toDegrees(Math.asin(Math.max(-1f, Math.min(1f, x)))); }
+
+    private boolean tryPlace(Win w, android.graphics.Bitmap bm, float f, float maxYaw, boolean stack) {
+        float sc = (w.wantScale > 0 ? w.wantScale : openScale(w)) * f, d = w.placeDist > 0f ? w.placeDist : PANEL_D;
         float pw = w.widthM * sc * winZoom * w.c.visFrac(), ph = w.widthM * sc * winZoom * bm.getHeight() / bm.getWidth();
         float hw = (float) Math.toDegrees(Math.atan(pw / 2f / d)), hh = (float) Math.toDegrees(Math.atan(ph / 2f / d));
         float baseY = w.offYaw, baseP = w.offPitch;
@@ -488,10 +507,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float[] rv = rotView; float wux = rv[8], wuy = rv[9], wuz = rv[10];            // the room's up, seen from the phone
         rowUx = wux; rowUy = wuy; rowUz = wuz;
         for (Win an : wins) if (an != w && an.anchor && shown(an) && an.rot != null && !an.placeReq) { float[] ua = upInView(an, rv); rowUx = ua[0]; rowUy = ua[1]; rowUz = ua[2]; break; }
-        final float gap = 0.8f;                                   // degrees between two windows (a window seen from the side looks wider than its middle suggests)
+        final float gap = 0.8f;                                   // degrees between two windows
         int cap = 4 * wins.size() + 4;
-        float[] cy = new float[cap], cp = new float[cap], fy = new float[cap], fp = new float[cap];
-        boolean[] isAnchor = new boolean[cap];
+        float[][] cv = new float[cap][];
+        float[] cy = new float[cap], cp = new float[cap], sY = new float[cap], sP = new float[cap];
+        boolean[] isAnchor = new boolean[cap], isVert = new boolean[cap];
         int nc = 0;
         for (Win o : wins) {
             if (o == w || !shown(o) || o.rot == null || o.placeReq || o.showInCinema && cinema) continue;
@@ -500,48 +520,49 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float opw0 = o.widthM * o.scale * winZoom, oph = opw0 * ob.getHeight() / ob.getWidth(), opw = opw0 * o.c.visFrac();
             float od = Math.max(0.3f, o.dist);
             float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / od)), ohh = (float) Math.toDegrees(Math.atan(oph / 2f / od));
-            if (ohw > 50f || Math.abs(o.yawA) > 100f) continue;       // the cinema screen, or a window that is far round to the side: not one to sit next to
-            isAnchor[nc] = isAnchor[nc + 1] = isAnchor[nc + 2] = isAnchor[nc + 3] = o.anchor;
-            // beside it: along the room's horizontal (the same height in the room), not along the phone's own left-right, so the two stay edge to edge when the head is tilted
+            if (ohw > 50f) continue;                                  // the cinema screen: not one to sit next to
             float[] nv = viewDir(o.yawA, o.pitchA);
+            if (Math.abs(o.yawA) > 90f) { double ya = Math.toRadians(o.yawA), pa = Math.toRadians(o.pitchA); nv = new float[]{(float) (Math.sin(ya) * Math.cos(pa)), (float) Math.sin(pa), (float) (-Math.cos(ya) * Math.cos(pa))}; }
             float[] ko = upInView(o, rv);                                                                   // beside = along that window's own horizontal
+            float kx = o.rot[0], ky = o.rot[1], kz = o.rot[2];                                              // its own right axis (room) -> view
+            float[] kr = {rv[0] * kx + rv[4] * ky + rv[8] * kz, rv[1] * kx + rv[5] * ky + rv[9] * kz, rv[2] * kx + rv[6] * ky + rv[10] * kz};
             float sinEl = nv[0] * ko[0] + nv[1] * ko[1] + nv[2] * ko[2];
             float cosEl = Math.max(0.3f, (float) Math.sqrt(Math.max(0f, 1f - sinEl * sinEl)));
             float wo = (float) Math.toDegrees(Math.atan(opw / 2f / (od * cosEl))), wn = (float) Math.toDegrees(Math.atan(pw / 2f / (d * cosEl)));
-            float dA = wo + wn + gap;
-            for (int sd = 1; sd >= -1; sd -= 2) {
-                float[] q = turnAboutUp(nv, -sd * dA, ko[0], ko[1], ko[2]);
-                cy[nc] = q[2] < -0.2f ? (float) Math.toDegrees(Math.atan2(q[0], -q[2])) : 999f;
-                cp[nc] = q[2] < -0.2f ? (float) Math.toDegrees(Math.atan2(q[1], -q[2])) : 0f;
-                fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;                                                                  // sd=+1: right of it, sd=-1: left of it
+            float dA = wo + wn + gap, ev = ohh + hh + gap;
+            for (int v4 = 0; v4 < 4; v4++) {
+                float[] q; float slY = 0f, slP = 0f;
+                if (v4 < 2) { int sd = v4 == 0 ? 1 : -1; q = turnAboutUp(nv, -sd * dA, ko[0], ko[1], ko[2]); slY = -sd * dA; }       // right of it / left of it
+                else { int sg = v4 == 2 ? 1 : -1; q = turnAboutUp(nv, sg * ev, kr[0], kr[1], kr[2]); slP = -sg * ev; }               // above it / below it
+                cv[nc] = q; cy[nc] = (float) Math.toDegrees(Math.atan2(q[0], -q[2])); cp[nc] = asinDeg(q[1]);
+                sY[nc] = slY; sP[nc] = slP; isAnchor[nc] = o.anchor; isVert[nc] = v4 >= 2; nc++;
             }
-            cy[nc] = o.yawA; cp[nc] = o.pitchA + ohh + hh + gap; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // above it
-            cy[nc] = o.yawA; cp[nc] = o.pitchA - ohh - hh - gap; fy[nc] = o.yawA; fp[nc] = o.pitchA; nc++;               // below it
         }
-        if (nc == 0) { placeDbg = "place: nothing to sit next to (menu shown=" + (menuWin != null && shown(menuWin)) + ")"; return; }                                      // nothing in front to sit next to: the standard place
+        if (nc == 0) { placeDbg = "place: nothing to sit next to (menu shown=" + (menuWin != null && shown(menuWin)) + ")"; return true; }      // nothing to sit next to: the standard place
         int best = -1; float bestC = 1e9f;
         boolean anchorOnly = false;                                // a free place next to the main menu beats every other place
-        for (int i = 0; i < nc; i++) if (isAnchor[i] && Math.abs(cy[i]) <= MAX_FRONT_YAW && Math.abs(cp[i]) <= 50f && !hitsAt(w, cy[i], cp[i], hw, hh)) { anchorOnly = true; break; }
+        for (int i = 0; i < nc; i++) if (isAnchor[i] && Math.abs(cy[i]) <= maxYaw && Math.abs(cp[i]) <= 50f && !hitsAt(w, cv[i], hw, hh)) { anchorOnly = true; break; }
         for (int i = 0; i < nc; i++) {
             if (anchorOnly && !isAnchor[i]) continue;
-            if (Math.abs(cy[i]) > MAX_FRONT_YAW || Math.abs(cp[i]) > 50f) continue;
-            if (hitsAt(w, cy[i], cp[i], hw, hh)) continue;
-            boolean vert = cy[i] == fy[i];                        // above / below a window: only when beside is not possible (or the window wants to be low, like the keyboard)
-            float c = 0.75f * Math.abs(cy[i]) + 0.25f * Math.abs(cy[i] - baseY) + Math.abs(cp[i] - baseP) + (vert ? 30f : 0f) + (isAnchor[i] ? -25f : 0f) + (cy[i] < fy[i] ? 0.01f : 0f);     // the right side wins a tie
+            if (Math.abs(cy[i]) > maxYaw || Math.abs(cp[i]) > 50f) continue;
+            if (hitsAt(w, cv[i], hw, hh)) continue;
+            float c = 0.75f * Math.abs(cy[i]) + 0.25f * Math.abs(cy[i] - baseY) + Math.abs(cp[i] - baseP) + (isVert[i] ? 30f : 0f) + (isAnchor[i] ? -25f : 0f) + (sY[i] > 0f ? 0.01f : 0f);     // the right side wins a tie
             if (c < bestC) { bestC = c; best = i; }
         }
-        if (best < 0) {                                           // no free place beside anything: stack above / below the standard place
-            placeDbg = "place: no free spot beside anything (" + nc + " tried)";
-            for (int k = 1; k <= 4; k++) for (int sg = -1; sg <= 1; sg += 2) {
+        if (best < 0) {
+            placeDbg = "place: no free spot beside anything (" + nc + " tried, size " + Math.round(f * 100) + "%, to " + Math.round(maxYaw) + " deg)";
+            if (stack) for (int k = 1; k <= 4; k++) for (int sg = -1; sg <= 1; sg += 2) {
                 float p = baseP + sg * k * (hh * 2f + gap);
-                if (Math.abs(p) <= 50f && !hitsAt(w, baseY, p, hw, hh)) { w.offPitch = p; return; }
+                if (Math.abs(p) <= 50f && !hitsAt(w, viewDir(baseY, p), hw, hh)) { w.offPitch = p; if (f < 1f) { w.wantScale = sc; w.shrunk = true; } return true; }
             }
-            return;
+            return false;
         }
-        placeDbg = String.format(java.util.Locale.US, "place: %d spots, menu-first=%b, pick %d at yaw %.0f pitch %.0f (half-width %.0f deg)", nc, anchorOnly, best, cy[best], cp[best], hw);
-        w.offYaw = cy[best]; w.offPitch = cp[best];
-        w.slideDeg = fy[best] - cy[best];                         // it starts at the middle of its neighbour and slides out to its place
-        w.slideDegP = fp[best] - cp[best];
+        placeDbg = String.format(java.util.Locale.US, "place: %d spots, menu-first=%b, pick %d at yaw %.0f pitch %.0f (half-width %.0f deg, size %d%%)", nc, anchorOnly, best, cy[best], cp[best], hw, Math.round(f * 100));
+        w.aimV = cv[best]; w.offYaw = cy[best]; w.offPitch = cp[best];
+        w.slideDeg = sY[best];                                    // it starts at the middle of its neighbour and slides out to its place
+        w.slideDegP = sP[best];
+        if (f < 1f) { w.wantScale = sc; w.shrunk = true; }          // it came in smaller to fit
+        return true;
     }
 
     private static final float ANIM_MS = 520f;                     // how long a window takes to slide in
@@ -556,7 +577,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             w.rot = tA.clone();
             w.rollKeep = keepOf(headRoll(w.rot));
             for (Win an : wins) if (an != w && an.anchor && shown(an) && an.rot != null) { w.rollKeep = an.rollKeep; break; }      // beside the main menu: the same tilt as it, so they line up
-            if (w.offYaw != 0f || w.offPitch != 0f) aimWin(w, w.offYaw, w.offPitch);
+            if (w.aimV != null) aimDir(w, w.aimV);
+            else if (w.offYaw != 0f || w.offPitch != 0f) aimWin(w, w.offYaw, w.offPitch);
             w.scale = w.wantScale > 0 ? w.wantScale : openScale(w);
             w.dist = w.placeDist > 0f ? w.placeDist : PANEL_D;
             w.wx = ux; w.wy = uy; w.wz = uz;
@@ -592,8 +614,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (x >= 1f) w.animOn = false;
             else {
                 float rest = 1f - x, e = 1f - rest * rest * rest, left = 1f - e;                 // ease out: quick at first, settles softly
-                sx = w.dist * (float) Math.tan(Math.toRadians(w.slideDeg)) * left;               // sideways, along the window's own right
-                sy = w.dist * (float) Math.tan(Math.toRadians(w.slideDegP)) * left;              // and upwards / downwards
+                sx = w.dist * 2f * (float) Math.sin(Math.toRadians(w.slideDeg) / 2.0) * left;               // sideways, along the window's own right
+                sy = w.dist * 2f * (float) Math.sin(Math.toRadians(w.slideDegP) / 2.0) * left;              // and upwards / downwards
                 sz = -0.16f * left;                                                              // further away at first, comes forward
                 tilt = Math.signum(w.slideDeg) * 14f * left;
                 w.animA = Math.min(1f, x * 2.6f);
