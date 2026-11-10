@@ -143,7 +143,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // sticky when still: the sensor's tiny noise must not make the windows tremble, so below a slow turn the view is not carried forward and is eased heavily;
         // from a calm turn upwards it follows at once (no lag while you really move your head)
         float f = Math.max(0f, Math.min(1f, (speed - 0.02f) / 0.05f));        // 1 deg/s and slower: held still; 4.6 deg/s and faster: follows at once      // (it was 0.04 .. 0.34 rad/s: a slow turn was eased more than a quicker one, and the windows swayed while turning)
-        float k = Math.min(dt, 0.012f) / span * f;             // never look further ahead than 12 ms (25 ms made the windows swing past when the head stopped)
+        float k = Math.min(dt, 0.004f) / span * f;             // never look further ahead than 12 ms (25 ms made the windows swing past when the head stopped)
         float[] e = new float[9];
         for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) {
             float dl = 0f;
