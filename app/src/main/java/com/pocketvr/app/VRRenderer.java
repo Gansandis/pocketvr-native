@@ -22,6 +22,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private final Host host;
     private final NvCam cam;
     public volatile boolean stereo = true;
+    public volatile NvSword3D world3 = null;             // a 3D game in the room (monsters), drawn while its score window is shown
+    public volatile Win world3Win = null;
+    private final int[] depthRb = new int[1];
     public volatile int lens = 1;
     public volatile float chroma = 0f;                    // lens colour fringes (red / blue edges): the three colours are drawn a hair apart at the edges, the other way round
     public volatile float fps = 0;
@@ -848,6 +851,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     @Override public void onSurfaceCreated(GL10 gl, EGLConfig cfg) {
         ulc.clear();
         java.util.Arrays.fill(alc, 0);
+        depthRb[0] = 0;
+        { NvSword3D w3 = world3; if (w3 != null) w3.glLost(); }
         GLES20.glDisable(GLES20.GL_DITHER);                // no dithering: a little less work for every pixel
         panoTex = 0; panoOn = false;
         for (Win w : wins) if (w.c instanceof NvVideo) ((NvVideo) w.c).glLost();
@@ -944,6 +949,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glGenFramebuffers(1, fbo, 0);
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0]);
         GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, sceneTex[0], 0);
+        if (depthRb[0] != 0) GLES20.glDeleteRenderbuffers(1, depthRb, 0);                    // depth, so 3D things in the room hide each other properly
+        GLES20.glGenRenderbuffers(1, depthRb, 0);
+        GLES20.glBindRenderbuffer(GLES20.GL_RENDERBUFFER, depthRb[0]);
+        GLES20.glRenderbufferStorage(GLES20.GL_RENDERBUFFER, GLES20.GL_DEPTH_COMPONENT16, w, h);
+        GLES20.glFramebufferRenderbuffer(GLES20.GL_FRAMEBUFFER, GLES20.GL_DEPTH_ATTACHMENT, GLES20.GL_RENDERBUFFER, depthRb[0]);
         sceneW = w; sceneH = h;
         maskW = 0;
         if (ui != null) { ui.resize(1024, 576); ui.markDirty(); }
@@ -1114,6 +1124,19 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform2f(ul(progVid, "off"), 0f, hh - hh * fr);
         GLES20.glUniform2f(ul(progVid, "fit"), fx, fy);
         drawQuad(progVid);
+    }
+
+    private void draw3D() {
+        NvSword3D wd = world3; Win ww = world3Win;
+        if (wd == null || ww == null || !shown(ww) || cinema) return;
+        try {
+            GLES20.glDisable(GLES20.GL_BLEND);
+            GLES20.glClear(GLES20.GL_DEPTH_BUFFER_BIT);
+            GLES20.glEnable(GLES20.GL_DEPTH_TEST);
+            GLES20.glDepthFunc(GLES20.GL_LEQUAL);
+            wd.drawWorld(mP, rotView, sux, suy, suz);
+        } catch (Throwable ignored) { }
+        GLES20.glDisable(GLES20.GL_DEPTH_TEST);
     }
 
     private void drawWins() {
@@ -1342,6 +1365,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             // a short loss of the hand (detection blink) must not drop a grabbed window
             if (!(dragWin != null && nowMs - lostT < 400)) { pinching = false; prevPinch = false; endDrag(); }
             for (Win w : wins) if (shown(w)) w.c.update(false, 0, 0, false);
+            { NvSword3D wd = world3; if (wd != null) wd.pointer(false, 0f, 0f, 0f, nowMs); }
             return;
         }
         lostT = 0;
@@ -1465,6 +1489,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         } else {
             rayYaw = (float) Math.toDegrees(Math.atan(cnx * tanHc));
             rayPitch = (float) Math.toDegrees(Math.atan(cny * tanVc));
+        }
+        {                                                                // the fingertip's direction in the room, for the 3D game
+            NvSword3D wd = world3;
+            if (wd != null) {
+                float vx = cnx * tanHc, vy = cny * tanVc, vz = -1f;
+                float[] rv3 = rotView;
+                wd.pointer(true, rv3[0] * vx + rv3[1] * vy + rv3[2] * vz, rv3[4] * vx + rv3[5] * vy + rv3[6] * vz, rv3[8] * vx + rv3[9] * vy + rv3[10] * vz, nowMs);
+            }
         }
 
         float[] o = new float[2];
@@ -1965,6 +1997,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform1f(ul(progCam, "lift"), lift);
         drawQuad(progCam);
         }
+        draw3D();
         computePanel();
         cursor();
         drawWins();
