@@ -51,7 +51,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private float camScale = 1f;                        // camera picture size relative to the scene (below 1 = smaller, with a dark border)
     public volatile float vrFov = 80f;                  // VR split view: how wide each eye's view is in degrees; should match the headset lenses
     private static final float PANEL_D = 1.5f;
-    private int progPanel, progVid, progPano;
+    private int progPanel, progVid, progPano, progEnv;
     // ---- 360 picture around the user (replaces the camera picture while it is on) ----
     private volatile android.graphics.Bitmap panoBmp = null;
     private volatile int panoCmd = 0;                       // 1 = show panoBmp, 2 = switch off
@@ -210,6 +210,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         boolean animOn = false;
         long animT0 = 0;
         public volatile boolean ghost = false;             // just chosen from the menu: shown see-through in front of you, one more click opens it for real
+        public boolean game = false;                       // a game window: while one is up the thumb + middle finger menu gesture and its double tap are off (a fast swipe looks like them)
         public boolean noGhost = false;                    // opens at once (the menu itself, keyboard, cinema screen ...)
         long confT0 = 0;                                   // when the ghost was confirmed (it fades up from see-through)
         float pendYaw = 0f;                                // degrees it still has to slide sideways (+ = to the right) to make room for a new window
@@ -915,6 +916,22 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "uniform sampler2D tex; uniform mat3 rm; uniform float lon0; varying vec2 ray;" +
             "void main(){ vec3 d=normalize(vec3(ray,-1.)); vec3 w=d*rm; float lon=atan(w.x,w.y)+lon0; float lat=asin(clamp(w.z,-1.,1.));" +
             " gl_FragColor=texture2D(tex,vec2(fract(lon/6.2831853+0.5),0.5-lat/3.1415927)); }");
+        progEnv = prog(                                  // the night scene of the 3D game: sky, moon, stars, far hills and a stone floor, all worked out per pixel from the way you look
+            "attribute vec2 p; uniform vec2 tn; varying vec2 ray; void main(){ gl_Position=vec4(p,0.,1.); ray=p*tn; }",
+            "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
+            "uniform mat3 rm; uniform vec3 eo; varying vec2 ray;" +
+            "float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }" +
+            "void main(){ vec3 d=normalize(vec3(ray,-1.)); vec3 w=d*rm; vec3 hor=vec3(0.40,0.15,0.20); vec3 col;" +
+            " if(w.z<-0.004){ float t=eo.z/(-w.z); vec2 g=eo.xy+w.xy*t; vec2 c=g*0.8; vec2 f=fract(c); vec2 id=floor(c);" +
+            "  float ln=step(0.05,f.x)*step(0.05,f.y); float sh=0.10+0.10*h21(id); vec3 gc=mix(vec3(0.02,0.02,0.03),vec3(sh*0.95,sh*0.9,sh*1.05),ln);" +
+            "  float ring=smoothstep(0.0,1.0,1.0-clamp(t/9.,0.,1.)); gc+=vec3(0.10,0.05,0.02)*ring*0.5;" +
+            "  float fog=clamp(t/26.,0.,1.); fog=fog*fog*(3.-2.*fog); col=mix(gc,hor,fog); }" +
+            " else { float e=max(w.z,0.); col=mix(hor,vec3(0.02,0.02,0.10),pow(min(e*1.3,1.),0.55));" +
+            "  vec3 md=normalize(vec3(0.5,0.8,0.42)); float m=dot(w,md); col+=vec3(1.,0.95,0.78)*smoothstep(0.9965,0.9985,m)+vec3(0.35,0.30,0.25)*pow(max(m,0.),70.);" +
+            "  vec3 q=floor(w*110.); float st=step(0.9935,h21(q.xy+q.z*13.7)); col+=vec3(st*0.85)*smoothstep(0.12,0.5,e);" +
+            "  float az=atan(w.y,w.x); float ridge=0.035+0.030*sin(az*4.+1.)+0.018*sin(az*11.+2.)+0.010*sin(az*27.);" +
+            "  if(w.z<ridge) col=mix(vec3(0.035,0.025,0.05),hor*0.5,clamp(w.z/ridge,0.,1.)*0.5); }" +
+            " gl_FragColor=vec4(col,1.); }");
         quad = fb(8);
         quad.put(new float[]{-1,-1, 1,-1, -1,1, 1,1}).position(0);
         lineBuf = fb(BONES.length * 2 * 2 * 2);
@@ -1132,6 +1149,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         try {
             GLES20.glDisable(GLES20.GL_BLEND);
             GLES20.glClear(GLES20.GL_DEPTH_BUFFER_BIT);
+            if (wd.envActive()) {                                          // the room is swapped for the night scene
+                float[] m = rotView;
+                rm3[0] = m[0]; rm3[1] = m[1]; rm3[2] = m[2]; rm3[3] = m[4]; rm3[4] = m[5]; rm3[5] = m[6]; rm3[6] = m[8]; rm3[7] = m[9]; rm3[8] = m[10];
+                GLES20.glUseProgram(progEnv);
+                GLES20.glUniform2f(ul(progEnv, "tn"), tanH, tanV);
+                GLES20.glUniformMatrix3fv(ul(progEnv, "rm"), 1, false, rm3, 0);
+                GLES20.glUniform3f(ul(progEnv, "eo"), sux, suy, 1.15f);
+                drawQuad(progEnv);
+            }
             GLES20.glEnable(GLES20.GL_DEPTH_TEST);
             GLES20.glDepthFunc(GLES20.GL_LEQUAL);
             wd.drawWorld(mP, rotView, sux, suy, suz);
@@ -1352,6 +1378,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         aaFade = 1f;
     }
 
+    private boolean gameUp() {
+        for (Win w : wins) if (w.game && shown(w)) return true;
+        return false;
+    }
+
     private void cursor() {
         palmMenu(System.currentTimeMillis());
         float[] r = pickHand(disp);
@@ -1452,7 +1483,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // thumb + middle finger held together for a moment: show / hide the menu
         boolean mpPrev = mpOn;
         // with two hands the pointing pose (index out, thumb on the middle finger) IS this gesture, so poking a palm icon opened the menu first: it is off while the palm menu is in use
-        boolean mpBlock = palmMenu && disp != null && disp.length > 0 && disp[0] >= 2f;
+        boolean mpBlock = (palmMenu && disp != null && disp.length > 0 && disp[0] >= 2f) || gameUp();
         mpOn = !mpBlock && (mpOn ? (ratioM < 0.32f) : (ratioM < 0.20f && ratio > 0.35f));
         if (mpOn && !mpPrev) mpT0 = nowMs;
         if (!mpOn && mpPrev && !mpLatched && nowMs - mpT0 < 500) {        // a quick tap; two quick taps = put the screens back in front of you

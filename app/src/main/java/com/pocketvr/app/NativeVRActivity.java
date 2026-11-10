@@ -137,7 +137,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.146 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.148 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg)));
                 } else hud.setText("");
             }
@@ -251,11 +251,12 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         final NvFruit fruitGame = new NvFruit();
         wFruit = rend.addWindow(fruitGame, 1.0f);
         fruitGame.onClose = () -> rend.setVisible(wFruit, false, 0f, 0f);
+        wFruit.game = true;
 
         final NvSword3D sword3 = new NvSword3D();
         wSword3 = rend.addWindow(sword3, 0.42f);
         sword3.onClose = () -> rend.setVisible(wSword3, false, 0f, 0f);
-        rend.world3 = sword3; rend.world3Win = wSword3;
+        rend.world3 = sword3; rend.world3Win = wSword3; wSword3.game = true;
 
         final NvKeyboard kb = new NvKeyboard();
         kb.copier = s -> runOnUiThread(() -> {
