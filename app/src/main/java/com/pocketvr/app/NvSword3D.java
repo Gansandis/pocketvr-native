@@ -64,7 +64,7 @@ public class NvSword3D implements NvContent {
         text("✕", closeR.centerX(), closeR.centerY(), 26f, NvGlass.TEXT, Paint.Align.CENTER);
         if (state == 1) {
             text("คะแนน " + score, 30, 104, 34f, 0xFFFFFFFF, Paint.Align.LEFT);
-            text("รอบ " + wave, 30, 150, 26f, 0xCCFFFFFF, Paint.Align.LEFT);
+            text("รอบที่ " + wave, 30, 150, 26f, 0xCCFFFFFF, Paint.Align.LEFT);
             StringBuilder h = new StringBuilder();
             for (int i = 0; i < 5; i++) h.append(i < hp ? "♥" : "♡");
             text(h.toString(), W - 40, 104, 40f, 0xFFFF6B7A, Paint.Align.RIGHT);
@@ -75,12 +75,14 @@ public class NvSword3D implements NvContent {
                 text("ปัดนิ้วฟันมอนสเตอร์ที่เดินเข้าหาคุณ", W / 2f, 78, 24f, 0xFFFFFFFF, Paint.Align.CENTER);
                 if (best > 0) text("คะแนนสูงสุด " + best, W / 2f, 190, 22f, 0xFFFFE27A, Paint.Align.CENTER);
             } else {
-                text("พ่ายแพ้  คะแนน " + score + "  (รอบ " + wave + ")", W / 2f, 78, 26f, 0xFFFF8A8A, Paint.Align.CENTER);
+                text("พ่ายแพ้  คะแนน " + score + "  (รอบที่ " + wave + ")", W / 2f, 78, 26f, 0xFFFF8A8A, Paint.Align.CENTER);
                 text("คะแนนสูงสุด " + best, W / 2f, 190, 22f, 0xFFFFE27A, Paint.Align.CENTER);
             }
             NvGlass.fill(cv, p, startR, hover == START ? 0xFF4C7CE3 : 0xFF3558B8, 32f);
             text(state == 0 ? "เริ่มต่อสู้" : "สู้อีกครั้ง", startR.centerX(), startR.centerY(), 28f, 0xFFFFFFFF, Paint.Align.CENTER);
         }
+        NvGlass.fill(cv, p, envR, hover == ENV ? 0x66FFFFFF : 0x33FFFFFF, envR.height() / 2);
+        text(envOn ? "ฉาก: เปิด" : "ฉาก: ปิด", envR.centerX(), envR.centerY(), 22f, NvGlass.TEXT, Paint.Align.CENTER);
         RectF hb = new RectF(handleR.left + 100f, handleR.centerY() - 7f, handleR.right - 100f, handleR.centerY() + 7f);
         p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(dragging ? 0xFFFFA24D : (hover == HANDLE ? 0xFFFFFFFF : 0xA6FFFFFF));
         cv.drawRoundRect(hb, 7f, 7f, p);
@@ -92,6 +94,7 @@ public class NvSword3D implements NvContent {
         if (valid) {
             if (closeR.contains(x, y)) h = CLOSE;
             else if (state != 1 && startR.contains(x, y)) h = START;
+            else if (envR.contains(x, y)) h = ENV;
             else if (handleR.contains(x, y)) h = HANDLE;
         }
         if (h != null) { lastH = h; lastHT = now; }
@@ -102,6 +105,7 @@ public class NvSword3D implements NvContent {
         if (edge && tgt != null && now - lastAct > 400) {
             if (tgt == CLOSE) { lastAct = now; state = 0; clearAll(); if (onClose != null) onClose.run(); }
             else if (tgt == START && state != 1) { lastAct = now; startReq = true; dirty = true; }
+            else if (tgt == ENV) { lastAct = now; envOn = !envOn; dirty = true; }
         }
     }
 
@@ -116,7 +120,12 @@ public class NvSword3D implements NvContent {
     private int score = 0, hp = 5, wave = 0, toSpawn = 0, combo = 0;
     private float spawnT = 0f, banner = 0f, comboShow = 0f;
     private String bannerText = "", comboText = "";
-    private boolean startReq = false;
+    private boolean startReq = false, envOn = true;
+    private int bossLeft = 0;
+    private final RectF envR = new RectF(24f, H - 58f, 220f, H - 10f);
+    private final Object ENV = new Object();
+    /** the room is swapped for a night scene while a game is going (the button in the score window turns it off to see the real room) */
+    public boolean envActive() { return envOn && state != 0; }
     private float ox, oy, oz, heading = 0f;                         // where the game is centred (where you stood) and which way was ahead
     private float ex, ey, ez;                                       // where your eyes are now
     private long lastT = 0;
@@ -126,19 +135,24 @@ public class NvSword3D implements NvContent {
     private void nextWave() {
         wave++;
         boolean boss = wave % 5 == 0;
-        toSpawn = boss ? 1 + wave / 5 : 3 + wave * 2;
+        bossLeft = boss ? 1 + wave / 5 : 0;
+        toSpawn = boss ? bossLeft + 4 + wave / 2 : 4 + wave * 3;
         spawnT = 1.6f; banner = 2.0f;
-        bannerText = boss ? "ด่านบอส! รอบ " + wave : "รอบ " + wave;
+        bannerText = boss ? "ด่านบอส! รอบที่ " + wave : "รอบที่ " + wave;
         if (wave > 1 && hp < 5) hp++;                               // a heart back for each wave cleared
     }
 
     private void spawn() {
-        boolean boss = wave % 5 == 0;
+        boolean boss = bossLeft > 0;
+        if (boss) bossLeft--;
         Mob m = new Mob();
         m.boss = boss;
-        float r = rnd.nextFloat();
-        m.type = boss ? 3 : (r < 0.45f ? 0 : (r < 0.75f ? 1 : 2));
-        if (wave < 2 && m.type == 2) m.type = 0;
+        if (boss) m.type = 3;
+        else {
+            int[] pool = {0, 0, 0, 1, 1, 2, 2, 4, 4, 4, 5, 5, 6};
+            int n = wave < 2 ? 5 : (wave < 3 ? 7 : (wave < 4 ? 10 : (wave < 6 ? 12 : 13)));
+            m.type = pool[rnd.nextInt(n)];
+        }
         m.az = heading + (float) Math.toRadians(-62 + 124 * rnd.nextFloat());
         m.dist = 6.5f;
         float k = Math.min(2f, 1f + 0.05f * wave);
@@ -146,18 +160,21 @@ public class NvSword3D implements NvContent {
             case 0: m.maxHp = 1; m.speed = 0.55f * k; m.size = 1f; m.rad = 0.5f; break;
             case 1: m.maxHp = 2; m.speed = 0.50f * k; m.size = 1f; m.rad = 0.7f; break;
             case 2: m.maxHp = 1; m.speed = 0.62f * k; m.size = 1f; m.rad = 0.55f; break;
+            case 4: m.maxHp = 1; m.speed = 1.0f * k; m.size = 0.9f; m.rad = 0.42f; break;
+            case 5: m.maxHp = 2; m.speed = 0.55f * k; m.size = 1f; m.rad = 0.55f; break;
+            case 6: m.maxHp = 4; m.speed = 0.34f * k; m.size = 1.5f; m.rad = 0.95f; break;
             default: m.maxHp = 10 + wave * 2; m.speed = 0.28f; m.size = 2.1f; m.rad = 1.3f; break;
         }
         m.hp = m.maxHp; m.ph = rnd.nextFloat() * 6.28f;
         mobs.add(m);
     }
 
-    private float azOf(Mob m) { return m.az + (m.type == 2 ? (float) Math.sin(m.wob * 2.2f + m.ph) * 0.35f * Math.min(1f, m.dist / 4f) : 0f); }
-    private float zOf(Mob m) { return oz - 1.15f + (m.type == 2 ? 0.85f + 0.12f * (float) Math.sin(m.wob * 2f + m.ph) : 0f); }
+    private float azOf(Mob m) { return m.az + (m.type == 2 ? (float) Math.sin(m.wob * 2.2f + m.ph) * 0.35f * Math.min(1f, m.dist / 4f) : (m.type == 4 ? (float) Math.sin(m.wob * 3.1f + m.ph) * 0.45f * Math.min(1f, m.dist / 3f) : 0f)); }
+    private float zOf(Mob m) { return oz - 1.15f + (m.type == 2 ? 0.85f + 0.12f * (float) Math.sin(m.wob * 2f + m.ph) : (m.type == 4 ? 1.1f + 0.35f * (float) Math.sin(m.wob * 3f + m.ph) : (m.type == 5 ? 0.35f * Math.abs((float) Math.sin(m.wob * 4f + m.ph)) : 0f))); }
     private float xOf(Mob m) { return ox + m.dist * (float) Math.cos(azOf(m)); }
     private float yOf(Mob m) { return oy + m.dist * (float) Math.sin(azOf(m)); }
 
-    private int colorOf(Mob m) { return m.type == 0 ? 0xFF4CD16B : (m.type == 1 ? 0xFFEDE7D6 : (m.type == 2 ? 0xFFBFD8FF : 0xFFB04CD8)); }
+    private int colorOf(Mob m) { return m.type == 0 ? 0xFF4CD16B : (m.type == 1 ? 0xFFEDE7D6 : (m.type == 2 ? 0xFFBFD8FF : (m.type == 4 ? 0xFF6A4C93 : (m.type == 5 ? 0xFFF28C1E : (m.type == 6 ? 0xFF8A8F99 : 0xFFB04CD8))))); }
 
     private void debris(float x, float y, float z, int color, int n, float sp, float size) {
         for (int i = 0; i < n; i++) {
@@ -254,9 +271,14 @@ public class NvSword3D implements NvContent {
     public void glLost() { g3.lost(); }
 
     private void part(Nv3D.Mesh mesh, float tx, float ty, float tz, float rx, float sx, float sy, float sz, int color, float flash) {
+        partR(mesh, tx, ty, tz, rx, 0f, sx, sy, sz, color, flash);
+    }
+
+    private void partR(Nv3D.Mesh mesh, float tx, float ty, float tz, float rx, float ry, float sx, float sy, float sz, int color, float flash) {
         System.arraycopy(mon, 0, t1, 0, 16);
         Matrix.translateM(t1, 0, tx, ty, tz);
         if (rx != 0f) Matrix.rotateM(t1, 0, rx, 1f, 0f, 0f);
+        if (ry != 0f) Matrix.rotateM(t1, 0, ry, 0f, 1f, 0f);
         Matrix.scaleM(t1, 0, sx, sy, sz);
         Matrix.multiplyMM(t2, 0, vp, 0, t1, 0);
         g3.draw(mesh, t2, t1, color, flash, 1f);
@@ -307,6 +329,43 @@ public class NvSword3D implements NvContent {
                 part(g3.sphere, 0, 0.29f, 0.50f, 0, 0.07f, 0.05f, 0.09f, DARK, 0f);
                 part(g3.sphere, -0.34f, 0.04f, 0.50f + 0.05f * sw, 0, 0.10f, 0.08f, 0.16f, body, fl);
                 part(g3.sphere, 0.34f, 0.04f, 0.50f - 0.05f * sw, 0, 0.10f, 0.08f, 0.16f, body, fl);
+                break;
+            }
+            case 4: {                                                   // bat
+                float fl2 = 28f + 32f * sw;
+                part(g3.sphere, 0, 0, 0.5f, 0, 0.15f, 0.13f, 0.17f, body, fl);
+                part(g3.sphere, 0, 0.11f, 0.64f, 0, 0.11f, 0.10f, 0.11f, body, fl);
+                part(g3.cone, -0.06f, 0.10f, 0.78f, 0, 0.03f, 0.03f, 0.08f, body, fl);
+                part(g3.cone, 0.06f, 0.10f, 0.78f, 0, 0.03f, 0.03f, 0.08f, body, fl);
+                part(g3.sphere, -0.04f, 0.2f, 0.66f, 0, 0.025f, 0.02f, 0.03f, 0xFFFF4D4D, 0f);
+                part(g3.sphere, 0.04f, 0.2f, 0.66f, 0, 0.025f, 0.02f, 0.03f, 0xFFFF4D4D, 0f);
+                partR(g3.box, -0.36f, 0f, 0.54f, 0, fl2, 0.30f, 0.02f, 0.17f, 0xFF4A3470, fl);
+                partR(g3.box, 0.36f, 0f, 0.54f, 0, -fl2, 0.30f, 0.02f, 0.17f, 0xFF4A3470, fl);
+                break;
+            }
+            case 5: {                                                   // pumpkin head
+                part(g3.sphere, 0, 0, 0.42f, 0, 0.50f, 0.48f, 0.40f, body, fl);
+                part(g3.sphere, -0.26f, 0.02f, 0.42f, 0, 0.26f, 0.44f, 0.38f, 0xFFD97712, fl);
+                part(g3.sphere, 0.26f, 0.02f, 0.42f, 0, 0.26f, 0.44f, 0.38f, 0xFFD97712, fl);
+                part(g3.cyl, 0, 0, 0.84f, 0, 0.06f, 0.06f, 0.10f, 0xFF4F7A2A, fl);
+                part(g3.box, -0.17f, 0.45f, 0.52f, 0, 0.09f, 0.03f, 0.07f, 0xFFFFE27A, 0f);
+                part(g3.box, 0.17f, 0.45f, 0.52f, 0, 0.09f, 0.03f, 0.07f, 0xFFFFE27A, 0f);
+                part(g3.box, 0, 0.47f, 0.30f, 0, 0.22f, 0.03f, 0.05f, 0xFFFFE27A, 0f);
+                for (int k = 0; k < 3; k++) part(g3.box, -0.12f + k * 0.12f, 0.48f, 0.33f, 0, 0.03f, 0.02f, 0.04f, DARK, 0f);
+                part(g3.sphere, -0.2f, 0.1f, 0.04f, 0, 0.12f, 0.14f, 0.06f, 0xFF4F7A2A, 0f);
+                part(g3.sphere, 0.2f, 0.1f, 0.04f, 0, 0.12f, 0.14f, 0.06f, 0xFF4F7A2A, 0f);
+                break;
+            }
+            case 6: {                                                   // stone golem
+                part(g3.box, -0.25f, 0f, 0.30f, 0, 0.18f, 0.18f, 0.30f, 0xFF6E737C, fl);
+                part(g3.box, 0.25f, 0f, 0.30f, 0, 0.18f, 0.18f, 0.30f, 0xFF6E737C, fl);
+                part(g3.box, 0, 0, 0.95f, 0, 0.50f, 0.30f, 0.40f, body, fl);
+                part(g3.box, 0, 0.05f, 1.55f, 0, 0.25f, 0.22f, 0.22f, body, fl);
+                part(g3.sphere, -0.1f, 0.26f, 1.58f, 0, 0.05f, 0.03f, 0.05f, 0xFF4DD2FF, 0f);
+                part(g3.sphere, 0.1f, 0.26f, 1.58f, 0, 0.05f, 0.03f, 0.05f, 0xFF4DD2FF, 0f);
+                part(g3.box, -0.72f, 0f, 0.90f, 22f * sw, 0.16f, 0.16f, 0.40f, 0xFF7B808A, fl);
+                part(g3.box, 0.72f, 0f, 0.90f, -22f * sw, 0.16f, 0.16f, 0.40f, 0xFF7B808A, fl);
+                part(g3.box, 0, 0.3f, 1.05f, 0, 0.14f, 0.02f, 0.16f, 0xFF4DD2FF, 0f);
                 break;
             }
             default: {                                                  // boss: a big horned beast
