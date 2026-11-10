@@ -603,6 +603,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void placeCentre(Win w) {
         w.slideDeg = 0f; w.slideDegP = 0f; w.aimV = null;
         if (w.shrunk) { w.wantScale = 0f; w.shrunk = false; }
+        if (w == menuWin && w.newOpen) w.slideDegP = -16f;           // the main menu rises up out of the navigation bar
         if (w.hasSaved) return;
         w.offYaw = 0f;
         android.graphics.Bitmap bm = w.c.bitmap();
@@ -610,9 +611,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float sc = w.wantScale > 0 ? w.wantScale : openScale(w), d = w.placeDist > 0f ? w.placeDist : PANEL_D;
         float pw = w.widthM * sc * winZoom * w.c.visFrac(), ph = pw * bm.getHeight() / bm.getWidth() / Math.max(0.2f, w.c.visFrac());
         float elN = w.offPitch;
-        float hwN = (float) Math.toDegrees(Math.atan(pw / 2f / nearD(d, ph / 2f, tiltSinOfEl(elN))));
+        float hwN = (float) Math.toDegrees(Math.atan(pw / 2f / nearD(d, ph / 4f, tiltSinOfEl(elN))));      // half the lean allowance: windows touch in the middle, hardly any gap
         float hhN = (float) Math.toDegrees(Math.atan(ph / 2f / d));
-        final float gap = 0.6f;
+        final float gap = 0.0f;                                   // flush: the edges touch
         java.util.ArrayList<Win> right = new java.util.ArrayList<>(), left = new java.util.ArrayList<>();
         float[] hwO = new float[wins.size()], yf = new float[wins.size()];
         java.util.HashMap<Win, Integer> idx = new java.util.HashMap<>();
@@ -626,7 +627,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float ohh = (float) Math.toDegrees(Math.atan(oph / 2f / od));
             if (Math.abs(o.pitchA - elN) >= ohh + hhN) continue;                      // above or below: no need to give way
             float cosE = Math.max(0.3f, (float) Math.cos(Math.toRadians(o.pitchA)));
-            float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / nearD(od * cosE, oph / 2f, o.rot[10])));
+            float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / nearD(od * cosE, oph / 4f, o.rot[10])));
             if (ohw > 50f) continue;                                                   // the cinema screen
             float y = o.yawA + o.pendYaw;
             while (y > 180f) y -= 360f; while (y < -180f) y += 360f;
