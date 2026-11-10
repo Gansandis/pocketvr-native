@@ -137,7 +137,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.140 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.141 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg)));
                 } else hud.setText("");
             }
@@ -160,11 +160,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         try { NvShizuku.init(); } catch (Throwable ignored) { }
         rend.ui = menu;
         wMenu = rend.addWindow(menu, 0.95f);      // starts hidden: pinch thumb + middle finger and hold to bring it up
-        wMenu.anchor = true;                      // new windows prefer to sit right next to the main menu
+        wMenu.noGhost = true; wMenu.anchor = true;                      // new windows prefer to sit right next to the main menu
         buildWindows();
         buildMenu();
         final NvSplash splash = new NvSplash();                          // the start-up animation: a window that shows for a few seconds and goes
-        final VRRenderer.Win wSplash = rend.addWindow(splash, 0.9f);
+        final VRRenderer.Win wSplash = rend.addWindow(splash, 0.9f); wSplash.noGhost = true;
         rend.toggle(wSplash, 0f, 0f);
         ui.postDelayed(() -> { if (wSplash.visible) rend.toggle(wSplash, 0f, 0f); }, NvSplash.TOTAL_MS + 150);
         for (int i = 0; i < 7; i++) winApply(i);
@@ -255,7 +255,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 cm.setPrimaryClip(android.content.ClipData.newPlainText("pocketvr", s));
             } catch (Throwable ignored) { }
         });
-        wKeys = rend.addWindow(kb, 0.80f);
+        wKeys = rend.addWindow(kb, 0.80f); wKeys.noGhost = true;
         kbd = kb;
         kb.onClose = () -> { kb.sink = null; rend.setVisible(wKeys, false, 0f, 0f); };
 
@@ -267,7 +267,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
 
         // gallery, 360 viewer and cinema
         video = new NvVideo(this);
-        wVideo = rend.addWindow(video, 1.7f);
+        wVideo = rend.addWindow(video, 1.7f); wVideo.noGhost = true;
         wVideo.showInCinema = true; wKeys.showInCinema = true;
         video.onClose = () -> { video.release(); rend.setVisible(wVideo, false, 0f, 0f); rend.cinema = false; };
         media = new NvMedia(this);

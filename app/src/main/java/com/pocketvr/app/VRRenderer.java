@@ -140,7 +140,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // sticky when still: the sensor's tiny noise must not make the windows tremble, so below a slow turn the view is not carried forward and is eased heavily;
         // from a calm turn upwards it follows at once (no lag while you really move your head)
         float f = Math.max(0f, Math.min(1f, (speed - 0.035f) / 0.07f));        // 1 deg/s and slower: held still; 4.6 deg/s and faster: follows at once      // (it was 0.04 .. 0.34 rad/s: a slow turn was eased more than a quicker one, and the windows swayed while turning)
-        float k = Math.min(dt, 0.025f) / span * f;             // never look further ahead than 25 ms
+        float k = Math.min(dt, 0.012f) / span * f;             // never look further ahead than 12 ms (25 ms made the windows swing past when the head stopped)
         float[] e = new float[9];
         for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) {
             float dl = 0f;
@@ -207,6 +207,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float animA = 1f, animS = 1f;                        // fade and size while it comes in
         boolean animOn = false;
         long animT0 = 0;
+        public volatile boolean ghost = false;             // just chosen from the menu: shown see-through in front of you, one more click opens it for real
+        public boolean noGhost = false;                    // opens at once (the menu itself, keyboard, cinema screen ...)
+        long confT0 = 0;                                   // when the ghost was confirmed (it fades up from see-through)
+        float pendYaw = 0f;                                // degrees it still has to slide sideways (+ = to the right) to make room for a new window
         int texW = 0, texH = 0;
         public volatile float offYaw = 0, offPitch = 0;      // where it appears, relative to the view centre (degrees)
         float[] rot = null;
@@ -237,7 +241,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public void setVisible(Win w, boolean v, float offYaw, float offPitch) {
         w.offYaw = offYaw; w.offPitch = offPitch; w.defYaw = offYaw; w.defPitch = offPitch;
         if (v && !w.visible && w.hasSaved) { w.offYaw = w.svYaw; w.offPitch = w.svPitch; w.wantScale = w.svScale; w.placeDist = w.svDist; }
-        if (v && !w.visible) { w.placeReq = true; w.newOpen = true; }
+        if (v && !w.visible) {
+            w.placeReq = true; w.newOpen = true; w.pendYaw = 0f; w.confT0 = 0;
+            NvUi u = ui;
+            if (u != null && u.open && w != menuWin && !w.noGhost) { w.ghost = true; u.setOpen(false); }       // picked from the menu: the menu folds away, the new window waits for one more click
+            else w.ghost = false;
+        }
+        if (!v) { w.ghost = false; w.pendYaw = 0f; }
         w.visible = v;
     }
     public void toggle(Win w, float offYaw, float offPitch) { setVisible(w, !w.visible, offYaw, offPitch); }
@@ -583,12 +593,72 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         return true;
     }
 
+    private boolean pushRightNext = true;                           // a window exactly in the middle gives way to the right first, then to the left, and so on
+    private boolean prevUiOpen = false;
+
+    /**
+     * A window that is opened comes up straight in front of you. The windows already there that would lie under it slide sideways (to the right or the left,
+     * taking turns) and stay in a row beside it: each one only moves as far as it needs to, and the ones next to it move on in turn.
+     */
+    private void placeCentre(Win w) {
+        w.slideDeg = 0f; w.slideDegP = 0f; w.aimV = null;
+        if (w.shrunk) { w.wantScale = 0f; w.shrunk = false; }
+        if (w.hasSaved) return;
+        w.offYaw = 0f;
+        android.graphics.Bitmap bm = w.c.bitmap();
+        if (bm == null || bm.getWidth() <= 0) { placeDbg = "place: no picture yet"; return; }
+        float sc = w.wantScale > 0 ? w.wantScale : openScale(w), d = w.placeDist > 0f ? w.placeDist : PANEL_D;
+        float pw = w.widthM * sc * winZoom * w.c.visFrac(), ph = pw * bm.getHeight() / bm.getWidth() / Math.max(0.2f, w.c.visFrac());
+        float elN = w.offPitch;
+        float hwN = (float) Math.toDegrees(Math.atan(pw / 2f / nearD(d, ph / 2f, tiltSinOfEl(elN))));
+        float hhN = (float) Math.toDegrees(Math.atan(ph / 2f / d));
+        final float gap = 0.6f;
+        java.util.ArrayList<Win> right = new java.util.ArrayList<>(), left = new java.util.ArrayList<>();
+        float[] hwO = new float[wins.size()], yf = new float[wins.size()];
+        java.util.HashMap<Win, Integer> idx = new java.util.HashMap<>();
+        int n = 0;
+        for (Win o : wins) {
+            if (o == w || !shown(o) || o.rot == null || o.placeReq || o.ghost || !o.c.occupies() || o.showInCinema && cinema) continue;
+            android.graphics.Bitmap ob = o.c.bitmap();
+            if (ob == null || ob.getWidth() <= 0) continue;
+            float opw = o.widthM * o.scale * winZoom * o.c.visFrac(), oph = opw * ob.getHeight() / ob.getWidth() / Math.max(0.2f, o.c.visFrac());
+            float od = Math.max(0.3f, o.dist);
+            float ohh = (float) Math.toDegrees(Math.atan(oph / 2f / od));
+            if (Math.abs(o.pitchA - elN) >= ohh + hhN) continue;                      // above or below: no need to give way
+            float cosE = Math.max(0.3f, (float) Math.cos(Math.toRadians(o.pitchA)));
+            float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / nearD(od * cosE, oph / 2f, o.rot[10])));
+            if (ohw > 50f) continue;                                                   // the cinema screen
+            float y = o.yawA + o.pendYaw;
+            while (y > 180f) y -= 360f; while (y < -180f) y += 360f;
+            idx.put(o, n); hwO[n] = ohw; yf[n] = y; n++;
+            if (Math.abs(y) < 1.5f) { if (pushRightNext) right.add(o); else left.add(o); pushRightNext = !pushRightNext; }
+            else if (y > 0f) right.add(o); else left.add(o);
+        }
+        if (n == 0) { placeDbg = "place: in the middle (nothing to move)"; return; }
+        final float[] yfF = yf;
+        right.sort((a, b) -> Float.compare(yfF[idx.get(a)], yfF[idx.get(b)]));
+        left.sort((a, b) -> Float.compare(yfF[idx.get(b)], yfF[idx.get(a)]));
+        float cur = hwN + gap; int moved = 0;
+        for (Win o : right) {
+            int i = idx.get(o); float pos = yf[i];
+            if (pos - hwO[i] < cur) { pos = cur + hwO[i]; o.pendYaw = pos - (yf[i] - o.pendYaw); moved++; }
+            cur = pos + hwO[i] + gap;
+        }
+        cur = -hwN - gap;
+        for (Win o : left) {
+            int i = idx.get(o); float pos = yf[i];
+            if (pos + hwO[i] > cur) { pos = cur - hwO[i]; o.pendYaw = pos - (yf[i] - o.pendYaw); moved++; }
+            cur = pos - hwO[i] - gap;
+        }
+        placeDbg = "place: in the middle, " + moved + " window(s) slide aside (" + right.size() + " right, " + left.size() + " left)";
+    }
+
     private static final float ANIM_MS = 520f;                     // how long a window takes to slide in
 
     private void updateWin(Win w, float[] rn, float t) {
         float ux = sux, uy = suy, uz = suz;
         if (w.placeReq || w.rot == null) {
-            avoidOverlap(w);
+            placeCentre(w);
             if (w.newOpen) { w.newOpen = false; w.animOn = true; w.animT0 = System.nanoTime(); }     // a window that is opened (not just re-centred) slides in
             else w.animOn = false;
             android.opengl.Matrix.transposeM(tA, 0, rn, 0);
@@ -603,6 +673,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             uprightAboutCentre(w);                                     // a wall standing straight up in the room, wherever the head was pitched when it was put up
             w.placeReq = false;
         }
+        if (w.pendYaw != 0f && dragWin != w) {                        // sliding sideways to make room for a window that was just opened
+            float st = Math.abs(w.pendYaw) < 0.1f ? w.pendYaw : w.pendYaw * 0.12f;
+            turnWin(w, rn, -st, 0f);
+            uprightAboutCentre(w);
+            w.pendYaw -= st;
+            if (Math.abs(w.pendYaw) < 1e-3f) w.pendYaw = 0f;
+        } else if (dragWin == w) w.pendYaw = 0f;
         // where the window centre is now, seen from the phone: angle to the right and angle upwards
         android.opengl.Matrix.translateM(mM, 0, w.rot, 0, 0f, 0f, -w.dist);
         shiftBy(w, mM, ux, uy, uz);
@@ -640,6 +717,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 w.animS = 0.9f + 0.1f * e;
             }
         }
+        if (w.ghost) w.animA *= 0.38f;                                  // waiting for the confirming click: see-through
+        else if (w.confT0 != 0) {
+            float cx = (System.nanoTime() - w.confT0) / 1e6f / 420f;
+            if (cx >= 1f) w.confT0 = 0; else { float cr = 1f - cx; w.animA *= 0.38f + 0.62f * (1f - cr * cr * cr); }
+        }
         android.opengl.Matrix.translateM(mM, 0, w.rot, 0, bx + sx, by + sy, -w.dist + bz + sz);
         if (tilt != 0f) android.opengl.Matrix.rotateM(mM, 0, tilt, 0f, 1f, 0f);
         shiftBy(w, mM, ux, uy, uz);
@@ -649,6 +731,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     private void computePanel() {
+        { NvUi u0 = ui; boolean uo = u0 != null && u0.open;
+          if (uo && !prevUiOpen && menuWin != null && menuWin.visible && !menuWin.placeReq && !menuWin.hasSaved) { menuWin.placeReq = true; menuWin.newOpen = true; menuWin.offYaw = 0f; }
+          prevUiOpen = uo; }
         float[] rn = rotView;                                        // windows are fixed in the room: they do not follow the phone's tilt
         if (recenter) {
             recenter = false;
@@ -1388,6 +1473,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             for (int i = wins.size() - 1; i >= 0; i--) {                 // the one drawn last is in front
                 Win w = wins.get(i);
                 if (!shown(w) || !hitWin(w, cnx, cny, o)) continue;
+                if (w.ghost) { target = w; break; }                       // a see-through window waiting for a click: it is hit anywhere
                 if (w.c.inGrip(o[0], o[1])) { gripWin = w; break; }      // a bottom corner: pull it to resize
                 if (w.c.covers(o[0], o[1])) { target = w; break; }
             }
@@ -1408,6 +1494,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 okProg = Math.min(1f, (nowMs - okT0) / 1500f);
                 if (okProg >= 1f && !okDone) { okDone = true; resetLayoutReq = true; recenter = true; holdPop(cnx, cny, true); }
             } else { okT0 = 0; okProg = 0; if (!pinching) okDone = false; }
+        }
+        if (target != null && target.ghost && pinching && !prevPinch) {      // the confirming click: it opens for real
+            target.ghost = false; target.confT0 = System.nanoTime(); holdPop(cnx, cny, false);
         }
         if (gripWin != null && pinching && !prevPinch) {
             if (motion != null && motion.enabled) rebase(gripWin, sux, suy, suz);
@@ -1453,7 +1542,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         prevPinch = pinching;
         for (Win w : wins) {
             if (!shown(w)) continue;
-            if (w == target && dragWin == null) w.c.update(true, o[0], o[1], press);
+            if (w == target && dragWin == null && !w.ghost) w.c.update(true, o[0], o[1], press);
             else w.c.update(false, 0, 0, false);
         }
     }

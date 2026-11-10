@@ -44,6 +44,7 @@ public class NvUi implements NvContent {
     public boolean handleHover() { return hover == handle; }
     @Override public Bitmap bitmap() { return bmp; }
     @Override public float visFrac() { return open ? safe : 1f; }
+    @Override public boolean occupies() { return open; }
     @Override public void setDragging(boolean d) { if (d != dragging) { dragging = d; dirty = true; } }
     @Override public boolean inGrip(float x, float y) {
         if (!open || pH <= 0) return false;
