@@ -139,7 +139,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float speed = ang / span;
         // sticky when still: the sensor's tiny noise must not make the windows tremble, so below a slow turn the view is not carried forward and is eased heavily;
         // from a calm turn upwards it follows at once (no lag while you really move your head)
-        float f = Math.max(0f, Math.min(1f, (speed - 0.035f) / 0.07f));        // 1 deg/s and slower: held still; 4.6 deg/s and faster: follows at once      // (it was 0.04 .. 0.34 rad/s: a slow turn was eased more than a quicker one, and the windows swayed while turning)
+        float f = Math.max(0f, Math.min(1f, (speed - 0.02f) / 0.05f));        // 1 deg/s and slower: held still; 4.6 deg/s and faster: follows at once      // (it was 0.04 .. 0.34 rad/s: a slow turn was eased more than a quicker one, and the windows swayed while turning)
         float k = Math.min(dt, 0.012f) / span * f;             // never look further ahead than 12 ms (25 ms made the windows swing past when the head stopped)
         float[] e = new float[9];
         for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) {
@@ -159,9 +159,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float tq = 0f;
             for (int r = 0; r < 3; r++) for (int c = 0; c < 3; c++) tq += o[c * 4 + r] * pv[c * 4 + r];
             float dev = (float) Math.acos(Math.max(-1f, Math.min(1f, (tq - 1f) * 0.5f)));     // how far the new turn is from what is shown now (rad)
-            float al = 0.05f + 0.95f * f;
-            if (f < 0.5f && dev < 0.0022f) al = 0f;                    // still and less than ~0.13 deg off: it does not move at all (no trembling)
-            else if (f < 0.5f) al = Math.max(al, 0.05f * Math.min(1f, dev / 0.01f));
+            float al = 0.15f + 0.85f * f;                                // turning slowly must not lag behind the room (the windows then seem to swim and tilt against the camera picture)
+            if (f < 0.3f && dev < 0.0012f) al = 0f;                    // still and less than ~0.07 deg off: it does not move at all (no trembling)
                                   // held still: only 8 % of the way each picture, so hand tremor and sensor noise do not show                      // still: 10 % of the way each picture; turning: all the way
             for (int i = 0; i < 16; i++) o[i] = pv[i] + (o[i] - pv[i]) * al;
             ortho(o);
