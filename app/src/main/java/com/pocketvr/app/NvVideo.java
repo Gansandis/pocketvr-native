@@ -121,6 +121,8 @@ public class NvVideo implements NvContent {
     }
 
     public boolean isOpen() { return pending != null; }
+    public void playPause() { toggle(); }
+    public boolean isPlaying() { return playing; }
 
     private synchronized void toggle() {
         MediaPlayer m = mp;

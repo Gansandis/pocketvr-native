@@ -119,6 +119,7 @@ public class NvBrowser implements NvContent {
     }
 
     public void navigate(String url) { go(url); }
+    public void nav(final String a) { ui.post(() -> vb.nav(a)); }
 
     private void go(String text) {
         String s = text.trim();

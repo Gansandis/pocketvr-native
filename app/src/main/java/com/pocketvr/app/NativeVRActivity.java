@@ -2,6 +2,7 @@ package com.pocketvr.app;
 
 import android.Manifest;
 import android.app.Activity;
+import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Color;
 import android.graphics.SurfaceTexture;
@@ -137,8 +138,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.154 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
-                            f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg)));
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.156 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                            f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg : "")));
                 } else hud.setText("");
             }
             ui.postDelayed(this, 500);
@@ -193,6 +194,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             }
             return true;
         });
+        initVoice();
         if (checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED)
             requestPermissions(new String[]{Manifest.permission.CAMERA}, 7);
     }
@@ -498,6 +500,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 () -> motion.lagMs = Math.min(200, motion.lagMs + 20));
 
         s.cat("","System");
+        s.toggle("🎙", "สั่งด้วยเสียง (เฮ้ พ็อกเก็ต)", () -> voice != null && voice.isOn(), () -> toggleVoice());
+        s.cycle("🌐", "ภาษาที่ฟัง", () -> voiceLangMode == 0 ? "ตามภาษาแอป" : voiceLangMode == 1 ? "ไทย" : voiceLangMode == 2 ? "อังกฤษ (English)" : "ไทย+อังกฤษ (สลับกัน)", () -> { voiceLangMode = (voiceLangMode + 1) % 4; if (voice != null && voice.isOn()) { voice.stop(); voice.start(); } });
         s.cycle("", "ภาษา", () -> Tr.thai ? "ไทย" : "English", () -> { Tr.setThai(!Tr.thai); refreshGlass(); settings.markDirty(); });
         s.cycle("🔌", "Shizuku (เปิดแอปจริงแบบลอย)", () -> NvShizuku.statusText() + (NvShizuku.ready() ? " | " + NvShizuku.inputInfo() : ""), () -> {
             NvShizuku.request();
@@ -583,6 +587,168 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         if (lastSaved == null || !java.util.Arrays.equals(lastSaved, snapPrefs()) || lastWin == null || !java.util.Arrays.equals(lastWin, winSnap())) savePrefsNow();
     }
 
+
+    // ---- voice commands ("เฮ้ พ็อกเก็ต ...") ----
+    private NvVoice voice;
+    private int voiceLangMode = 0;                                   // 0 follows the app language, 1 Thai, 2 English, 3 both (switches each time)
+    private boolean voiceResume = false, voiceAfterPerm = false;
+    private int lastTyped = 0;
+
+    private boolean micOk() { return checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED; }
+
+    private void initVoice() {
+        voice = new NvVoice(this, new NvVoice.Out() {
+            @Override public void onCommand(String t) { try { runVoice(t); } catch (Throwable x) { say("คำสั่งผิดพลาด: " + x.getClass().getSimpleName()); } }
+            @Override public void onDictate(String t) { try { dictate(t); } catch (Throwable x) { say("พิมพ์ไม่ได้: " + x.getClass().getSimpleName()); } }
+            @Override public void onState(String s) { voiceMsg = s; if (!s.isEmpty()) menu.toast(s); }
+        });
+        voice.langSrc = c -> voiceLangMode == 1 ? "th-TH" : voiceLangMode == 2 ? "en-US" : voiceLangMode == 3 ? (c % 2 == 0 ? "th-TH" : "en-US") : (Tr.thai ? "th-TH" : "en-US");
+    }
+
+    private volatile String voiceMsg = "";
+    private void say(String s) { voiceMsg = s; menu.toast(s); try { settings.markDirty(); menu.markDirty(); } catch (Throwable ignored) { } }
+
+    private void voiceAsk(final boolean once) {
+        if (!micOk()) { voiceAfterPerm = true; voiceOnce = once; menu.toast("ถอดแว่นแล้วกดอนุญาตไมโครโฟนบนหน้าจอ"); runOnUiThread(() -> requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, 78)); return; }
+        if (once) voice.listenOnce(); else voice.start();
+        menu.markDirty(); settings.markDirty();
+    }
+    private boolean voiceOnce = false;
+
+    private void toggleVoice() {
+        if (voice.isOn()) { voice.stop(); say("ปิดสั่งเสียงแล้ว"); } else voiceAsk(false);
+        menu.markDirty(); settings.markDirty();
+    }
+
+    private static boolean has(String n, String... ks) { for (String k : ks) if (n.contains(NvVoice.norm(k))) return true; return false; }
+    private static boolean startsWith(String n, String... ks) { for (String k : ks) if (n.startsWith(NvVoice.norm(k))) return true; return false; }
+    private static String after(String raw, String... ks) {
+        String low = raw.toLowerCase(java.util.Locale.ROOT).trim();
+        for (String k : ks) { int i = low.indexOf(k); if (i >= 0) return raw.trim().substring(Math.min(raw.trim().length(), i + k.length())).trim(); }
+        return "";
+    }
+
+    private int firstBrowser() { for (int k = 0; k < brs.length; k++) if (brs[k] != null && bws[k] != null && bws[k].visible) return k; return -1; }
+
+    private void hideWin(VRRenderer.Win w) { if (w != null && w.visible) rend.setVisible(w, false, 0f, 0f); }
+    private void showWin(VRRenderer.Win w, float yaw, float pitch) { if (w != null && !w.visible) rend.setVisible(w, true, yaw, pitch); }
+
+    /** web app names the way people say them (Thai and English), matched to the WEB list by name */
+    private static final String[][] WEBSAY = {
+        {"YouTube", "ยูทูป", "ยูทูบ", "youtube", "you tube"}, {"Facebook", "เฟซบุ๊ก", "เฟซบุค", "เฟส", "facebook"}, {"TikTok", "ติ๊กต๊อก", "ติ๊กต็อก", "ติกตอก", "tiktok", "tik tok"},
+        {"Instagram", "อินสตาแกรม", "ไอจี", "instagram"}, {"X (Twitter)", "ทวิตเตอร์", "twitter"}, {"Netflix", "เน็ตฟลิกซ์", "เน็ตฟลิก", "netflix"}, {"Spotify", "สปอติฟาย", "สปอตติฟาย", "spotify"},
+        {"แผนที่", "แผนที่", "แมพ", "maps", "google map"}, {"Gmail", "จีเมล", "อีเมล", "gmail", "email"}, {"Discord", "ดิสคอร์ด", "discord"}, {"WhatsApp", "วอทส์แอป", "วอตส์แอป", "whatsapp"},
+        {"Telegram", "เทเลแกรม", "telegram"}, {"Reddit", "เรดดิต", "เรดดิท", "reddit"}, {"Twitch", "ทวิตช์", "twitch"}, {"Shopee", "ช็อปปี้", "ช้อปปี้", "ช็อปปี", "shopee"},
+        {"Lazada", "ลาซาด้า", "lazada"}, {"Google Photos", "กูเกิลโฟโต้", "กูเกิลโฟโตส์", "google photos"},
+    };
+
+    private String webUrlFor(String n) {
+        for (String[] a : WEBSAY) {
+            boolean hit = false;
+            for (int i = 1; i < a.length; i++) if (n.contains(NvVoice.norm(a[i]))) { hit = true; break; }
+            if (!hit) continue;
+            for (String[] w : WEB) if (w[2].equals(a[0])) return w[1];
+        }
+        return null;
+    }
+
+    private void closeAllWindows() {
+        for (int k = 0; k < brs.length; k++) if (brs[k] != null && bws[k] != null && bws[k].visible) { brs[k].setActive(false); rend.setVisible(bws[k], false, 0f, 0f); }
+        hideWin(wKeys); hideWin(wSet); hideWin(wFruit); hideWin(wSword3); hideWin(wClock); hideWin(wStats); hideWin(wMedia);
+        if (wVideo.visible) video.onClose.run();
+    }
+
+    private void dictate(String t) {
+        String n = NvVoice.norm(t);
+        if (startsWith(n, "เสร็จ", "จบ", "หยุดพิมพ์", "พอ", "ยกเลิก", "stop", "done")) { voice.dictating = false; say("เลิกพิมพ์ด้วยเสียงแล้ว"); return; }
+        NvKeyboard.Sink sk = kbd == null ? null : kbd.sink;
+        if (sk == null) { voice.dictating = false; say("ไม่มีช่องพิมพ์ (แตะช่องพิมพ์ก่อน)"); return; }
+        if (startsWith(n, "ลบ", "delete", "undo")) { for (int i = 0; i < Math.max(1, lastTyped); i++) sk.onBackspace(); lastTyped = 0; say("ลบแล้ว"); return; }
+        if (n.equals(NvVoice.norm("ส่ง")) || n.equals(NvVoice.norm("ค้นหา")) || n.equals(NvVoice.norm("เอนเตอร์")) || n.equals(NvVoice.norm("ตกลง")) || n.equals("enter") || n.equals("search") || n.equals("send")) {
+            sk.onEnter(kbd.text()); lastTyped = 0; say("กด Enter แล้ว"); return;
+        }
+        String s = t.trim();
+        sk.onText(s); lastTyped = s.length();
+        say("พิมพ์: " + s);
+    }
+
+    private void runVoice(String raw) {
+        final String n = NvVoice.norm(raw);
+        if (n.isEmpty()) return;
+        // stop listening
+        if (has(n, "หยุดฟัง", "ปิดสั่งเสียง", "เลิกฟัง", "stop listening")) { voice.stop(); say("ปิดสั่งเสียงแล้ว"); return; }
+        // dictation
+        if (startsWith(n, "พิมพ์", "type ", "dictate")) {
+            String rest = after(raw, "พิมพ์", "type", "dictate");
+            if (kbd == null || kbd.sink == null) { say("แตะช่องพิมพ์ก่อน แล้วค่อยพูดว่า \"พิมพ์\""); return; }
+            if (!rest.isEmpty()) { dictate(rest); return; }
+            voice.dictating = true; lastTyped = 0; say("พูดข้อความได้เลย — จบด้วย \"เสร็จ\" / \"ส่ง\"");
+            return;
+        }
+        // search
+        if (startsWith(n, "ค้นหา", "search", "เสิร์ช", "หาใน", "google") || (startsWith(n, "หา") && n.length() > 3)) {
+            String q = after(raw, "ค้นหา", "search", "เสิร์ช", "google");
+            if (q.isEmpty() && raw.trim().startsWith("หา")) q = raw.trim().substring(2).trim();
+            if (q.toLowerCase(java.util.Locale.ROOT).startsWith("for ")) q = q.substring(4).trim();
+            if (q.isEmpty()) { say("จะค้นหาอะไร?"); return; }
+            int b = firstBrowser();
+            if (b >= 0) { brs[b].navigate(q); say("ค้นหา: " + q); }
+            else { try { openWebFloating("https://www.google.com/search?q=" + java.net.URLEncoder.encode(q, "UTF-8")); } catch (Throwable t) { openWebFloating("https://www.google.com"); } say("ค้นหา: " + q); }
+            return;
+        }
+        // browser navigation
+        if (has(n, "ย้อนกลับ", "ถอยหลัง", "goback", "pageback") || n.equals("กลับ") || n.equals("back")) { int b = firstBrowser(); if (b >= 0) { brs[b].nav("back"); say("ย้อนกลับ"); } else say("ไม่มีเบราว์เซอร์ที่เปิดอยู่"); return; }
+        if (has(n, "ไปข้างหน้า", "ถัดไป", "forward", "goforward")) { int b = firstBrowser(); if (b >= 0) { brs[b].nav("forward"); say("ไปข้างหน้า"); } return; }
+        if (has(n, "รีเฟรช", "โหลดใหม่", "refresh", "reload")) { int b = firstBrowser(); if (b >= 0) { brs[b].nav("reload"); say("โหลดใหม่"); } return; }
+        // video
+        if (wVideo.visible && has(n, "หยุดวิดีโอ", "พักวิดีโอ", "เล่นต่อ", "เล่นวิดีโอ", "หยุดชั่วคราว", "pause", "play", "resume")) { video.playPause(); say(video.isPlaying() ? "เล่นต่อ" : "หยุดชั่วคราว"); return; }
+        if (wVideo.visible && (n.equals("หยุด") || n.equals("เล่น") || n.equals("พัก"))) { video.playPause(); say(video.isPlaying() ? "เล่นต่อ" : "หยุดชั่วคราว"); return; }
+        // controls
+        if (has(n, "จัดกลาง", "รีเซ็ตกลาง", "รีเซนเตอร์", "recenter", "recentre", "re-center", "centerthe", "กลางจอ", "จัดใหม่", "resetview")) { rend.recenter = true; say("จัดกลางใหม่แล้ว"); return; }
+        if (has(n, "ภาษาอังกฤษ", "english")) { Tr.setThai(false); refreshGlass(); settings.markDirty(); say("English"); return; }
+        if (has(n, "ภาษาไทย", "thai")) { Tr.setThai(true); refreshGlass(); settings.markDirty(); say("ภาษาไทย"); return; }
+        if (has(n, "ช่วยด้วย", "ทำอะไรได้", "คำสั่ง", "help", "whatcanyou", "commands")) {
+            say("ลอง: เปิดเบราว์เซอร์ · เปิดยูทูป · ค้นหา … · ปิดทั้งหมด · พิมพ์ · จัดกลาง · โหมดโรงหนัง · เปิดเกมผลไม้");
+            return;
+        }
+        boolean close = startsWith(n, "ปิด", "close", "เก็บ", "ซ่อน", "hide", "turnoff", "shutdown", "exit", "dismiss") || has(n, "ปิด");
+        boolean open = !close;
+        if (close && (has(n, "ทั้งหมด", "ทุกอัน", "ทุกหน้าต่าง", "closeall", "allwindows", "everything", "allapps"))) { closeAllWindows(); say("ปิดหน้าต่างทั้งหมดแล้ว"); return; }
+        // web apps
+        String url = webUrlFor(n);
+        if (url != null) {
+            if (close) { int b = firstBrowser(); if (b >= 0) { brs[b].setActive(false); rend.setVisible(bws[b], false, 0f, 0f); say("ปิดแล้ว"); } return; }
+            openWebFloating(url); return;
+        }
+        if (has(n, "เบราว์เซอร์", "เบราเซอร์", "เว็บ", "browser", "chrome", "โครม", "internet", "webpage")) {
+            if (close) { for (int k = 0; k < brs.length; k++) if (brs[k] != null && bws[k] != null && bws[k].visible) { brs[k].setActive(false); rend.setVisible(bws[k], false, 0f, 0f); } say("ปิดเบราว์เซอร์แล้ว"); }
+            else { openBrowser(-1); say("เปิดเบราว์เซอร์"); }
+            return;
+        }
+        if (has(n, "แป้นพิมพ์", "คีย์บอร์ด", "keyboard")) { if (close) hideWin(wKeys); else showWin(wKeys, 0f, -24f); say(close ? "ปิดคีย์บอร์ด" : "เปิดคีย์บอร์ด"); return; }
+        if (has(n, "ตั้งค่า", "settings")) { if (close) hideWin(wSet); else showWin(wSet, 0f, 5f); say(close ? "ปิดตั้งค่า" : "เปิดตั้งค่า"); return; }
+        if (has(n, "ฟันผลไม้", "เกมผลไม้", "ผลไม้", "fruit", "slicing")) { if (close) hideWin(wFruit); else showWin(wFruit, 0f, 2f); say(close ? "ปิดเกมผลไม้" : "เปิดเกมผลไม้"); return; }
+        if (has(n, "ฟันดาบ", "เกมดาบ", "ดาบ", "มอนสเตอร์", "sword", "monster")) { if (close) hideWin(wSword3); else showWin(wSword3, 0f, 30f); say(close ? "ปิดเกมดาบ" : "เปิดเกมดาบ"); return; }
+        if (has(n, "นาฬิกา", "จับเวลา", "clock", "timer")) { if (close) hideWin(wClock); else showWin(wClock, 18f, 0f); say(close ? "ปิดนาฬิกา" : "เปิดนาฬิกา"); return; }
+        if (has(n, "สถานะ", "status")) { if (close) hideWin(wStats); else showWin(wStats, -18f, 0f); say(close ? "ปิดสถานะ" : "เปิดสถานะ"); return; }
+        if (has(n, "โรงหนัง", "cinema", "theater")) { rend.cinema = !close; rend.recenter = true; say(close ? "ปิดโหมดโรงหนัง" : "เปิดโหมดโรงหนัง"); return; }
+        if (has(n, "แกลเลอรี", "แกลลอรี่", "รูป", "ภาพ", "วิดีโอ", "gallery", "photos", "pictures", "videos")) {
+            if (close) { if (wMedia.visible) media.onClose.run(); if (wVideo.visible) video.onClose.run(); say("ปิดแล้ว"); }
+            else { openGallery(); say("เปิดแกลเลอรี"); }
+            return;
+        }
+        if (has(n, "กอริลลา", "กอริลล่า", "gorilla")) {
+            if (close) return;
+            try {
+                Intent gi = getPackageManager().getLaunchIntentForPackage("com.htmltoapk.gorillaworld");
+                if (gi == null) say("ยังไม่ได้ติดตั้ง Gorilla World"); else { gi.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(gi); }
+            } catch (Throwable t) { say("เปิด Gorilla World ไม่ได้"); }
+            return;
+        }
+        if (has(n, "เมนู", "menu")) { menu.setOpen(open); say(open ? "เปิดเมนู" : "ปิดเมนู"); return; }
+        say("ไม่เข้าใจ: " + raw.trim() + "  (พูดว่า \"ช่วยด้วย\")");
+    }
+
     private void buildMenu() {
         buildSettings();
         final int GA = 0xFF5A5A63, GB = 0xFF38383E;
@@ -618,6 +784,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 else { gi.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(gi); }
             } catch (Throwable t) { err = "gorilla: " + t; }
         })));
+        tools.add(new NvUi.Btn("🎙", () -> "สั่งด้วยเสียง", () -> voice.isOn() ? "ฟังอยู่ — \"เฮ้ พ็อกเก็ต\" แล้วสั่ง" : "ปิดอยู่ (กดเพื่อเปิด)", () -> voice.isOn(), 0xFFE0506A, 0xFFA02A42, () -> toggleVoice()));
+        tools.add(new NvUi.Btn("🗣", () -> "พูดคำสั่งตอนนี้", () -> "ไม่ต้องมีคำปลุก พูดได้ 8 วินาที", null, GA, GB, () -> voiceAsk(true)));
         tools.add(new NvUi.Btn("⚔", () -> "เกมฟันดาบ 3D", () -> wSword3.visible ? "เปิดอยู่" : "มอนสเตอร์ 3D ในห้อง", () -> wSword3.visible, GA, GB, () -> rend.toggle(wSword3, 0f, 30f)));
         tools.add(new NvUi.Btn("🍉", () -> "เกมฟันผลไม้", () -> wFruit.visible ? "เปิดอยู่" : "ปัดนิ้วฟันผลไม้", () -> wFruit.visible, GA, GB, () -> rend.toggle(wFruit, 0f, 2f)));
         tools.add(new NvUi.Btn("⏱", () -> "นาฬิกา/จับเวลา", () -> wClock.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wClock.visible, GA, GB, () -> rend.toggle(wClock, 18f, 0f)));
@@ -681,6 +849,12 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     @Override public void onRequestPermissionsResult(int rc, String[] p, int[] r) {
+        if (rc == 78) {
+            if (r.length > 0 && r[0] == PackageManager.PERMISSION_GRANTED) { if (voiceAfterPerm) { if (voiceOnce) voice.listenOnce(); else voice.start(); } }
+            else menu.toast("ยังไม่ได้รับอนุญาตไมโครโฟน");
+            voiceAfterPerm = false;
+            return;
+        }
         if (rc == 77) {                                                  // pictures / videos permission (the app keeps running if it is refused)
             if (hasMediaPerm()) { media.reload(); rend.setVisible(wMedia, true, 0f, 0f); }
             else menu.toast("ยังไม่ได้รับอนุญาตให้อ่านรูป");
@@ -702,6 +876,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         super.onResume();
         resumed = true;
         immersive();
+        if (voiceResume && voice != null && micOk()) { voiceResume = false; voice.start(); }
         gl.onResume();
         try {
             sm = (android.hardware.SensorManager) getSystemService(SENSOR_SERVICE);
@@ -725,6 +900,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         savePrefsNow();
         ui.removeCallbacks(tick);
         try { if (sm != null) sm.unregisterListener(sl); } catch (Throwable ignored) { }
+        voiceResume = voice != null && voice.isOn() && !voice.once();
+        if (voice != null) voice.stop();
         cam.stop();
         gl.onPause();
         super.onPause();

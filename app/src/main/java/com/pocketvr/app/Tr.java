@@ -13,6 +13,20 @@ public final class Tr {
     public static volatile boolean thai = false;
     private static final HashMap<String, String> cache = new HashMap<>();
     private static final String[][] PAIRS = {
+        {"ภาษาที่ฟัง", "Listening language"},
+        {"ตามภาษาแอป", "Follow app language"},
+        {"อังกฤษ (English)", "English"},
+        {"ไทย+อังกฤษ (สลับกัน)", "Thai + English (alternating)"},
+        {"สั่งด้วยเสียง (เฮ้ พ็อกเก็ต)", "Voice commands (Hey Pocket)"},
+        {"สั่งด้วยเสียง", "Voice commands"},
+        {"พูดคำสั่งตอนนี้", "Speak a command now"},
+        {"ไม่ต้องมีคำปลุก พูดได้ 8 วินาที", "No wake word, 8 seconds to speak"},
+        {"ปิดอยู่ (กดเพื่อเปิด)", "Off (tap to turn on)"},
+        {"ปิดสั่งเสียงแล้ว", "Voice commands off"},
+        {"ว่าไง? พูดคำสั่งได้เลย…", "Yes? Say a command…"},
+        {"ยังไม่ได้อนุญาตไมโครโฟน", "Microphone not allowed yet"},
+        {"ยังไม่ได้รับอนุญาตไมโครโฟน", "Microphone not allowed yet"},
+        {"ไม่มีอินเทอร์เน็ต ฟังเสียงไม่ได้", "No internet, cannot listen"},
         {"ปัดนิ้วฟันมอนสเตอร์ที่เดินเข้าหาคุณ", "Swipe your finger to slash the monsters coming for you"},
         {"ปัดนิ้วฟันผลไม้ให้ขาด", "Swipe your finger to slice the fruit"},
         {"อย่าฟันระเบิด · ผลไม้ตก 3 ลูก = จบเกม", "Avoid the bombs · 3 fruits dropped = game over"},
