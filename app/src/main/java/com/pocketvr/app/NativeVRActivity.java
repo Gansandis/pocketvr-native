@@ -137,7 +137,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.153 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.154 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg)));
                 } else hud.setText("");
             }
@@ -611,6 +611,13 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.home.add(new NvUi.Btn("🎬", () -> "โหมดโรงหนัง", () -> rend.cinema ? "ห้องมืด เห็นแค่จอ" : "ปิดอยู่ (เห็นห้องจริง)", () -> rend.cinema, GA, GB, () -> { rend.cinema = !rend.cinema; rend.recenter = true; }));
         menu.home.add(new NvUi.Btn("⌨", () -> "คีย์บอร์ด", () -> wKeys.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wKeys.visible, GA, GB, () -> rend.toggle(wKeys, 0f, -24f)));
         menu.home.add(new NvUi.Btn("⚙", () -> "ตั้งค่า", () -> wSet.visible ? "เปิดอยู่" : "ควบคุม แสดงผล VR ทดลอง", () -> wSet.visible, GA, GB, () -> rend.toggle(wSet, 0f, 5f)));
+        tools.add(new NvUi.Btn("🦍", () -> "Gorilla World", () -> "เปิดเกมกอริลลา (ต้องติดตั้งแยก)", null, GA, GB, () -> runOnUiThread(() -> {
+            try {
+                android.content.Intent gi = getPackageManager().getLaunchIntentForPackage("com.htmltoapk.gorillaworld");
+                if (gi == null) { err = "ยังไม่ได้ติดตั้ง Gorilla World"; android.widget.Toast.makeText(this, "ยังไม่ได้ติดตั้ง Gorilla World", android.widget.Toast.LENGTH_LONG).show(); }
+                else { gi.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK); startActivity(gi); }
+            } catch (Throwable t) { err = "gorilla: " + t; }
+        })));
         tools.add(new NvUi.Btn("⚔", () -> "เกมฟันดาบ 3D", () -> wSword3.visible ? "เปิดอยู่" : "มอนสเตอร์ 3D ในห้อง", () -> wSword3.visible, GA, GB, () -> rend.toggle(wSword3, 0f, 30f)));
         tools.add(new NvUi.Btn("🍉", () -> "เกมฟันผลไม้", () -> wFruit.visible ? "เปิดอยู่" : "ปัดนิ้วฟันผลไม้", () -> wFruit.visible, GA, GB, () -> rend.toggle(wFruit, 0f, 2f)));
         tools.add(new NvUi.Btn("⏱", () -> "นาฬิกา/จับเวลา", () -> wClock.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wClock.visible, GA, GB, () -> rend.toggle(wClock, 18f, 0f)));
