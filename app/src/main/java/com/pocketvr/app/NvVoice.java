@@ -25,6 +25,8 @@ final class NvVoice {
         void onCommand(String text);
         /** dictation sentence */
         void onDictate(String text);
+        /** what the recogniser heard / which error it gave (for the on-screen line) */
+        void onHeard(String s);
         /** short status line for the screen */
         void onState(String s);
     }
@@ -148,11 +150,12 @@ final class NvVoice {
         @Override public void onEvent(int t, Bundle b) { }
         @Override public void onPartialResults(Bundle b) {
             ArrayList<String> l = b == null ? null : b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
-            if (l != null && !l.isEmpty() && (dictating || System.currentTimeMillis() < armUntil || hasWake(l.get(0)))) out.onState("ได้ยิน: " + l.get(0));
+            if (l != null && !l.isEmpty()) out.onHeard(l.get(0));
         }
         @Override public void onError(int e) {
             listening = false;
             if (!on) return;
+            if (e != SpeechRecognizer.ERROR_NO_MATCH && e != SpeechRecognizer.ERROR_SPEECH_TIMEOUT) out.onHeard("ไมค์ error " + e + (e == 12 || e == 13 ? " (ภาษา " + lang + " ใช้ไม่ได้)" : ""));
             if (e == SpeechRecognizer.ERROR_INSUFFICIENT_PERMISSIONS) { out.onState("ยังไม่ได้อนุญาตไมโครโฟน"); stop(); return; }
             if (once && System.currentTimeMillis() > armUntil) { stop(); return; }
             if (e == SpeechRecognizer.ERROR_NO_MATCH || e == SpeechRecognizer.ERROR_SPEECH_TIMEOUT) { restart(150); return; }
@@ -162,6 +165,7 @@ final class NvVoice {
         @Override public void onResults(Bundle b) {
             listening = false;
             ArrayList<String> l = b == null ? null : b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);
+            if (l != null && !l.isEmpty()) out.onHeard(l.get(0) + (l.size() > 1 ? "  | " + l.get(1) : ""));
             if (on) process(l);
             if (!on) return;
             if (once && System.currentTimeMillis() > armUntil) { stop(); return; }
@@ -180,12 +184,20 @@ final class NvVoice {
         return sb.toString();
     }
 
-    /** index in the original text just after the wake word, or -1 */
+    /** index in the original text just after the wake word, or -1. Looks at the text without spaces and tone marks, so every spelling the recogniser may pick matches. */
     static int wakeEnd(String text) {
-        String t = text.toLowerCase(Locale.ROOT);
-        String[] w = {"พ็อกเก็ต", "พ๊อกเก็ต", "พ๊อคเก็ต", "พ็อคเก็ต", "ป๊อกเก็ต", "ปอกเก็ต", "พอกเก็ต", "พอคเก็ต", "pocket", "poket", "pockets", "พ็อกเก็ท", "พ็อกเกต", "พอกเกต", "ปอกเกต", "pockit", "pocked", "heypacket", "hey packet", "hey pockit", "hey locket", "hey pocked", "a pocket", "hey, pocket"};
+        String low = text.toLowerCase(Locale.ROOT);
+        StringBuilder sb = new StringBuilder();
+        ArrayList<Integer> endAt = new ArrayList<>();
+        for (int i = 0; i < low.length(); i++) {
+            char c = low.charAt(i);
+            if (c == ' ' || c == '\u0e48' || c == '\u0e49' || c == '\u0e4a' || c == '\u0e4b' || c == '\u0e47' || c == '\u0e4c' || c == '.' || c == ',' || c == '-' || c == '\'' || c == '"') continue;
+            sb.append(c); endAt.add(i + 1);
+        }
+        String n = sb.toString();
+        String[] w = {"พอกเกต", "ปอกเกต", "พอคเกต", "ปอคเกต", "พอกเกท", "ปอกเกท", "พอคเกท", "ปอคเกท", "พอกเก", "ปอกเก", "พอคเก", "ปอคเก", "pocket", "poket", "pockit", "pocked", "heypacket", "heylocket", "hepocket", "apocket", "heypoker", "hey pocket"};
         int best = -1;
-        for (String k : w) { int i = t.indexOf(k); if (i >= 0) best = Math.max(best, i + k.length()); }
+        for (String k : w) { int i = n.indexOf(k); if (i >= 0) best = Math.max(best, endAt.get(i + k.length() - 1)); }
         return best;
     }
 
