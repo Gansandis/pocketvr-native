@@ -876,12 +876,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCam = prog(
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
-            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; varying vec2 pp;" +
-            "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
-            " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.); return; }" +
+            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; varying vec2 pp;" +
+            "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
+            " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; }" +
             " vec2 t=q*0.5+0.5; t=mix(t,1.-t,rf); vec2 uv=vec2(t.x,1.-t.y); vec4 c=texture2D(tex,uv);" +
             " if(amt>0.){ vec4 b=(texture2D(tex,uv+vec2(px.x,0.))+texture2D(tex,uv-vec2(px.x,0.))+texture2D(tex,uv+vec2(0.,px.y))+texture2D(tex,uv-vec2(0.,px.y)))*0.25; c=clamp(c+(c-b)*amt,0.,1.); }" +
-            " if(lift>0.){ c.rgb=min(pow(c.rgb,vec3(1./(1.+lift*0.8)))*(1.+lift*0.5),vec3(1.)); } gl_FragColor=c; }");
+            " if(lift>0.){ c.rgb=min(pow(c.rgb,vec3(1./(1.+lift*0.8)))*(1.+lift*0.5),vec3(1.)); }" +
+            // masked pass ("see the real hand through the windows"): the camera picture is drawn again, only where the hand is
+            " if(mkOn>0.5){ vec2 mu=pp*mz*0.5+0.5;" +
+            "  float m=texture2D(mk,mu).r*0.25+(texture2D(mk,mu+vec2(mpx.x,0.)).r+texture2D(mk,mu-vec2(mpx.x,0.)).r+texture2D(mk,mu+vec2(0.,mpx.y)).r+texture2D(mk,mu-vec2(0.,mpx.y)).r)*0.125" +
+            "   +(texture2D(mk,mu+mpx).r+texture2D(mk,mu-mpx).r+texture2D(mk,mu+vec2(mpx.x,-mpx.y)).r+texture2D(mk,mu+vec2(-mpx.x,mpx.y)).r)*0.0625;" +
+            "  float a=smoothstep(0.34,0.66,m); gl_FragColor=vec4(c.rgb*a,a); } else gl_FragColor=c; }");
         progCol = prog(
             "attribute vec2 p; uniform float ps; void main(){ gl_Position=vec4(p,0.,1.); gl_PointSize=ps; }",
             "precision mediump float; uniform vec4 col; uniform float rnd; void main(){ if (rnd>0.5 && length(gl_PointCoord-0.5)>0.5) discard; gl_FragColor=col; }");
@@ -1167,6 +1172,45 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform2f(ul(progVid, "off"), 0f, hh - hh * fr);
         GLES20.glUniform2f(ul(progVid, "fit"), fx, fy);
         drawQuad(progVid);
+    }
+
+    /** the camera picture, full screen; or (thru) only where the hand mask is, on top of what is already drawn (the real hand seen through the windows) */
+    private void drawCamera(boolean thru) {
+        GLES20.glUseProgram(progCam);
+        GLES20.glUniform1f(ul(progCam, "zs"), camScale);
+        GLES20.glUniform1f(ul(progCam, "mkOn"), thru ? 1f : 0f);
+        GLES20.glUniform1i(ul(progCam, "mk"), 1);                // the mask sampler never shares unit 0 with the camera (two sampler types on one unit is an error)
+        if (thru) {
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE1);
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, maskTex[0]);
+            GLES20.glUniform1i(ul(progCam, "mk"), 1);
+            GLES20.glUniform2f(ul(progCam, "mpx"), 1f / maskW, 1f / maskH);
+            GLES20.glUniform1f(ul(progCam, "mz"), camScale);
+            GLES20.glEnable(GLES20.GL_BLEND);
+            GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        }
+        float[] fr = frameRot, rn0 = rotView;
+        boolean wp = reproj && fr != null && rn0 != null;
+        if (wp) {
+            for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) {
+                float sum = 0f;
+                for (int k = 0; k < 3; k++) sum += fr[k * 4 + i] * rn0[k * 4 + j];
+                dm3[j * 3 + i] = sum;
+            }
+            GLES20.glUniformMatrix3fv(ul(progCam, "dm"), 1, false, dm3, 0);
+            GLES20.glUniform2f(ul(progCam, "tn"), tanH, tanV);
+        }
+        GLES20.glUniform1f(ul(progCam, "wp"), wp ? 1f : 0f);
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, camTex[0]);
+        GLES20.glUniform1i(ul(progCam, "tex"), 0);
+        GLES20.glUniformMatrix4fv(ul(progCam, "stm"), 1, false, stm, 0);
+        GLES20.glUniform1f(ul(progCam, "rf"), rot180 ? 1f : 0f);
+        GLES20.glUniform2f(ul(progCam, "px"), 1f / Math.max(1, imgW), 1f / Math.max(1, imgH));
+        GLES20.glUniform1f(ul(progCam, "amt"), sharpen);
+        GLES20.glUniform1f(ul(progCam, "lift"), lift);
+        drawQuad(progCam);
+        if (thru) { GLES20.glDisable(GLES20.GL_BLEND); GLES20.glActiveTexture(GLES20.GL_TEXTURE0); }
     }
 
     private void draw3D() {
@@ -1797,7 +1841,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 X[k] = (hx * 2f - 1f) * hwS * camScale; Y[k] = (1f - hy * 2f) * hhS * camScale;
             }
             float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
-            float hw = Math.max(3f, size * 0.115f);
+            final boolean thr = skel == 4;
+            float hw = Math.max(3f, size * (thr ? 0.10f : 0.115f));
             aaBegin();
             for (int b = 0; b < BONES.length; b += 2) {
                 int p0 = BONES[b], p1 = BONES[b + 1];
@@ -1810,6 +1855,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
             // palm filling: a fat stroke between the wrist and the knuckles (kept inside the real palm)
             aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * 0.38f);
+            if (thr && size > 1e-3f) {                       // the forearm too, so the whole arm is seen through the windows (it runs on past the edge of the picture)
+                float ax = (X[0] - X[9]) / size, ay = (Y[0] - Y[9]) / size;
+                aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * 0.33f);
+            }
             aaFlush(1f, 1f, 1f);
         }
     }
@@ -2051,35 +2100,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glClearColor(0.01f, 0.01f, 0.015f, 1f);          // the room goes dark: only the screen is left
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         } else {
-        GLES20.glUseProgram(progCam);
-        GLES20.glUniform1f(ul(progCam, "zs"), camScale);
-        float[] fr = frameRot, rn0 = rotView;
-        boolean wp = reproj && fr != null && rn0 != null;
-        if (wp) {
-            for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) {
-                float sum = 0f;
-                for (int k = 0; k < 3; k++) sum += fr[k * 4 + i] * rn0[k * 4 + j];
-                dm3[j * 3 + i] = sum;
-            }
-            GLES20.glUniformMatrix3fv(ul(progCam, "dm"), 1, false, dm3, 0);
-            GLES20.glUniform2f(ul(progCam, "tn"), tanH, tanV);
-        }
-        GLES20.glUniform1f(ul(progCam, "wp"), wp ? 1f : 0f);
-        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-        GLES20.glBindTexture(GLES11Ext.GL_TEXTURE_EXTERNAL_OES, camTex[0]);
-        GLES20.glUniform1i(ul(progCam, "tex"), 0);
-        GLES20.glUniformMatrix4fv(ul(progCam, "stm"), 1, false, stm, 0);
-        GLES20.glUniform1f(ul(progCam, "rf"), rot180 ? 1f : 0f);
-        GLES20.glUniform2f(ul(progCam, "px"), 1f / Math.max(1, imgW), 1f / Math.max(1, imgH));
-        GLES20.glUniform1f(ul(progCam, "amt"), sharpen);
-        GLES20.glUniform1f(ul(progCam, "lift"), lift);
-        drawQuad(progCam);
+        drawCamera(false);
         }
         draw3D();
         computePanel();
         cursor();
         drawWins();
-        if (skel == 1) drawSkeleton(dispDraw); else if (skel >= 2) drawOutline(dispDraw);
+        if (skel == 4 && maskReady) drawCamera(true);
+        if (skel == 1) drawSkeleton(dispDraw); else if (skel == 2 || skel == 3) drawOutline(dispDraw);
         drawCursor();
 
         // 2) screen: mono or split, with lens warp
