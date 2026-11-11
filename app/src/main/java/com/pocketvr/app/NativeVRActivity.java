@@ -34,7 +34,10 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         private final float[] r = new float[16], o = new float[16], gm = new float[16], out = new float[16];
         private boolean haveG = false, haveD = false;
         private double delta = 0;                            // radians: how far the turn sensor has drifted from the compass
-        private long lastMagT = 0;
+        private long lastMagT = 0, prevT = 0;
+        private double tgtF = 0, turnRate = 0;
+        private final float[] prev = new float[16];
+        private boolean havePrev = false;
         private float[] mapped(float[] values) {
             android.hardware.SensorManager.getRotationMatrixFromVector(r, values);
             int rot = getWindowManager().getDefaultDisplay().getRotation();
@@ -53,20 +56,36 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                     double tgt = heading(m) - heading(gm);
                     while (tgt > Math.PI) tgt -= 2 * Math.PI;
                     while (tgt < -Math.PI) tgt += 2 * Math.PI;
-                    double err = tgt - delta;
-                    while (err > Math.PI) err -= 2 * Math.PI;
-                    while (err < -Math.PI) err += 2 * Math.PI;
                     long now = e.timestamp;
                     double dt = lastMagT == 0 ? 0 : Math.min(0.5, (now - lastMagT) / 1e9);
                     lastMagT = now;
-                    if (!haveD) { delta = tgt; haveD = true; }
+                    if (!haveD) { delta = tgt; tgtF = tgt; haveD = true; }
                     else if (compass) {
-                        double step = err * dt / 20.0;                                  // slow: about 20 s, so compass noise never shows
-                        double mx = Math.toRadians(0.5) * dt * 3;                       // and never faster than ~1.5 degrees a second
-                        delta += Math.max(-mx, Math.min(mx, step));
+                        // the compass inside a VR box is disturbed by its magnets and the phone's own parts, so its reading wanders: it is smoothed over ~4 s, and the
+                        // view is only nudged while you are really turning your head (the nudge hides in the motion), never while you look at a still screen
+                        double d = tgt - tgtF;
+                        while (d > Math.PI) d -= 2 * Math.PI;
+                        while (d < -Math.PI) d += 2 * Math.PI;
+                        tgtF += d * Math.min(1.0, dt / 4.0);
+                        double err = tgtF - delta;
+                        while (err > Math.PI) err -= 2 * Math.PI;
+                        while (err < -Math.PI) err += 2 * Math.PI;
+                        if (turnRate > 0.35 && Math.abs(err) > Math.toRadians(1.5)) {
+                            double step = err * dt / 8.0;
+                            double mx = Math.toRadians(0.4) * dt;
+                            delta += Math.max(-mx, Math.min(mx, step));
+                        }
                     }
                     return;
                 }
+                if (havePrev) {                                                 // how fast the head turns now (rad/s), smoothed
+                    float tr = 0f;
+                    for (int a = 0; a < 3; a++) for (int j = 0; j < 3; j++) tr += m[j * 4 + a] * prev[j * 4 + a];
+                    double ang = Math.acos(Math.max(-1f, Math.min(1f, (tr - 1f) * 0.5f)));
+                    double dts = (e.timestamp - prevT) / 1e9;
+                    if (dts > 0 && dts < 0.1) turnRate = turnRate * 0.9 + (ang / dts) * 0.1;
+                }
+                System.arraycopy(m, 0, prev, 0, 16); prevT = e.timestamp; havePrev = true;
                 System.arraycopy(m, 0, gm, 0, 16);
                 haveG = true;
                 if (compass && haveD) {
@@ -138,7 +157,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.156 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.157 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg : "")));
                 } else hud.setText("");
             }
