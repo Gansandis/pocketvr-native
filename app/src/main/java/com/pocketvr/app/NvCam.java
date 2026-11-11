@@ -75,7 +75,8 @@ public class NvCam {
     private android.graphics.Bitmap detBmp;
     private byte[] yB = new byte[0], uB = new byte[0], vB = new byte[0];
     private int[] colX = new int[0], colU = new int[0], colV = new int[0];
-    private int mapW = -1, mapOw = -1, mapUps = -1, mapVps = -1;
+    private int mapW = -1, mapOw = -1, mapUps = -1, mapVps = -1, mapT = -1, mapH = -1, mapOh = -1;
+    private int[] colXs = new int[0], rowYs = new int[0];
     // the phone can be turned over (landscape the other way) while the app runs: the camera picture must then be turned 180 degrees as well
     private volatile int sensorOri = -1, prevW = 0, prevH = 0;
     private volatile boolean curRot180 = false;
@@ -440,7 +441,9 @@ public class NvCam {
 
     // One Euro filter on every point: the cut-off frequency rises with the speed of the point, so a still hand is calm
     // and a moving hand is followed with almost no delay. dt comes from the real picture times, not from when we happened to look.
-    private static final float F_MIN = 3.0f, F_BETA = 7.0f, F_D = 1.5f;
+    // The speed is measured against the size of the hand (a palm 12 % of the picture is the reference): a far, small hand moves few picture units but just as fast
+    // for its size, so it gets the same calm when still and the same quickness when moving as a near one.
+    private static final float F_MIN = 2.6f, F_BETA = 7.0f, F_D = 1.5f, PALM_REF = 0.12f;
     private static float lpA(float dt, float fc) { float tau = 1f / (6.2831853f * fc); return 1f / (1f + tau / dt); }
 
     private void smooth(float[] res, long ts) {
@@ -454,12 +457,18 @@ public class NvCam {
         }
         dt = Math.max(0.004f, dt);
         float aD = lpA(dt, F_D);
-        for (int i = 1; i < len; i++) {
-            float v = (res[i] - fx[i]) / dt;
-            fd[i] += (v - fd[i]) * aD;
-            float fc = F_MIN + F_BETA * Math.abs(fd[i]);
-            fx[i] += (res[i] - fx[i]) * lpA(dt, fc);
-            res[i] = fx[i];
+        for (int h = 0; h < n; h++) {
+            int b = 1 + h * 63;
+            float px = res[b + 27] - res[b], py = res[b + 28] - res[b + 1];          // wrist (point 0) to the base of the middle finger (point 9)
+            float palm = (float) Math.sqrt(px * px + py * py);
+            float sc = Math.max(0.5f, Math.min(2.5f, PALM_REF / Math.max(0.02f, palm)));
+            for (int i = b; i < b + 63 && i < len; i++) {
+                float v = (res[i] - fx[i]) / dt;
+                fd[i] += (v - fd[i]) * aD;
+                float fc = F_MIN + F_BETA * sc * Math.abs(fd[i]);
+                fx[i] += (res[i] - fx[i]) * lpA(dt, fc);
+                res[i] = fx[i];
+            }
         }
         fT = ts;
     }
@@ -477,23 +486,36 @@ public class NvCam {
         if (self.uB.length < un) self.uB = new byte[un];
         if (self.vB.length < vn) self.vB = new byte[vn];
         yb.get(self.yB, 0, yn); ub.get(self.uB, 0, un); vb.get(self.vB, 0, vn);
-        if (self.mapW != w || self.mapOw != ow || self.mapUps != ups || self.mapVps != vps || self.colX.length != ow) {
+        // Shrinking the picture by taking one pixel out of every 4 x 4 makes thin edges flicker from picture to picture (the hand model then moves its points for no
+        // reason). Each small pixel is now the average of a few pixels spread over its patch of the big picture: calmer, sharper points. (up to 3 x 3 reads per pixel)
+        final int t = Math.max(1, Math.min(3, Math.min(w / ow, hh / oh)));
+        if (self.mapW != w || self.mapOw != ow || self.mapUps != ups || self.mapVps != vps || self.colX.length != ow || self.mapT != t || self.mapH != hh || self.mapOh != oh) {
             self.colX = new int[ow]; self.colU = new int[ow]; self.colV = new int[ow];
+            self.colXs = new int[ow * t];
+            self.rowYs = new int[oh * t];
             for (int ox = 0; ox < ow; ox++) {
-                int sx = Math.min(w - 1, ox * w / ow);
+                int sx = Math.min(w - 1, (int) ((ox + 0.5f) * w / ow));
                 self.colX[ox] = sx; self.colU[ox] = (sx >> 1) * ups; self.colV[ox] = (sx >> 1) * vps;
+                for (int k = 0; k < t; k++) self.colXs[ox * t + k] = Math.min(w - 1, (int) ((ox + (k + 0.5f) / t) * w / ow));
             }
-            self.mapW = w; self.mapOw = ow; self.mapUps = ups; self.mapVps = vps;
+            for (int oy = 0; oy < oh; oy++) for (int k = 0; k < t; k++) self.rowYs[oy * t + k] = Math.min(hh - 1, (int) ((oy + (k + 0.5f) / t) * hh / oh));
+            self.mapW = w; self.mapOw = ow; self.mapUps = ups; self.mapVps = vps; self.mapT = t; self.mapH = hh; self.mapOh = oh;
         }
         final byte[] Y = self.yB, U = self.uB, V = self.vB;
-        final int[] cx = self.colX, cu = self.colU, cv = self.colV;
+        final int[] cx = self.colX, cu = self.colU, cv = self.colV, cxs = self.colXs, rys = self.rowYs;
+        final int inv = 65536 / (t * t);
         int[] px = self.pxBuf;
         if (px == null || px.length != ow * oh) px = self.pxBuf = new int[ow * oh];
         for (int oy = 0; oy < oh; oy++) {
-            int srcY = Math.min(hh - 1, oy * hh / oh);
-            int yRow = srcY * yrs, uRow = (srcY >> 1) * urs, vRow = (srcY >> 1) * vrs, o = oy * ow;
+            int srcY = Math.min(hh - 1, (int) ((oy + 0.5f) * hh / oh));
+            int uRow = (srcY >> 1) * urs, vRow = (srcY >> 1) * vrs, o = oy * ow;
             for (int ox = 0; ox < ow; ox++) {
-                int y = Y[yRow + cx[ox]] & 0xFF;
+                int sum = 0;
+                for (int ky = 0; ky < t; ky++) {
+                    int yRow = rys[oy * t + ky] * yrs;
+                    for (int kx = 0; kx < t; kx++) sum += Y[yRow + cxs[ox * t + kx]] & 0xFF;
+                }
+                int y = (sum * inv) >> 16;
                 int u = (U[uRow + cu[ox]] & 0xFF) - 128;
                 int v = (V[vRow + cv[ox]] & 0xFF) - 128;
                 int r = y + ((1436 * v) >> 10);
