@@ -725,7 +725,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float cx = (System.nanoTime() - w.confT0) / 1e6f / 420f;
             if (cx >= 1f) w.confT0 = 0; else { float cr = 1f - cx; w.animA *= 0.38f + 0.62f * (1f - cr * cr * cr); }
         }
-        android.opengl.Matrix.translateM(mM, 0, w.rot, 0, bx + sx, by + sy, -w.dist + bz + sz);
+        // no sideways lean in the picture: the window turns about its own centre to keep its top edge pointing up on the screen (a small head tilt is followed all the way,
+        // a big one - the phone held upright - fades out so the window stands level in the room). Its up / down lean towards the eyes stays.
+        android.opengl.Matrix.transposeM(tC, 0, rn, 0);
+        float live = keepOf(headRoll(tC));
+        if (live != 0f && !Float.isNaN(live)) { android.opengl.Matrix.rotateM(tD, 0, w.rot, 0, live, 0f, 0f, 1f); android.opengl.Matrix.translateM(mM, 0, tD, 0, bx + sx, by + sy, -w.dist + bz + sz); }
+        else android.opengl.Matrix.translateM(mM, 0, w.rot, 0, bx + sx, by + sy, -w.dist + bz + sz);
         if (tilt != 0f) android.opengl.Matrix.rotateM(mM, 0, tilt, 0f, 1f, 0f);
         shiftBy(w, mM, ux, uy, uz);
         android.opengl.Matrix.multiplyMM(w.mv, 0, rn, 0, mM, 0);
