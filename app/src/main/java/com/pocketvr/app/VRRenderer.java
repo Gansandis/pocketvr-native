@@ -725,10 +725,22 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float cx = (System.nanoTime() - w.confT0) / 1e6f / 420f;
             if (cx >= 1f) w.confT0 = 0; else { float cr = 1f - cx; w.animA *= 0.38f + 0.62f * (1f - cr * cr * cr); }
         }
-        // no sideways lean in the picture: the window turns about its own centre to keep its top edge pointing up on the screen (a small head tilt is followed all the way,
-        // a big one - the phone held upright - fades out so the window stands level in the room). Its up / down lean towards the eyes stays.
-        android.opengl.Matrix.transposeM(tC, 0, rn, 0);
-        float live = keepOf(headRoll(tC));
+        // no sideways lean in the picture: the window turns about its own centre (about the line to your eyes) until its top edge points up on the screen. This is worked out
+        // straight from the geometry of where the window is seen, so a window off to the side or below eye level does not show the slanted top and bottom edges of a wall
+        // (and it does not depend on a roll angle that gets noisy when you look up or down). A big difference (the phone held upright) fades out: then the window stays level in the room.
+        float live = 0f;
+        {
+            float[] r = w.rot;
+            float vrx = rn[0], vry = rn[4], vrz = rn[8];                    // the screen's right, in the room
+            float dd = vrx * r[8] + vry * r[9] + vrz * r[10];
+            float qx = vrx - dd * r[8], qy = vry - dd * r[9], qz = vrz - dd * r[10], ql = (float) Math.sqrt(qx * qx + qy * qy + qz * qz);
+            if (ql > 0.3f) {
+                qx /= ql; qy /= ql; qz /= ql;
+                float c = r[0] * qx + r[1] * qy + r[2] * qz;
+                float sn = (r[1] * qz - r[2] * qy) * r[8] + (r[2] * qx - r[0] * qz) * r[9] + (r[0] * qy - r[1] * qx) * r[10];
+                live = keepOf((float) Math.toDegrees(Math.atan2(sn, c)));
+            }
+        }
         if (live != 0f && !Float.isNaN(live)) { android.opengl.Matrix.rotateM(tD, 0, w.rot, 0, live, 0f, 0f, 1f); android.opengl.Matrix.translateM(mM, 0, tD, 0, bx + sx, by + sy, -w.dist + bz + sz); }
         else android.opengl.Matrix.translateM(mM, 0, w.rot, 0, bx + sx, by + sy, -w.dist + bz + sz);
         if (tilt != 0f) android.opengl.Matrix.rotateM(mM, 0, tilt, 0f, 1f, 0f);
