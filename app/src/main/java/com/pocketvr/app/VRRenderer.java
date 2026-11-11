@@ -607,12 +607,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.slideDeg = 0f; w.slideDegP = 0f; w.aimV = null;
         if (w.shrunk) { w.wantScale = 0f; w.shrunk = false; }
         if (w == menuWin && w.newOpen) w.slideDegP = -16f;           // the main menu rises up out of the navigation bar
-        if (w.hasSaved) return;
-        w.offYaw = 0f;
+        float yc = 0f;                                              // the yaw the new window comes up at: straight ahead, or where the user left it
+        if (w.hasSaved) yc = w.offYaw; else w.offYaw = 0f;
         android.graphics.Bitmap bm = w.c.bitmap();
-        if (bm == null || bm.getWidth() <= 0) { placeDbg = "place: no picture yet"; return; }
+        float aspect = (bm == null || bm.getWidth() <= 0) ? 0.62f : (float) bm.getHeight() / bm.getWidth();      // no picture yet (a browser still loading): a usual window shape
         float sc = w.wantScale > 0 ? w.wantScale : openScale(w), d = w.placeDist > 0f ? w.placeDist : PANEL_D;
-        float pw = w.widthM * sc * winZoom * w.c.visFrac(), ph = pw * bm.getHeight() / bm.getWidth() / Math.max(0.2f, w.c.visFrac());
+        float pw = w.widthM * sc * winZoom * w.c.visFrac(), ph = pw * aspect / Math.max(0.2f, w.c.visFrac());
         float elN = w.offPitch;
         float hwN = (float) Math.toDegrees(Math.atan(pw / 2f / nearD(d, ph / 4f, tiltSinOfEl(elN))));      // half the lean allowance: windows touch in the middle, hardly any gap
         float hhN = (float) Math.toDegrees(Math.atan(ph / 2f / d));
@@ -624,15 +624,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         for (Win o : wins) {
             if (o == w || !shown(o) || o.rot == null || o.placeReq || o.ghost || !o.c.occupies() || o.showInCinema && cinema) continue;
             android.graphics.Bitmap ob = o.c.bitmap();
-            if (ob == null || ob.getWidth() <= 0) continue;
-            float opw = o.widthM * o.scale * winZoom * o.c.visFrac(), oph = opw * ob.getHeight() / ob.getWidth() / Math.max(0.2f, o.c.visFrac());
+            float oasp = (ob == null || ob.getWidth() <= 0) ? 0.62f : (float) ob.getHeight() / ob.getWidth();
+            float opw = o.widthM * o.scale * winZoom * o.c.visFrac(), oph = opw * oasp / Math.max(0.2f, o.c.visFrac());
             float od = Math.max(0.3f, o.dist);
             float ohh = (float) Math.toDegrees(Math.atan(oph / 2f / od));
             if (Math.abs(o.pitchA - elN) >= ohh + hhN) continue;                      // above or below: no need to give way
             float cosE = Math.max(0.3f, (float) Math.cos(Math.toRadians(o.pitchA)));
             float ohw = (float) Math.toDegrees(Math.atan(opw / 2f / nearD(od * cosE, oph / 4f, o.rot[10])));
             if (ohw > 50f) continue;                                                   // the cinema screen
-            float y = o.yawA + o.pendYaw;
+            float y = o.yawA + o.pendYaw - yc;                                         // seen from the new window's own middle
             while (y > 180f) y -= 360f; while (y < -180f) y += 360f;
             idx.put(o, n); hwO[n] = ohw; yf[n] = y; n++;
             if (Math.abs(y) < 1.5f) { if (pushRightNext) right.add(o); else left.add(o); pushRightNext = !pushRightNext; }
