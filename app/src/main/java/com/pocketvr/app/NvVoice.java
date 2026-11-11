@@ -2,6 +2,7 @@ package com.pocketvr.app;
 
 import android.content.Context;
 import android.content.Intent;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -41,6 +42,33 @@ final class NvVoice {
     LangSrc langSrc = null;
     private int cycle = 0;
 
+    // ---- silence the recogniser's "ding" sounds (they play on the notification / system / media streams) ----
+    private final Handler mh = new Handler(Looper.getMainLooper());
+    private boolean mutedSys = false, mutedMusic = false;
+    private final Runnable unmuteMusic = () -> setMute(AudioManager.STREAM_MUSIC, false);
+
+    private void setMute(int stream, boolean m) {
+        try {
+            AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+            if (am == null) return;
+            if (stream == AudioManager.STREAM_MUSIC) { if (m == mutedMusic) return; mutedMusic = m; }
+            else { if (m == mutedSys) return; mutedSys = m; }
+            int d = m ? AudioManager.ADJUST_MUTE : AudioManager.ADJUST_UNMUTE;
+            if (stream != AudioManager.STREAM_MUSIC) { am.adjustStreamVolume(AudioManager.STREAM_NOTIFICATION, d, 0); am.adjustStreamVolume(AudioManager.STREAM_SYSTEM, d, 0); }
+            else am.adjustStreamVolume(AudioManager.STREAM_MUSIC, d, 0);
+        } catch (Throwable ignored) { }
+    }
+
+    /** mute the dings for the next second (the media stream only when nothing is playing, so a video or music is never cut) */
+    private void beepOff() {
+        setMute(AudioManager.STREAM_NOTIFICATION, true);
+        try {
+            AudioManager am = (AudioManager) ctx.getSystemService(Context.AUDIO_SERVICE);
+            if (am != null && (mutedMusic || !am.isMusicActive())) { setMute(AudioManager.STREAM_MUSIC, true); mh.removeCallbacks(unmuteMusic); mh.postDelayed(unmuteMusic, 1200); }
+        } catch (Throwable ignored) { }
+    }
+    private void beepOn() { mh.removeCallbacks(unmuteMusic); setMute(AudioManager.STREAM_MUSIC, false); setMute(AudioManager.STREAM_NOTIFICATION, false); }
+
     NvVoice(Context c, Out o) { ctx = c.getApplicationContext(); out = o; }
 
     boolean isOn() { return on; }
@@ -70,6 +98,7 @@ final class NvVoice {
         on = false; once = false; dictating = false; listening = false;
         h.removeCallbacksAndMessages(null);
         destroy();
+        beepOn();
         out.onState("");
     }
 
@@ -101,6 +130,7 @@ final class NvVoice {
             in.putExtra("android.speech.extra.SPEECH_INPUT_COMPLETE_SILENCE_LENGTH_MILLIS", 900L);
             in.putExtra("android.speech.extra.SPEECH_INPUT_POSSIBLY_COMPLETE_SILENCE_LENGTH_MILLIS", 700L);
             listening = true;
+            beepOff();
             sr.startListening(in);
         } catch (Throwable t) {
             listening = false;
@@ -114,7 +144,7 @@ final class NvVoice {
         @Override public void onBeginningOfSpeech() { }
         @Override public void onRmsChanged(float v) { }
         @Override public void onBufferReceived(byte[] b) { }
-        @Override public void onEndOfSpeech() { }
+        @Override public void onEndOfSpeech() { beepOff(); }
         @Override public void onEvent(int t, Bundle b) { }
         @Override public void onPartialResults(Bundle b) {
             ArrayList<String> l = b == null ? null : b.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION);

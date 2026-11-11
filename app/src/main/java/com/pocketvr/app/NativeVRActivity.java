@@ -35,7 +35,10 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         private boolean haveG = false, haveD = false;
         private double delta = 0;                            // radians: how far the turn sensor has drifted from the compass
         private long lastMagT = 0, prevT = 0;
-        private double tgtF = 0, turnRate = 0;
+        private double tgtF = 0, turnRate = 0, slow = 0, adj = 0, hRef = 0;
+        private boolean lock = false, havePrev2 = false;
+        private long prevT2 = 0;
+        private final float[] prev2 = new float[16];
         private final float[] prev = new float[16];
         private boolean havePrev = false;
         private float[] mapped(float[] values) {
@@ -88,8 +91,32 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 System.arraycopy(m, 0, prev, 0, 16); prevT = e.timestamp; havePrev = true;
                 System.arraycopy(m, 0, gm, 0, 16);
                 haveG = true;
-                if (compass && haveD) {
-                    float c = (float) Math.cos(delta), s = (float) Math.sin(delta);
+                // when the head is still (under ~1 degree a second for a while) the picture must not creep: whatever slow turn the sensor still reports is its drift,
+                // so the facing is held where it was and the creep is taken out (it is the same sideways drift for every window, whatever its cause)
+                {
+                    double dts2 = prevT2 == 0 ? 0 : Math.min(0.2, (e.timestamp - prevT2) / 1e9);
+                    prevT2 = e.timestamp;
+                    if (havePrev2 && dts2 > 0) {
+                        float tr2 = 0f;
+                        for (int a = 0; a < 3; a++) for (int j = 0; j < 3; j++) tr2 += m[j * 4 + a] * prev2[j * 4 + a];
+                        double ang2 = Math.acos(Math.max(-1f, Math.min(1f, (tr2 - 1f) * 0.5f)));
+                        double al = 1.0 - Math.exp(-dts2 / 0.5);
+                        slow += (ang2 / dts2 - slow) * al;
+                    }
+                    System.arraycopy(m, 0, prev2, 0, 16); havePrev2 = true;
+                    boolean flat = Math.abs(m[10]) <= 0.8f;                               // the turn angle is undefined looking straight up or down
+                    if (slow < (lock ? 0.035 : 0.02) && flat) {
+                        double hh = heading(m);
+                        double base = compass && haveD ? delta : 0.0;
+                        if (!lock) { lock = true; hRef = hh + base + adj; }
+                        adj = hRef - hh - base;
+                        while (adj > Math.PI) adj -= 2 * Math.PI;
+                        while (adj < -Math.PI) adj += 2 * Math.PI;
+                    } else lock = false;
+                }
+                double yawT = (compass && haveD ? delta : 0.0) + adj;
+                if (yawT != 0.0) {
+                    float c = (float) Math.cos(yawT), s = (float) Math.sin(yawT);
                     System.arraycopy(m, 0, out, 0, 16);
                     for (int k = 0; k < 4; k++) { out[k] = c * m[k] - s * m[4 + k]; out[4 + k] = s * m[k] + c * m[4 + k]; }
                     rend.setRotation(out);
@@ -157,7 +184,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.157 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.158 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg : "")));
                 } else hud.setText("");
             }
