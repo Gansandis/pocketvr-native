@@ -119,6 +119,7 @@ public class NvBrowser implements NvContent {
     }
 
     public void navigate(String url) { go(url); }
+    public String pageTitle() { String t = title; return t == null || t.isEmpty() ? "เบราว์เซอร์" : t; }
     public void nav(final String a) { ui.post(() -> vb.nav(a)); }
 
     private void go(String text) {

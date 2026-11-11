@@ -80,11 +80,29 @@ public class NvUi implements NvContent {
     private float safe = 1f;
     private float pX, pY, pW, pH, sbW;
     private final RectF dockR = new RectF();
+    // ---- status shown on the dock (filled in by the app) ----
+    public volatile int battery = -1;          // percent, -1 unknown
+    public volatile boolean charging = false;
+    public volatile int net = -1;              // signal bars 0..4, -1 = no network
+    public volatile String netKind = "";       // "Wi-Fi", "4G" ...
+    public volatile boolean micOn = false;     // listening for voice commands
+    public Runnable onMic;                     // tap on the microphone symbol
+    public Runnable onSearch;                  // tap on the search field
+    public volatile String filter = "";        // text typed into the search field: only matching cards are shown
+    private final Btn micB = new Btn("", () -> "", null, null, 0, 0, null);
+    private final Btn searchB = new Btn("", () -> "", null, null, 0, 0, null);
+    private final Btn clearB = new Btn("", () -> "", null, null, 0, 0, null);
+    private final RectF statR = new RectF();
+    private int lastMin = -1;
+    private static final int[][] PAL = {{0xFF4C8DFF, 0xFF2F5FD0}, {0xFFA06BFF, 0xFF6A3FD0}, {0xFF23B5A6, 0xFF147F76}, {0xFFFF8A4C, 0xFFD0561F}, {0xFFE0507A, 0xFFA82B52}, {0xFF52B04A, 0xFF2F7A2A}, {0xFF3FB6E8, 0xFF1F7FB0}, {0xFFE8B13C, 0xFFB07A14}};
 
     public NvUi() {
         addTabInternal("🏠", "หน้าแรก", "หน้าแรก", home, false);
         addTabInternal("📱", "แอป", "แอปในเครื่อง", apps, false);
         tabs.get(tabs.size() - 1).grid = true;
+        searchB.act = () -> { if (onSearch != null) onSearch.run(); };
+        clearB.act = () -> { filter = ""; scroll = 0f; layout(); dirty = true; };
+        micB.act = () -> { if (onMic != null) onMic.run(); };
         prevB = new Btn("", () -> "‹", null, null, 0, 0, () -> { page = (page + pages - 1) % pages; layout(); });
         nextB = new Btn("", () -> "›", null, null, 0, 0, () -> { page = (page + 1) % pages; layout(); });
     }
@@ -126,6 +144,8 @@ public class NvUi implements NvContent {
     public boolean takeDirty() {
         long now = System.currentTimeMillis();
         if (toastUntil != 0 && now > toastUntil) { toastUntil = 0; toast = ""; dirty = true; }
+        int mn = (int) ((now / 60000L) % 1440L);
+        if (mn != lastMin) { lastMin = mn; dirty = true; }
         if (!dirty) return false;
         dirty = false;
         draw();
@@ -149,66 +169,81 @@ public class NvUi implements NvContent {
         dirty = true;
     }
 
+    private List<Btn> shown(Tab t) {
+        String f = filter == null ? "" : filter.trim().toLowerCase(java.util.Locale.ROOT);
+        if (f.isEmpty()) return t.items;
+        List<Btn> out = new ArrayList<>();
+        for (Btn b : t.items) {
+            String a = b.label.get(), c = Tr.t(a);
+            if (a.toLowerCase(java.util.Locale.ROOT).contains(f) || c.toLowerCase(java.util.Locale.ROOT).contains(f)) out.add(b);
+        }
+        return out;
+    }
+
+    private float railW, topH;
+
     private void layout() {
         float u = H / 540f;
         visible.clear();
-        // dock
+        // dock: a floating pill. left: clock, battery, signal, microphone. right: round-cornered icons
         int n = dock.size();
-        float d = 50 * u, gap = 10 * u, bw = 104 * u;                       // dock buttons are words in capsules (no pictures)
-        float dw = n * bw + (n + 1) * gap, dh = d + 2 * gap * 0.8f;
+        float d = 44 * u, gap = 10 * u, pad = 14 * u, sw = 252 * u;
+        float dh = d + 2 * 10 * u, dw = pad + sw + 14 * u + n * d + Math.max(0, n - 1) * gap + pad;
         float dx = (W - dw) / 2f, dy = H - 38 * u - dh;
         float hbw = 150 * u;
         handle.r.set(W / 2f - hbw / 2f, H - 44 * u, W / 2f + hbw / 2f, H - 6 * u);
         visible.add(handle);
         dockR.set(dx, dy, dx + dw, dy + dh);
+        statR.set(dx + pad, dy, dx + pad + sw, dy + dh);
+        micB.r.set(statR.right - 40 * u, dy + (dh - 36 * u) / 2f, statR.right - 4 * u, dy + (dh + 36 * u) / 2f);
+        visible.add(micB);
         for (int i = 0; i < n; i++) {
-            float x = dx + gap + i * (bw + gap), y = dy + (dh - d) / 2f;
-            dock.get(i).r.set(x, y, x + bw, y + d);
+            float x = dx + pad + sw + 14 * u + i * (d + gap), y = dy + (dh - d) / 2f;
+            dock.get(i).r.set(x, y, x + d, y + d);
             visible.add(dock.get(i));
         }
+        searchB.r.setEmpty(); clearB.r.setEmpty();
         if (!open) { pH = 0; return; }
         pW = W * safe;
         pX = (W - pW) / 2f;
         pY = H * 0.04f;
-        float ov = 0f;                                      // the dock sits below the panel, not over its edge
         pH = dy - 16 * u - pY;
-        sbW = Math.min(214 * u, pW * 0.27f);
-        float tabH = Math.min(56 * u, (pH - 76 * u) / Math.max(1, tabs.size()) - 6 * u);
+        railW = 66 * u; topH = 74 * u;
+        sbW = railW;
+        // round buttons down the left side
+        float bs = Math.min(46 * u, (pH - topH - 20 * u) / Math.max(1, tabs.size()) - 8 * u);
         for (int i = 0; i < tabs.size(); i++) {
-            float y = pY + 62 * u + i * (tabH + 6 * u);
-            tabs.get(i).b.r.set(pX + 12 * u, y, pX + sbW - 6 * u, y + tabH);
+            float y = pY + topH + 6 * u + i * (bs + 8 * u);
+            tabs.get(i).b.r.set(pX + (railW - bs) / 2f + 4 * u, y, pX + (railW - bs) / 2f + 4 * u + bs, y + bs);
             visible.add(tabs.get(i).b);
         }
-        float cx0 = pX + sbW + 6 * u, cy0 = pY + 62 * u;
-        float cw = pW - sbW - 6 * u - 16 * u, ch = pH - 62 * u - 46 * u - ov;
+        float cx0 = pX + railW + 22 * u, cy0 = pY + topH;
+        float cw = pW - railW - 22 * u - 24 * u, ch = pH - topH - 18 * u;
+        // search field (top right of the content), with a small clear button when something is typed
+        float sfw = Math.min(250 * u, cw * 0.42f), sfh = 38 * u;
+        searchB.r.set(cx0 + cw - sfw, pY + 18 * u, cx0 + cw, pY + 18 * u + sfh);
+        visible.add(searchB);
+        if (filter != null && !filter.isEmpty()) { clearB.r.set(searchB.r.right - 34 * u, searchB.r.top + 4 * u, searchB.r.right - 4 * u, searchB.r.bottom - 4 * u); visible.add(clearB); }
         if (tab >= tabs.size()) tab = 0;
         Tab ct = tabs.get(tab);
-        List<Btn> list = ct.items;
-        float gw = 8 * u, cardW, cardH;
-        int cols, rows;
-        if (ct.grid) {
-            cols = Math.max(2, (int) (cw / (122 * u)));
-            rows = Math.max(1, (int) (ch / (114 * u)));
-            cardW = (cw - (cols - 1) * gw) / cols; cardH = Math.min(ch / rows - gw, 124 * u);
-        } else {
-            cols = cw > 560 * u ? 2 : 1;
-            float rowH = 64 * u;
-            rows = Math.max(1, (int) ((ch + gw) / (rowH + gw)));
-            cardW = (cw - (cols - 1) * gw) / cols; cardH = rowH;
-        }
+        List<Btn> list = shown(ct);
+        float gw = 14 * u;
+        int cols = Math.max(2, (int) ((cw + gw) / (128 * u + gw)));
+        float tw = (cw - (cols - 1) * gw) / cols, th = tw * 0.66f, lab = 46 * u;
         pages = 1;
-        cRect.set(cx0, cy0, cx0 + cw, cy0 + ch);
+        cRect.set(cx0 - 6 * u, cy0, cx0 + cw + 6 * u, cy0 + ch);
         for (Tab tt : tabs) for (Btn b : tt.items) b.r.setEmpty();
         int nrows = (list.size() + cols - 1) / cols;
-        float total = nrows * (cardH + gw) - gw;
+        float pitch = th + lab + 4 * u;
+        float total = nrows * pitch - 4 * u;
         maxScroll = Math.max(0f, total - ch);
         scroll = Math.max(0f, Math.min(maxScroll, scroll));
         for (int i = 0; i < list.size(); i++) {
             int c = i % cols, rw = i / cols;
-            float x = cx0 + c * (cardW + gw), y = cy0 + rw * (cardH + gw) - scroll;
-            if (y + cardH < cy0 - 2 || y > cy0 + ch + 2) continue;           // out of sight: neither drawn nor pointed at
+            float x = cx0 + c * (tw + gw), y = cy0 + rw * pitch - scroll;
+            if (y + th + lab < cy0 - 2 || y > cy0 + ch + 2) continue;           // out of sight: neither drawn nor pointed at
             Btn b = list.get(i);
-            b.r.set(x, y, x + cardW, y + cardH);
+            b.r.set(x, y, x + tw, y + th + lab - 6 * u);                          // pointing area covers the tile and its name
             visible.add(b);
         }
         prevB.r.setEmpty(); nextB.r.setEmpty();
@@ -254,6 +289,81 @@ public class NvUi implements NvContent {
         if (Math.abs(th - b.ah) > 0.02f || Math.abs(tp - b.ap) > 0.02f) animating = true; else { b.ah = th; b.ap = tp; }
     }
 
+    /** text that is not run through the translator (emoji must survive it) */
+    private void raw(String s, float cx, float cy, float size, int color, Paint.Align al) {
+        p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(color); p.setTextSize(size); p.setTextAlign(al);
+        cv.drawText(s, cx, cy + size * 0.35f, p);
+    }
+
+    /** the picture on a tile: the emoji (Thai mode) or the first letter of the name */
+    private void glyph(Btn b, float cx, float cy, float size, int color) {
+        String e = b.emoji == null ? "" : b.emoji;
+        if (Tr.thai && !e.isEmpty()) { NvGlass.font(p, false); raw(e, cx, cy, size, 0xFFFFFFFF, Paint.Align.CENTER); return; }
+        String t = Tr.t(b.label.get()).trim();
+        String g = t.isEmpty() ? "•" : t.substring(0, t.offsetByCodePoints(0, 1)).toUpperCase(java.util.Locale.ROOT);
+        NvGlass.font(p, true);
+        raw(g, cx, cy, size * 0.95f, color, Paint.Align.CENTER);
+    }
+
+    private int[] tileColors(Btn b, int idx) {
+        if (b.c1 == 0 || b.c1 == 0xFF5A5A63) return PAL[idx % PAL.length];
+        return new int[]{b.c1, b.c2};
+    }
+
+    private void tooltip(String s, float cx, float bottom, float u) {
+        NvGlass.font(p, true);
+        p.setTextSize(15 * u);
+        String t = Tr.t(s);
+        float w = Math.min(W * 0.5f, p.measureText(t) + 26 * u);
+        RectF r = new RectF(cx - w / 2f, bottom - 30 * u, cx + w / 2f, bottom);
+        NvGlass.fill(cv, p, r, 0xEE0E1426, r.height() / 2);
+        NvGlass.ring(cv, p, r, 0x33FFFFFF, 1f * u, r.height() / 2);
+        text(s, cx, r.centerY(), 15 * u, NvGlass.TEXT, w - 14 * u);
+    }
+
+    private void drawStatus(float u) {
+        RectF r = statR;
+        float cy = r.centerY();
+        // clock
+        java.util.Calendar c = java.util.Calendar.getInstance();
+        String tm = String.format(java.util.Locale.US, "%02d:%02d", c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE));
+        NvGlass.font(p, true);
+        raw(tm, r.left + 4 * u, cy, 21 * u, NvGlass.TEXT, Paint.Align.LEFT);
+        // battery
+        float bx = r.left + 82 * u;
+        int bt = battery;
+        RectF body = new RectF(bx, cy - 8 * u, bx + 28 * u, cy + 8 * u);
+        NvGlass.ring(cv, p, body, 0xCCFFFFFF, 1.6f * u, 4 * u);
+        NvGlass.fill(cv, p, new RectF(body.right + 1 * u, cy - 3.5f * u, body.right + 3.5f * u, cy + 3.5f * u), 0xCCFFFFFF, 1 * u);
+        if (bt >= 0) {
+            RectF fl = new RectF(body.left + 2.6f * u, body.top + 2.6f * u, body.left + 2.6f * u + (body.width() - 5.2f * u) * Math.max(0.06f, bt / 100f), body.bottom - 2.6f * u);
+            NvGlass.fill(cv, p, fl, charging ? 0xFF34C759 : (bt <= 15 ? 0xFFFF5A52 : 0xFFFFFFFF), 2 * u);
+        }
+        NvGlass.font(p, false);
+        raw(bt >= 0 ? bt + "%" : "–", bx + 36 * u, cy, 14 * u, NvGlass.TEXT2, Paint.Align.LEFT);
+        // signal bars
+        float sx = r.left + 168 * u;
+        for (int i = 0; i < 4; i++) {
+            float bh = (5 + i * 3.4f) * u;
+            RectF br = new RectF(sx + i * 6.2f * u, cy + 8 * u - bh, sx + i * 6.2f * u + 4.2f * u, cy + 8 * u);
+            NvGlass.fill(cv, p, br, i < net ? 0xFFFFFFFF : 0x40FFFFFF, 1.2f * u);
+        }
+        NvGlass.font(p, false);
+        raw(net < 0 ? "ออฟไลน์" : netKind, sx + 27 * u, cy - 0.5f * u, 11.5f * u, NvGlass.TEXT2, Paint.Align.LEFT);
+        // microphone (voice commands)
+        ease(micB);
+        float mcx = micB.r.centerX(), mcy = micB.r.centerY(), mr = 15 * u * (1f + 0.1f * micB.ah);
+        RectF mc = new RectF(mcx - mr, mcy - mr, mcx + mr, mcy + mr);
+        NvGlass.fill(cv, p, mc, micOn ? 0xFFE0506A : NvGlass.lerp(0x26FFFFFF, 0x55FFFFFF, micB.ah), mr);
+        // a small microphone drawn with shapes (no emoji needed)
+        p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(0xFFFFFFFF);
+        cv.drawRoundRect(new RectF(mcx - 3 * u, mcy - 8 * u, mcx + 3 * u, mcy + 2.5f * u), 3 * u, 3 * u, p);
+        p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.7f * u);
+        cv.drawArc(new RectF(mcx - 6 * u, mcy - 6 * u, mcx + 6 * u, mcy + 5.5f * u), 20, 140, false, p);
+        cv.drawLine(mcx, mcy + 5.5f * u, mcx, mcy + 9 * u, p);
+        p.setStyle(Paint.Style.FILL);
+    }
+
     private void draw() {
         animating = false;
         cv.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
@@ -271,91 +381,150 @@ public class NvUi implements NvContent {
         float hp = 6 * u;
         RectF hb = new RectF(handle.r.left + hp, handle.r.centerY() - 4.5f * u, handle.r.right - hp, handle.r.centerY() + 4.5f * u);
         NvGlass.fill(cv, p, hb, dragging ? 0xFFFFA24D : (hover == handle ? 0xFFFFFFFF : 0xA6FFFFFF), hb.height() / 2);
-        // dock: a glass capsule with round buttons
-        NvGlass.panel(cv, p, dockR, dockR.height() / 2, 0.8f * u);
+        // dock: a dark pill, status on the left, icons on the right
+        int ga = Math.min(255, glass + 6);
+        NvGlass.fill(cv, p, dockR, (ga << 24) | 0x0F1628, dockR.height() / 2);
+        NvGlass.ring(cv, p, dockR, 0x30FFFFFF, 1.3f * u, dockR.height() / 2);
+        drawStatus(u);
+        NvGlass.fill(cv, p, new RectF(statR.right + 5 * u, dockR.top + 14 * u, statR.right + 6.2f * u, dockR.bottom - 14 * u), 0x30FFFFFF, 1);
+        Btn tipB = null;
+        int di = 0;
         for (Btn b : dock) {
             boolean on = b.on != null && b.on.get();
             ease(b);
             float sc = 1f + 0.12f * b.ah - 0.10f * b.ap;
+            int[] col = tileColors(b, di + 1);
             cv.save();
             cv.scale(sc, sc, b.r.centerX(), b.r.centerY());
-            NvGlass.fill(cv, p, b.r, NvGlass.lerp(on ? 0xF2FFFFFF : 0x26FFFFFF, on ? 0xFFFFFFFF : 0x59FFFFFF, b.ah), b.r.height() / 2);
-            if (b.ah > 0.02f) NvGlass.ring(cv, p, b.r, NvGlass.lerp(0x00FFFFFF, NvGlass.RING, b.ah), 2.4f * u, b.r.height() / 2);
-            NvGlass.font(p, true);
-            text(b.label.get(), b.r.centerX(), b.r.centerY(), 17 * u, on ? 0xFF1C1E26 : NvGlass.TEXT, b.r.width() - 16 * u);
+            p.setShader(new LinearGradient(0, b.r.top, 0, b.r.bottom, on ? col[0] : NvGlass.lerp(col[0], 0xFF2A3350, 0.55f), on ? col[1] : NvGlass.lerp(col[1], 0xFF1B2240, 0.55f), Shader.TileMode.CLAMP));
+            p.setStyle(Paint.Style.FILL);
+            cv.drawRoundRect(b.r, 13 * u, 13 * u, p);
+            p.setShader(null);
+            if (on || b.ah > 0.02f) NvGlass.ring(cv, p, b.r, NvGlass.lerp(on ? 0x99FFFFFF : 0x00FFFFFF, NvGlass.RING, b.ah), 2f * u, 13 * u);
+            glyph(b, b.r.centerX(), b.r.centerY(), 22 * u, 0xFFFFFFFF);
             cv.restore();
+            if (hover == b) tipB = b;
+            di++;
         }
+        if (hover == micB) tooltip(micOn ? "สั่งด้วยเสียง: เปิดอยู่ (แตะเพื่อปิด)" : "สั่งด้วยเสียง: แตะเพื่อเปิด", micB.r.centerX(), dockR.top - 6 * u, u);
+        else if (tipB != null) tooltip(tipB.label.get(), tipB.r.centerX(), dockR.top - 6 * u, u);
         if (!open) return;
-        // glass panel
+        // main panel: dark navy
         RectF pr = new RectF(pX, pY, pX + pW, pY + pH);
-        NvGlass.panel(cv, p, pr, 34 * u, u);
-        NvPanel.grips(cv, p, pr, 34 * u, u);
+        p.setShader(new LinearGradient(0, pr.top, 0, pr.bottom, (ga << 24) | 0x16213D, (ga << 24) | 0x0D1528, Shader.TileMode.CLAMP));
+        p.setStyle(Paint.Style.FILL);
+        cv.drawRoundRect(pr, 30 * u, 30 * u, p);
+        p.setShader(null);
+        NvGlass.ring(cv, p, pr, 0x2EFFFFFF, 1.4f * u, 30 * u);
+        NvPanel.grips(cv, p, pr, 30 * u, u);
+        // left rail: logo and round category buttons
+        RectF logo = new RectF(pX + (railW - 38 * u) / 2f + 4 * u, pY + 18 * u, pX + (railW - 38 * u) / 2f + 4 * u + 38 * u, pY + 18 * u + 38 * u);
+        p.setShader(new LinearGradient(0, logo.top, logo.right, logo.bottom, 0xFF6AB0FF, 0xFFA06BFF, Shader.TileMode.CLAMP));
+        p.setStyle(Paint.Style.FILL);
+        cv.drawOval(logo, p);
+        p.setShader(null);
         NvGlass.font(p, true);
-        textA("PocketVR", pX + 26 * u, pY + 32 * u, 25 * u, NvGlass.TEXT, sbW - 34 * u, Paint.Align.LEFT);
-        Tab ct = tabs.get(Math.min(tab, tabs.size() - 1));
-        textA(ct.title, pX + sbW + 16 * u, pY + 32 * u, 26 * u, NvGlass.TEXT, pW - sbW - 44 * u, Paint.Align.LEFT);
-        // a thin line between the side bar and the content
-        NvGlass.fill(cv, p, new RectF(pX + sbW - 1 * u, pY + 56 * u, pX + sbW + 0.5f * u, pY + pH - 24 * u), 0x1FFFFFFF, 1);
-        // categories: capsules; the chosen one is a brighter piece of glass
+        raw("P", logo.centerX(), logo.centerY(), 22 * u, 0xFFFFFFFF, Paint.Align.CENTER);
+        NvGlass.fill(cv, p, new RectF(pX + railW + 3 * u, pY + 24 * u, pX + railW + 4.2f * u, pY + pH - 24 * u), 0x1CFFFFFF, 1);
+        Btn tabTip = null;
         for (int i = 0; i < tabs.size(); i++) {
             Btn t = tabs.get(i).b;
             boolean act = i == tab;
             ease(t);
-            float rad = t.r.height() / 2f;
-            float sc = 1f + 0.03f * t.ah - 0.05f * t.ap;
+            float sc = 1f + 0.06f * t.ah - 0.08f * t.ap;
             cv.save();
             cv.scale(sc, sc, t.r.centerX(), t.r.centerY());
-            if (act || t.ah > 0.02f || t.ap > 0.02f) NvGlass.controlA(cv, p, t.r, rad, u, act, t.ah, t.ap);
-            NvGlass.font(p, act);
-            textA(t.label.get(), t.r.left + 24 * u, t.r.centerY(), 21 * u, act ? NvGlass.TEXT : 0xCCFFFFFF, t.r.width() - 40 * u, Paint.Align.LEFT);
+            NvGlass.fill(cv, p, t.r, act ? 0x44FFFFFF : NvGlass.lerp(0x00FFFFFF, 0x30FFFFFF, t.ah), t.r.width() / 2f);
+            if (act) NvGlass.ring(cv, p, t.r, 0x99FFFFFF, 1.6f * u, t.r.width() / 2f);
+            glyph(t, t.r.centerX(), t.r.centerY(), 21 * u, 0xFFFFFFFF);
             cv.restore();
+            if (hover == t) tabTip = t;
         }
-        // content (cut off at the edges of the list, so it can be scrolled)
-        List<Btn> list = ct.items;
+        // top bar: category name and how many cards, search field
+        Tab ct = tabs.get(Math.min(tab, tabs.size() - 1));
+        List<Btn> list = shown(ct);
+        float tx = pX + railW + 22 * u;
+        NvGlass.font(p, true);
+        textA(ct.title, tx, pY + 37 * u, 25 * u, NvGlass.TEXT, searchB.r.left - tx - 90 * u, Paint.Align.LEFT);
+        p.setTextSize(25 * u);
+        float tl = Math.min(p.measureText(Tr.t(ct.title)), searchB.r.left - tx - 90 * u);
+        NvGlass.font(p, false);
+        textA("(" + list.size() + ")", tx + tl + 12 * u, pY + 38 * u, 16 * u, NvGlass.TEXT2, 0, Paint.Align.LEFT);
+        ease(searchB);
+        NvGlass.fill(cv, p, searchB.r, NvGlass.lerp(0x1FFFFFFF, 0x38FFFFFF, searchB.ah), searchB.r.height() / 2);
+        NvGlass.ring(cv, p, searchB.r, filter.isEmpty() ? 0x26FFFFFF : 0x99FFFFFF, 1.2f * u, searchB.r.height() / 2);
+        // magnifier
+        p.setShader(null); p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.9f * u); p.setColor(0xCCFFFFFF);
+        float mx = searchB.r.left + 22 * u, my = searchB.r.centerY() - 1 * u;
+        cv.drawCircle(mx, my, 6.5f * u, p);
+        cv.drawLine(mx + 4.8f * u, my + 4.8f * u, mx + 10 * u, my + 10 * u, p);
+        p.setStyle(Paint.Style.FILL);
+        NvGlass.font(p, false);
+        float rightPad = filter.isEmpty() ? 14 * u : 42 * u;
+        textA(filter.isEmpty() ? "ค้นหา" : filter, searchB.r.left + 40 * u, searchB.r.centerY(), 17 * u, filter.isEmpty() ? NvGlass.TEXT2 : NvGlass.TEXT, searchB.r.width() - 40 * u - rightPad, Paint.Align.LEFT);
+        if (!filter.isEmpty()) {
+            ease(clearB);
+            NvGlass.fill(cv, p, clearB.r, NvGlass.lerp(0x33FFFFFF, 0x77FFFFFF, clearB.ah), clearB.r.height() / 2);
+            text("✕", clearB.r.centerX(), clearB.r.centerY(), 14 * u, NvGlass.TEXT, 0);
+        }
+        // the tiles (cut off at the edges of the list, so it can be scrolled)
         cv.save();
         cv.clipRect(cRect);
+        int idx = 0;
         for (Btn b : list) {
+            idx++;
             if (b.r.isEmpty()) continue;
             boolean on = b.on != null && b.on.get();
             RectF r = b.r;
-            float h = r.height();
-            float cr = ct.grid ? 24 * u : h / 2.6f;
+            float tw = r.width(), th = tw * 0.66f;
+            RectF tile = new RectF(r.left, r.top, r.right, r.top + th);
             ease(b);
-            float sc = 1f + 0.025f * b.ah - 0.05f * b.ap;
+            float sc = 1f + 0.035f * b.ah - 0.05f * b.ap;
             cv.save();
-            cv.scale(sc, sc, r.centerX(), r.centerY());
-            NvGlass.controlA(cv, p, r, cr, u, on, b.ah, b.ap);
-            if (ct.grid) {
-                if (b.icon != null) {
-                    float s2 = h * 0.46f;
-                    RectF d = new RectF(r.centerX() - s2 / 2, r.top + h * 0.10f, r.centerX() + s2 / 2, r.top + h * 0.10f + s2);
-                    cv.drawBitmap(b.icon, null, d, p);
-                }
-                NvGlass.font(p, true);
-                if (b.icon != null) text(b.label.get(), r.centerX(), r.top + h * (b.sub != null ? 0.70f : 0.76f), 14 * u, NvGlass.TEXT, r.width() - 10 * u);
-                else text(b.label.get(), r.centerX(), r.top + h * (b.sub != null ? 0.42f : 0.5f), 17 * u, NvGlass.TEXT, r.width() - 14 * u);
-                NvGlass.font(p, false);
-                if (b.sub != null) text(b.sub.get(), r.centerX(), r.top + h * (b.icon != null ? 0.89f : 0.68f), 12 * u, 0xFFA9D4FF, r.width() - 10 * u);
-                cv.restore();
-                continue;
+            cv.scale(sc, sc, tile.centerX(), tile.centerY());
+            int[] col = tileColors(b, idx);
+            int c1 = b.icon != null ? 0xFF2B3556 : col[0], c2 = b.icon != null ? 0xFF1A2240 : col[1];
+            p.setShader(new LinearGradient(0, tile.top, 0, tile.bottom, NvGlass.lerp(c1, 0xFFFFFFFF, 0.10f * b.ah), c2, Shader.TileMode.CLAMP));
+            p.setStyle(Paint.Style.FILL);
+            cv.drawRoundRect(tile, 20 * u, 20 * u, p);
+            p.setShader(new LinearGradient(0, tile.top, 0, tile.top + th * 0.5f, 0x2AFFFFFF, 0x00FFFFFF, Shader.TileMode.CLAMP));
+            cv.drawRoundRect(tile, 20 * u, 20 * u, p);
+            p.setShader(null);
+            if (b.ah > 0.02f || b.ap > 0.02f) NvGlass.ring(cv, p, tile, NvGlass.lerp(0x00FFFFFF, 0xFFFFFFFF, b.ah), 2.6f * u, 20 * u);
+            if (b.icon != null) {
+                float s2 = th * 0.66f;
+                cv.drawBitmap(b.icon, null, new RectF(tile.centerX() - s2 / 2, tile.centerY() - s2 / 2, tile.centerX() + s2 / 2, tile.centerY() + s2 / 2), p);
+            } else glyph(b, tile.centerX(), tile.centerY(), th * 0.46f, 0xFFFFFFFF);
+            if (on) {                                                  // switched on: a small green tick in the corner
+                RectF dot = new RectF(tile.right - 30 * u, tile.top + 8 * u, tile.right - 8 * u, tile.top + 30 * u);
+                p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(NvGlass.GREEN);
+                cv.drawOval(dot, p);
+                p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(2.2f * u); p.setColor(0xFFFFFFFF);
+                cv.drawLine(dot.left + 6 * u, dot.centerY(), dot.left + 10 * u, dot.centerY() + 4 * u, p);
+                cv.drawLine(dot.left + 10 * u, dot.centerY() + 4 * u, dot.right - 5.5f * u, dot.top + 6 * u, p);
+                p.setStyle(Paint.Style.FILL);
             }
-            // list row: round coloured badge, name + hint, arrow
-            float right = 34 * u;
-            float lx = r.left + 24 * u, lw = r.right - lx - right;
-            NvGlass.font(p, true);
-            if (b.sub != null) {
-                textA(b.label.get(), lx, r.centerY() - h * 0.16f, 22 * u, NvGlass.TEXT, lw, Paint.Align.LEFT);
-                NvGlass.font(p, false);
-                textA(b.sub.get(), lx, r.centerY() + h * 0.22f, 15 * u, NvGlass.TEXT2, lw, Paint.Align.LEFT);
-            } else textA(b.label.get(), lx, r.centerY(), 22 * u, NvGlass.TEXT, lw, Paint.Align.LEFT);
-            text("›", r.right - 22 * u, r.centerY(), 30 * u, on ? 0xFFA9D4FF : NvGlass.TEXT2, 0);
             cv.restore();
+            NvGlass.font(p, true);
+            text(b.label.get(), tile.centerX(), tile.bottom + 15 * u, 15 * u, NvGlass.TEXT, tw - 6 * u);
+            if (b.sub != null) { NvGlass.font(p, false); text(b.sub.get(), tile.centerX(), tile.bottom + 33 * u, 12 * u, 0xFF9DB4DD, tw - 4 * u); }
         }
         cv.restore();
+        if (list.isEmpty()) { NvGlass.font(p, false); text(filter.isEmpty() ? "ยังไม่มีรายการ" : "ไม่พบ \"" + filter + "\"", cRect.centerX(), cRect.centerY(), 20 * u, NvGlass.TEXT2, cRect.width() - 40 * u); }
         if (maxScroll > 0f) {                                       // a thin bar shows where you are in a long list
-            float th = Math.max(36 * u, cRect.height() * cRect.height() / (cRect.height() + maxScroll));
-            float ty = cRect.top + (cRect.height() - th) * (scroll / maxScroll);
-            NvGlass.fill(cv, p, new RectF(cRect.right + 4 * u, ty, cRect.right + 8 * u, ty + th), scrolling ? 0xFFFFFFFF : 0x80FFFFFF, 3 * u);
+            float th2 = Math.max(36 * u, cRect.height() * cRect.height() / (cRect.height() + maxScroll));
+            float ty = cRect.top + (cRect.height() - th2) * (scroll / maxScroll);
+            NvGlass.fill(cv, p, new RectF(cRect.right + 6 * u, ty, cRect.right + 10 * u, ty + th2), scrolling ? 0xFFFFFFFF : 0x80FFFFFF, 3 * u);
+        }
+        if (tabTip != null) {                                       // the name of the category the pointer is on
+            NvGlass.font(p, true);
+            String nm = Tr.t(tabTip.label.get());
+            p.setTextSize(15 * u);
+            float w = p.measureText(nm) + 26 * u;
+            RectF tr = new RectF(tabTip.r.right + 10 * u, tabTip.r.centerY() - 15 * u, tabTip.r.right + 10 * u + w, tabTip.r.centerY() + 15 * u);
+            NvGlass.fill(cv, p, tr, 0xEE0E1426, 15 * u);
+            NvGlass.ring(cv, p, tr, 0x33FFFFFF, 1f * u, 15 * u);
+            text(tabTip.label.get(), tr.centerX(), tr.centerY(), 15 * u, NvGlass.TEXT, w - 12 * u);
         }
         if (animating) dirty = true;
     }

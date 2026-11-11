@@ -33,6 +33,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile float sceneScale = 1f;                 // 0.6 .. 1
     private long lastScaleT = 0, lastFrameNs = 0;
     public volatile boolean predict = true;
+    public volatile int envScene = 0;       // 0 = the camera picture, 1 = a made-up dusk city instead (a virtual room around you)
     public volatile int skel = 1;           // 0 off, 1 skeleton, 2 glowing outline (like the web version)
     public volatile float predMs = 0;
     public NvUi ui;
@@ -212,6 +213,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         public volatile boolean ghost = false;             // just chosen from the menu: shown see-through in front of you, one more click opens it for real
         public boolean game = false;                       // a game window: while one is up the thumb + middle finger menu gesture and its double tap are off (a fast swipe looks like them)
         public boolean noGhost = false;                    // opens at once (the menu itself, keyboard, cinema screen ...)
+        public String title = "";                          // shown on the little bar under the window
+        public NvUi.Txt titleFn = null;                    // (or worked out each time)
+        public Runnable onClose = null, onBack = null;     // the bar's close and back buttons
+        public boolean noBar = false;                      // no title bar under this window
+        int btex = 0, barHov = -1, barDrawnHov = -2; String barDrawnTitle = "";
+        android.graphics.Bitmap bbmp = null;
         long confT0 = 0;                                   // when the ghost was confirmed (it fades up from see-through)
         float pendYaw = 0f;                                // degrees it still has to slide sideways (+ = to the right) to make room for a new window
         int texW = 0, texH = 0;
@@ -825,7 +832,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private boolean newFrame = false;
     private final float[] stm = new float[16];
     private int vw = 1, vh = 1;
-    private int progCam, progCol, progFin, progRing;
+    private int progCam, progCol, progFin, progRing, progCity;
     private int[] maskFbo = new int[1], maskTex = new int[1];
     private int maskW = 0, maskH = 0;
     private FloatBuffer triBuf;
@@ -962,6 +969,33 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "  vec3 q=floor(w*110.); float st=step(0.9935,h21(q.xy+q.z*13.7)); col+=vec3(st*0.85)*smoothstep(0.12,0.5,e);" +
             "  float az=atan(w.y,w.x); float ridge=0.035+0.030*sin(az*4.+1.)+0.018*sin(az*11.+2.)+0.010*sin(az*27.);" +
             "  if(w.z<ridge) col=mix(vec3(0.035,0.025,0.05),hor*0.5,clamp(w.z/ridge,0.,1.)*0.5); }" +
+            " gl_FragColor=vec4(col,1.); }");
+        progCity = prog(                                 // an invented dusk city: sky, sun, layers of lit towers, a glowing round plaza and a mirror-like water floor, all worked out per pixel from the way you look
+            "attribute vec2 p; uniform vec2 tn; varying vec2 ray; void main(){ gl_Position=vec4(p,0.,1.); ray=p*tn; }",
+            "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
+            "uniform mat3 rm; uniform vec3 eo; varying vec2 ray;" +
+            "float h21(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }" +
+            "vec3 sky(vec3 w){ float e=clamp(w.z,0.,1.); vec3 c=mix(vec3(1.0,0.68,0.74),vec3(0.62,0.38,0.80),smoothstep(0.0,0.32,e)); c=mix(c,vec3(0.09,0.10,0.34),smoothstep(0.28,0.95,e));" +
+            " vec3 sd=normalize(vec3(0.62,-0.45,0.20)); float m=max(dot(w,sd),0.); c+=vec3(1.0,0.84,0.68)*(pow(m,36.)*0.55+smoothstep(0.9972,0.9988,m)); return c; }" +
+            "vec4 tower(float az,float e,float K,float seed,float hmax,vec3 base){ float x=az*K; float col=floor(x); float fx=fract(x);" +
+            " float hh=0.04+hmax*h21(vec2(col,seed)); if(e<0.||e>hh||fx<0.10||fx>0.90) return vec4(0.); float fy=e/hh;" +
+            " vec2 wc=vec2(fx*7.,e*70.); vec2 cid=floor(wc)+vec2(col*3.1,seed); vec2 cf=fract(wc);" +
+            " float lit=step(0.60,h21(cid))*step(0.2,cf.x)*step(cf.x,0.8)*step(0.2,cf.y)*step(cf.y,0.75);" +
+            " vec3 c=base*(0.65+0.55*fy)+lit*vec3(1.0,0.84,0.52)*0.9; c+=vec3(0.35,0.9,1.0)*smoothstep(0.93,1.0,fy)*0.9; return vec4(c,1.); }" +
+            "void main(){ vec3 d=normalize(vec3(ray,-1.)); vec3 w=d*rm; vec3 col;" +
+            " if(w.z<-0.004){ float t=eo.z/(-w.z); vec2 g=eo.xy+w.xy*t; float r=length(g);" +
+            "  vec3 rf=vec3(w.x,w.y,-w.z); vec3 wat=sky(rf)*0.55+vec3(0.02,0.04,0.10);" +
+            "  float rip=0.5+0.5*sin(r*3.+h21(floor(g*2.))*6.); wat+=vec3(0.05,0.03,0.08)*rip;" +
+            "  float R=7.0; float inside=1.0-smoothstep(R-0.12,R+0.12,r);" +
+            "  float ring=smoothstep(0.43,0.5,abs(fract(r*0.9)-0.5)); vec3 pl=mix(vec3(0.07,0.06,0.17),vec3(0.18,0.11,0.36),0.5+0.5*sin(r*1.7));" +
+            "  pl+=vec3(0.30,0.85,1.0)*ring*0.75*(1.0-smoothstep(0.,R,r)*0.45); pl+=sky(rf)*0.18;" +
+            "  float edge=1.0-smoothstep(0.0,0.35,abs(r-R)); pl+=vec3(1.0,0.45,0.85)*edge*0.9;" +
+            "  col=mix(wat,pl,inside); col+=vec3(1.0,0.45,0.85)*edge*(1.0-inside)*0.5;" +
+            "  float fog=clamp(t/60.,0.,1.); col=mix(col,vec3(1.0,0.68,0.74)*0.9,fog*fog); }" +
+            " else { col=sky(w); float az=atan(w.y,w.x); float e=asin(clamp(w.z,-1.,1.));" +
+            "  vec4 a=tower(az,e,9.0,1.0,0.20,vec3(0.34,0.26,0.52)); col=mix(col,mix(a.rgb,vec3(0.95,0.62,0.72),0.45),a.a);" +
+            "  vec4 b=tower(az,e,6.0,7.0,0.28,vec3(0.22,0.18,0.42)); col=mix(col,mix(b.rgb,vec3(0.95,0.62,0.72),0.22),b.a);" +
+            "  vec4 c=tower(az,e,3.7,13.0,0.36,vec3(0.12,0.10,0.28)); col=mix(col,c.rgb,c.a); }" +
             " gl_FragColor=vec4(col,1.); }");
         quad = fb(8);
         quad.put(new float[]{-1,-1, 1,-1, -1,1, 1,1}).position(0);
@@ -1233,6 +1267,140 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             wd.drawWorld(mP, rotView, sux, suy, suz);
         } catch (Throwable ignored) { }
         GLES20.glDisable(GLES20.GL_DEPTH_TEST);
+    }
+
+
+    // ---- the title bar that floats under every window: back, name, more, bigger, smaller, close ----
+    private static final int BAR_W = 640, BAR_H = 72;
+    private static final float[] BAR_X = {40f, 420f, 477f, 534f, 591f};          // centres of the round buttons (back, more, bigger, smaller, close)
+    private Win barHovWin = null; private int barHovIdx = -1;
+    private final float[] bg = new float[3], barMv = new float[16], barMvp = new float[16];
+
+    private boolean barOn(Win w) { return shown(w) && w != menuWin && !w.noBar && !w.ghost && w.animA > 0.9f && !cinemaHidesBar(w); }
+    private boolean cinemaHidesBar(Win w) { return w.c instanceof NvVideo; }
+
+    /** width, height and how far down (metres, in the window's own plane) the bar is */
+    private void barGeom(Win w, android.graphics.Bitmap bm) {
+        float pw = w.widthM * w.scale * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
+        float bw = Math.max(0.24f, Math.min(pw * 0.60f, 0.80f)), bh = bw * BAR_H / BAR_W;
+        bg[0] = bw; bg[1] = bh; bg[2] = -(ph / 2f + bh / 2f + Math.max(0.016f, bh * 0.35f));
+    }
+
+    private String barTitle(Win w) { try { return w.titleFn != null ? w.titleFn.get() : w.title; } catch (Throwable t) { return w.title; } }
+
+    private void paintBar(Win w) {
+        if (w.bbmp == null) w.bbmp = android.graphics.Bitmap.createBitmap(BAR_W, BAR_H, android.graphics.Bitmap.Config.ARGB_8888);
+        android.graphics.Canvas cv = new android.graphics.Canvas(w.bbmp);
+        cv.drawColor(0, android.graphics.PorterDuff.Mode.CLEAR);
+        android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG);
+        android.graphics.RectF pill = new android.graphics.RectF(2, 2, BAR_W - 2, BAR_H - 2);
+        int ga = Math.min(255, NvUi.glass + 6);
+        NvGlass.fill(cv, p, pill, (ga << 24) | 0x0F1628, pill.height() / 2f);
+        NvGlass.ring(cv, p, pill, 0x33FFFFFF, 1.8f, pill.height() / 2f);
+        float cy = BAR_H / 2f;
+        for (int i = 0; i < 5; i++) {
+            float cx = BAR_X[i], rr = 25f;
+            boolean hot = w.barHov == i, dim = i == 0 && w.onBack == null;
+            if (hot) NvGlass.fill(cv, p, new android.graphics.RectF(cx - rr, cy - rr, cx + rr, cy + rr), i == 4 ? 0xFFE5484D : 0x55FFFFFF, rr);
+            p.setShader(null); p.setStyle(android.graphics.Paint.Style.STROKE); p.setStrokeWidth(3.2f); p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
+            p.setColor(dim ? 0x55FFFFFF : 0xFFFFFFFF);
+            switch (i) {
+                case 0: cv.drawLine(cx + 4, cy - 10, cx - 6, cy, p); cv.drawLine(cx - 6, cy, cx + 4, cy + 10, p); break;
+                case 1: p.setStyle(android.graphics.Paint.Style.FILL); for (int k = -1; k <= 1; k++) cv.drawCircle(cx + k * 9, cy, 2.8f, p); break;
+                case 2: cv.drawLine(cx - 9, cy - 3, cx - 9, cy - 9, p); cv.drawLine(cx - 9, cy - 9, cx - 3, cy - 9, p); cv.drawLine(cx + 9, cy + 3, cx + 9, cy + 9, p); cv.drawLine(cx + 9, cy + 9, cx + 3, cy + 9, p); cv.drawLine(cx + 9, cy - 3, cx + 9, cy - 9, p); cv.drawLine(cx + 9, cy - 9, cx + 3, cy - 9, p); cv.drawLine(cx - 9, cy + 3, cx - 9, cy + 9, p); cv.drawLine(cx - 9, cy + 9, cx - 3, cy + 9, p); break;
+                case 3: cv.drawLine(cx - 9, cy + 4, cx + 9, cy + 4, p); break;
+                default: cv.drawLine(cx - 8, cy - 8, cx + 8, cy + 8, p); cv.drawLine(cx + 8, cy - 8, cx - 8, cy + 8, p); break;
+            }
+            p.setStyle(android.graphics.Paint.Style.FILL);
+        }
+        String t = Tr.t(barTitle(w));
+        NvGlass.font(p, true);
+        p.setColor(0xFFFFFFFF); p.setTextAlign(android.graphics.Paint.Align.LEFT);
+        float size = 27f, maxW = 330f;
+        p.setTextSize(size);
+        while (p.measureText(t) > maxW && size > 12) { size -= 1; p.setTextSize(size); }
+        cv.drawText(t, 84f, cy + size * 0.35f, p);
+        w.barDrawnHov = w.barHov; w.barDrawnTitle = barTitle(w);
+    }
+
+    private void drawBars() {
+        for (Win w : wins) {
+            if (!barOn(w)) continue;
+            android.graphics.Bitmap bm = w.c.bitmap();
+            if (bm == null) continue;
+            w.barHov = (barHovWin == w) ? barHovIdx : -1;
+            boolean fresh = w.btex == 0;
+            if (fresh) {
+                int[] t = new int[1];
+                GLES20.glGenTextures(1, t, 0);
+                w.btex = t[0];
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, w.btex);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+            }
+            String tt = barTitle(w);
+            if (fresh || w.barHov != w.barDrawnHov || !tt.equals(w.barDrawnTitle)) {
+                paintBar(w);
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, w.btex);
+                if (fresh) android.opengl.GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, w.bbmp, 0); else android.opengl.GLUtils.texSubImage2D(GLES20.GL_TEXTURE_2D, 0, 0, 0, w.bbmp);
+            }
+            barGeom(w, bm);
+            android.opengl.Matrix.translateM(barMv, 0, w.mv, 0, 0f, bg[2], 0f);
+            android.opengl.Matrix.multiplyMM(barMvp, 0, mP, 0, barMv, 0);
+            GLES20.glEnable(GLES20.GL_BLEND);
+            GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+            GLES20.glUseProgram(progPanel);
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, w.btex);
+            GLES20.glUniform1i(ul(progPanel, "tex"), 0);
+            GLES20.glUniform1f(ul(progPanel, "al"), w.animA);
+            GLES20.glUniformMatrix4fv(ul(progPanel, "mvp"), 1, false, barMvp, 0);
+            GLES20.glUniform2f(ul(progPanel, "hs"), bg[0] / 2f, bg[1] / 2f);
+            drawQuad(progPanel);
+            GLES20.glDisable(GLES20.GL_BLEND);
+        }
+    }
+
+    /** where the pointer is on the bar of this window: out = picture pixels of the bar; false = not on the bar */
+    private boolean hitBar(Win w, float nx, float ny, float[] out) {
+        if (!barOn(w)) return false;
+        android.graphics.Bitmap bm = w.c.bitmap();
+        if (bm == null) return false;
+        float dx = nx * tanHc, dy = ny * tanVc, dz = -1f;
+        float[] mInv = w.inv;
+        float ox = mInv[12], oy = mInv[13], oz = mInv[14];
+        float Dz = mInv[2] * dx + mInv[6] * dy + mInv[10] * dz;
+        float Dx = mInv[0] * dx + mInv[4] * dy + mInv[8] * dz;
+        float Dy = mInv[1] * dx + mInv[5] * dy + mInv[9] * dz;
+        if (Math.abs(Dz) < 1e-5f) return false;
+        float t = -oz / Dz;
+        if (t <= 0) return false;
+        float lx = ox + t * Dx, ly = oy + t * Dy;
+        barGeom(w, bm);
+        float u = lx / bg[0] + 0.5f, v = 0.5f - (ly - bg[2]) / bg[1];
+        if (u < -0.03f || u > 1.03f || v < -0.35f || v > 1.35f) return false;
+        out[0] = u * BAR_W; out[1] = v * BAR_H;
+        return true;
+    }
+
+    /** 0..4 = a round button, 5 = the empty part (grab to move the window), -1 = outside the pill */
+    private int barRegion(float x, float y) {
+        float cy = BAR_H / 2f;
+        for (int i = 0; i < 5; i++) if (Math.hypot(x - BAR_X[i], y - cy) < 32f) return i;
+        return (x >= 0 && x <= BAR_W && y >= -6 && y <= BAR_H + 6) ? 5 : -1;
+    }
+
+    private void barAct(Win w, int idx) {
+        switch (idx) {
+            case 0: if (w.onBack != null) try { w.onBack.run(); } catch (Throwable ignored) { } break;
+            case 1: w.placeReq = true; w.newOpen = false; break;                                           // "more": bring it back in front of you
+            case 2: w.scale = w.scale > 1.3f ? 1f : Math.min(2.5f, w.scale * 1.6f); break;                 // bigger / back to normal size
+            case 3: setVisible(w, false, 0f, 0f); break;                                                     // smaller: put it away (it stays loaded)
+            case 4: if (w.onClose != null) try { w.onClose.run(); } catch (Throwable ignored) { } else setVisible(w, false, 0f, 0f); break;
+            default: break;
+        }
     }
 
     private void drawWins() {
@@ -1601,16 +1769,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
 
         float[] o = new float[2];
-        Win target = null, gripWin = null;
+        Win target = null, gripWin = null, barWin = null;
+        int barReg = -1;
         if (dragWin == null && !mpOn) {
             for (int i = wins.size() - 1; i >= 0; i--) {                 // the one drawn last is in front
                 Win w = wins.get(i);
+                if (barOn(w) && hitBar(w, cnx, cny, o)) { int rg = barRegion(o[0], o[1]); if (rg >= 0) { barWin = w; barReg = rg; break; } }
                 if (!shown(w) || !hitWin(w, cnx, cny, o)) continue;
                 if (w.ghost) { target = w; break; }                       // a see-through window waiting for a click: it is hit anywhere
                 if (w.c.inGrip(o[0], o[1])) { gripWin = w; break; }      // a bottom corner: pull it to resize
                 if (w.c.covers(o[0], o[1])) { target = w; break; }
             }
         }
+        barHovWin = barWin; barHovIdx = barWin != null ? barReg : -1;
+        if (barWin != null && pinching && !prevPinch && barReg >= 0 && barReg < 5) { holdPop(cnx, cny, false); barAct(barWin, barReg); }
         gripHot = gripWin != null || (dragWin != null && resizing);
         // OK sign (thumb and index in a ring, the other three fingers stretched out) held for a moment over empty space:
         // all windows go back to the standard places and sizes
@@ -1641,21 +1813,22 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             gripWin.c.setDragging(true);
             wins.remove(gripWin); wins.add(gripWin);
         }
-        if (target != null && pinching && !prevPinch && target.c.handleRecent()) {      // grabbed the bar under a window
-            if (motion != null && motion.enabled) rebase(target, sux, suy, suz);
-            dragWin = target;
+        Win gwin = (target != null && target.c.handleRecent()) ? target : ((barWin != null && barReg == 5) ? barWin : null);
+        if (gwin != null && pinching && !prevPinch) {      // grabbed the bar under a window
+            if (motion != null && motion.enabled) rebase(gwin, sux, suy, suz);
+            dragWin = gwin;
             dnx = tnx; dny = tny;
             float gy = (float) Math.toDegrees(Math.atan(dnx * tanHc)), gp = (float) Math.toDegrees(Math.atan(dny * tanVc));
             rayYaw = gy; rayPitch = gp;
-            target.dragYawOff = target.yawA - gy;
-            target.dragPitchOff = target.pitchA - gp;
-            target.dragS0 = target.scale;
-            target.dragSize0 = Math.max(1e-3f, sizeEma);
-            target.dragD0 = target.dist;
+            gwin.dragYawOff = gwin.yawA - gy;
+            gwin.dragPitchOff = gwin.pitchA - gp;
+            gwin.dragS0 = gwin.scale;
+            gwin.dragSize0 = Math.max(1e-3f, sizeEma);
+            gwin.dragD0 = gwin.dist;
             dragT0 = nowMs;
-            target.c.setDragging(true);
-            wins.remove(target);                                          // bring to the front
-            wins.add(target);
+            gwin.c.setDragging(true);
+            wins.remove(gwin);                                          // bring to the front
+            wins.add(gwin);
         }
         if (dragWin != null && resizing && pinching) {                 // the corner follows the hand: size = distance from the window centre
             float rd = (float) Math.hypot(rayYaw - dragWin.yawA, rayPitch - dragWin.pitchA);
@@ -2096,6 +2269,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glUniformMatrix3fv(ul(progPano, "rm"), 1, false, rm3, 0);
             GLES20.glUniform1f(ul(progPano, "lon0"), panoLon0);
             drawQuad(progPano);
+        } else if (envScene == 1 && !cinema) {
+            float[] m = rotView;
+            rm3[0] = m[0]; rm3[1] = m[1]; rm3[2] = m[2]; rm3[3] = m[4]; rm3[4] = m[5]; rm3[5] = m[6]; rm3[6] = m[8]; rm3[7] = m[9]; rm3[8] = m[10];
+            GLES20.glUseProgram(progCity);
+            GLES20.glUniform2f(ul(progCity, "tn"), tanH, tanV);
+            GLES20.glUniformMatrix3fv(ul(progCity, "rm"), 1, false, rm3, 0);
+            GLES20.glUniform3f(ul(progCity, "eo"), sux, suy, 1.15f);
+            drawQuad(progCity);
         } else if (cinema) {
             GLES20.glClearColor(0.01f, 0.01f, 0.015f, 1f);          // the room goes dark: only the screen is left
             GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
@@ -2106,6 +2287,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         computePanel();
         cursor();
         drawWins();
+        drawBars();
         if (skel == 4 && maskReady) drawCamera(true);
         if (skel == 1) drawSkeleton(dispDraw); else if (skel == 2 || skel == 3) drawOutline(dispDraw);
         drawCursor();

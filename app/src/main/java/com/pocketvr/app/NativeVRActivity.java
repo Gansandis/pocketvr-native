@@ -178,13 +178,14 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 long p = cam.detPaceMs;
                 if (f >= 40) p = Math.max(0, p - 20); else if (f > 0 && f < 28) p = Math.min(100, p + 15);
                 updateEco(System.currentTimeMillis());
+                updateStatus();
                 if (ecoLevel == 1) p = Math.max(p, 25); else if (ecoLevel == 2) p = Math.max(p, 60);
                 cam.detPaceMs = p;
                 for (NvBrowser b : brs) if (b != null) b.poll();
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.162 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.165 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -211,7 +212,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         buildWindows();
         buildMenu();
         final NvSplash splash = new NvSplash();                          // the start-up animation: a window that shows for a few seconds and goes
-        final VRRenderer.Win wSplash = rend.addWindow(splash, 0.9f); wSplash.noGhost = true;
+        final VRRenderer.Win wSplash = rend.addWindow(splash, 0.9f); wSplash.noGhost = true; wSplash.noBar = true;
         rend.toggle(wSplash, 0f, 0f);
         ui.postDelayed(() -> { if (wSplash.visible) rend.toggle(wSplash, 0f, 0f); }, NvSplash.TOTAL_MS + 150);
         for (int i = 0; i < 7; i++) winApply(i);
@@ -275,6 +276,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         clock.add(new NvUi.Btn("", () -> "↺ รีเซ็ต", null, null, 0, 0, () -> { swRunning = false; swAcc = 0; }), 310, 198, 250, 52);
         wClock = rend.addWindow(clock, 0.55f);
         clock.onClose = () -> rend.setVisible(wClock, false, 0f, 0f);
+        wClock.title = "นาฬิกา"; wClock.onClose = clock.onClose;
 
         final NvPanel stats = new NvPanel(560, 300, "สถานะระบบ");
         stats.refreshMs = 500;
@@ -295,15 +297,18 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         };
         wStats = rend.addWindow(stats, 0.55f);
         stats.onClose = () -> rend.setVisible(wStats, false, 0f, 0f);
+        wStats.title = "สถานะ"; wStats.onClose = stats.onClose;
 
         final NvFruit fruitGame = new NvFruit();
         wFruit = rend.addWindow(fruitGame, 1.0f);
         fruitGame.onClose = () -> rend.setVisible(wFruit, false, 0f, 0f);
+        wFruit.title = "เกมฟันผลไม้"; wFruit.onClose = fruitGame.onClose;
         wFruit.game = true;
 
         final NvSword3D sword3 = new NvSword3D();
         wSword3 = rend.addWindow(sword3, 0.42f);
         sword3.onClose = () -> rend.setVisible(wSword3, false, 0f, 0f);
+        wSword3.title = "เกมฟันดาบ 3D"; wSword3.onClose = sword3.onClose;
         rend.world3 = sword3; rend.world3Win = wSword3; wSword3.game = true;
 
         final NvKeyboard kb = new NvKeyboard();
@@ -316,22 +321,26 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         wKeys = rend.addWindow(kb, 0.80f); wKeys.noGhost = true;
         kbd = kb;
         kb.onClose = () -> { kb.sink = null; rend.setVisible(wKeys, false, 0f, 0f); };
+        wKeys.noBar = true;
 
         settings = new NvSettings();
         wSet = rend.addWindow(settings, 1.5f);
         rend.onPalmSettings = () -> rend.toggle(wSet, 0f, 5f);
         wSet.showInCinema = true;
         settings.onClose = () -> rend.setVisible(wSet, false, 0f, 0f);
+        wSet.title = "ตั้งค่า"; wSet.onClose = settings.onClose;
 
         // gallery, 360 viewer and cinema
         video = new NvVideo(this);
         wVideo = rend.addWindow(video, 1.7f); wVideo.noGhost = true;
         wVideo.showInCinema = true; wKeys.showInCinema = true;
         video.onClose = () -> { video.release(); rend.setVisible(wVideo, false, 0f, 0f); rend.cinema = false; };
+        wVideo.noBar = true;
         media = new NvMedia(this);
         wMedia = rend.addWindow(media, 1.3f);
         wMedia.showInCinema = true;
         media.onClose = () -> { rend.setPano(null); media.panoOn = false; rend.setVisible(wMedia, false, 0f, 0f); };
+        wMedia.title = "แกลเลอรี"; wMedia.onClose = media.onClose;
         media.host = new NvMedia.Host() {
             @Override public void onPano(final android.net.Uri u) {
                 if (rend.panoActive()) { rend.setPano(null); media.panoOn = false; return; }
@@ -383,6 +392,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         w.showInCinema = true;
         bws[i] = w; winApply(7 + i);
         b.onClose = () -> { b.close(); rend.setVisible(w, false, 0f, 0f); if (kbd != null) kbd.sink = null; };
+        w.title = "เบราว์เซอร์"; w.titleFn = () -> b.pageTitle(); w.onClose = b.onClose; w.onBack = () -> b.nav("back");
         b.onNewWindow = () -> openBrowser(-1);
         brs[i] = b; bws[i] = w;
         return b;
@@ -449,6 +459,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         w.showInCinema = true;
         aws[i] = w; winApply(10 + i);
         a.onClose = () -> { a.close(); rend.setVisible(w, false, 0f, 0f); if (kbd != null) kbd.sink = null; };
+        w.title = "แอป"; w.onClose = a.onClose;
         aps[i] = a;
         return a;
     }
@@ -565,13 +576,13 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     // ================= saved settings (kept when the app is closed) =================
-    private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck4", "flow", "eco", "autoRes", "tips", "pmenu", "lang", "lock", "range", "night"};
+    private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck4", "flow", "eco", "autoRes", "tips", "pmenu", "lang", "lock", "range", "night", "scene"};
     private double[] defaults;
     private double[] lastSaved;
 
     private double[] snapPrefs() {
         return new double[]{rend.sel, rend.pokeS, rend.predict ? 1 : 0, cam.detW, rend.floaty ? 1 : 0, NvUi.glass, rend.cursorSz, rend.skel, hudOn ? 1 : 0,
-                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs, rend.mainHand, rend.chroma, cam.handsGpu ? 1 : 0, rend.neck ? 1 : 0, cam.flowOn ? 1 : 0, eco, rend.autoRes ? 1 : 0, cam.tipsOn ? 1 : 0, rend.palmMenu ? 1 : 0, Tr.thai ? 1 : 0, hands.lockMine ? 1 : 0, hands.maxDistM, cam.night};
+                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs, rend.mainHand, rend.chroma, cam.handsGpu ? 1 : 0, rend.neck ? 1 : 0, cam.flowOn ? 1 : 0, eco, rend.autoRes ? 1 : 0, cam.tipsOn ? 1 : 0, rend.palmMenu ? 1 : 0, Tr.thai ? 1 : 0, hands.lockMine ? 1 : 0, hands.maxDistM, cam.night, rend.envScene};
     }
 
     private void applyPrefs(double[] v) {
@@ -579,7 +590,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         NvUi.glass = (int) v[5]; rend.cursorSz = (int) v[6]; rend.skel = (int) v[7]; hudOn = v[8] > 0.5;
         rend.sharpen = (float) v[9]; rend.stereo = v[10] > 0.5; rend.lens = (int) v[11]; rend.eyeShift = (float) v[12]; compass = v[13] > 0.5;
         motion.depthM = (float) v[14]; motion.lagMs = (int) v[15]; cam.handsN = Math.max(1, Math.min(2, (int) v[16])); rend.vrFov = (float) Math.max(50, Math.min(110, v[17]));
-        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19])); rend.mainHand = v[20] > 0.5 ? 1 : 0; rend.chroma = (float) Math.max(-0.06, Math.min(0.06, v[21])); cam.handsGpu = v[22] > 0.5; rend.neck = v[23] > 0.5; cam.flowOn = v[24] > 0.5; eco = Math.max(0, Math.min(3, (int) v[25])); rend.autoRes = v[26] > 0.5; cam.tipsOn = v[27] > 0.5; rend.palmMenu = v[28] > 0.5; Tr.setThai(v.length > 29 && v[29] > 0.5); if (v.length > 31) { hands.lockMine = v[30] > 0.5; hands.maxDistM = (float) Math.max(0.4, Math.min(2.0, v[31])); } if (v.length > 32) { cam.night = Math.max(0, Math.min(2, (int) v[32])); rend.lift = cam.night == 0 ? 0f : cam.night == 1 ? 0.6f : 1.0f; }
+        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19])); rend.mainHand = v[20] > 0.5 ? 1 : 0; rend.chroma = (float) Math.max(-0.06, Math.min(0.06, v[21])); cam.handsGpu = v[22] > 0.5; rend.neck = v[23] > 0.5; cam.flowOn = v[24] > 0.5; eco = Math.max(0, Math.min(3, (int) v[25])); rend.autoRes = v[26] > 0.5; cam.tipsOn = v[27] > 0.5; rend.palmMenu = v[28] > 0.5; Tr.setThai(v.length > 29 && v[29] > 0.5); if (v.length > 31) { hands.lockMine = v[30] > 0.5; hands.maxDistM = (float) Math.max(0.4, Math.min(2.0, v[31])); } if (v.length > 32) { cam.night = Math.max(0, Math.min(2, (int) v[32])); rend.lift = cam.night == 0 ? 0f : cam.night == 1 ? 0.6f : 1.0f; } if (v.length > 33) rend.envScene = Math.max(0, Math.min(1, (int) v[33]));
     }
 
     // ----- where the windows were left (turn, height, size, distance) -----
@@ -778,6 +789,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         if (has(n, "ฟันดาบ", "เกมดาบ", "ดาบ", "มอนสเตอร์", "sword", "monster")) { if (close) hideWin(wSword3); else showWin(wSword3, 0f, 30f); say(close ? "ปิดเกมดาบ" : "เปิดเกมดาบ"); return; }
         if (has(n, "นาฬิกา", "จับเวลา", "clock", "timer")) { if (close) hideWin(wClock); else showWin(wClock, 18f, 0f); say(close ? "ปิดนาฬิกา" : "เปิดนาฬิกา"); return; }
         if (has(n, "สถานะ", "status")) { if (close) hideWin(wStats); else showWin(wStats, -18f, 0f); say(close ? "ปิดสถานะ" : "เปิดสถานะ"); return; }
+        if (has(n, "ฉากเมือง", "ฉากเสมือน", "โลกเสมือน", "virtualscene", "virtualworld", "citysc", "virtualroom")) { rend.envScene = close ? 0 : 1; say(close ? "กลับเป็นภาพกล้อง" : "เปิดฉากเมืองเสมือน"); return; }
         if (has(n, "โรงหนัง", "cinema", "theater")) { rend.cinema = !close; rend.recenter = true; say(close ? "ปิดโหมดโรงหนัง" : "เปิดโหมดโรงหนัง"); return; }
         if (has(n, "แกลเลอรี", "แกลลอรี่", "รูป", "ภาพ", "วิดีโอ", "gallery", "photos", "pictures", "videos")) {
             if (close) { if (wMedia.visible) media.onClose.run(); if (wVideo.visible) video.onClose.run(); say("ปิดแล้ว"); }
@@ -794,6 +806,56 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         }
         if (has(n, "เมนู", "menu")) { menu.setOpen(open); say(open ? "เปิดเมนู" : "ปิดเมนู"); return; }
         say("ไม่เข้าใจ: " + raw.trim() + "  (พูดว่า \"ช่วยด้วย\")");
+    }
+
+
+    // ---- status shown on the menu dock (clock is drawn by the menu itself) ----
+    private long statT = 0;
+    private void updateStatus() {
+        long now = System.currentTimeMillis();
+        if (now - statT < 4000 || menu == null) return;
+        statT = now;
+        boolean ch = false;
+        try {
+            android.content.Intent bi = registerReceiver(null, new android.content.IntentFilter(android.content.Intent.ACTION_BATTERY_CHANGED));
+            if (bi != null) {
+                int lv = bi.getIntExtra("level", -1), sc = bi.getIntExtra("scale", 100), st = bi.getIntExtra("status", -1);
+                int pct = sc > 0 && lv >= 0 ? lv * 100 / sc : -1;
+                boolean cg = st == 2 || st == 5;
+                if (pct != menu.battery || cg != menu.charging) { menu.battery = pct; menu.charging = cg; ch = true; }
+            }
+        } catch (Throwable ignored) { }
+        try {
+            int bars = -1; String kind = "";
+            android.net.ConnectivityManager cm = (android.net.ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+            android.net.NetworkInfo ni = cm == null ? null : cm.getActiveNetworkInfo();
+            if (ni != null && ni.isConnected()) {
+                if (ni.getType() == android.net.ConnectivityManager.TYPE_WIFI) {
+                    kind = "Wi-Fi"; bars = 3;
+                    try {
+                        android.net.wifi.WifiManager wm = (android.net.wifi.WifiManager) getApplicationContext().getSystemService(WIFI_SERVICE);
+                        bars = Math.max(1, Math.min(4, android.net.wifi.WifiManager.calculateSignalLevel(wm.getConnectionInfo().getRssi(), 5)));
+                    } catch (Throwable ignored) { }
+                } else { kind = "มือถือ"; bars = 3; }
+            }
+            if (bars != menu.net || !kind.equals(menu.netKind)) { menu.net = bars; menu.netKind = kind; ch = true; }
+        } catch (Throwable ignored) { }
+        boolean mo = voice != null && voice.isOn();
+        if (mo != menu.micOn) { menu.micOn = mo; ch = true; }
+        if (ch) menu.markDirty();
+    }
+
+    /** the search field of the menu: the on-screen keyboard types into the filter */
+    private void startMenuSearch() {
+        runOnUiThread(() -> {
+            if (kbd == null) return;
+            kbd.sink = new NvKeyboard.Sink() {
+                @Override public void onText(String t) { menu.filter = menu.filter + t; menu.relayout(); }
+                @Override public void onBackspace() { String f = menu.filter; if (!f.isEmpty()) { menu.filter = f.substring(0, f.length() - 1); menu.relayout(); } }
+                @Override public void onEnter(String all) { hideWin(wKeys); kbd.sink = null; }
+            };
+            showWin(wKeys, 0f, -24f);
+        });
     }
 
     private void buildMenu() {
@@ -824,6 +886,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.home.add(new NvUi.Btn("🎬", () -> "โหมดโรงหนัง", () -> rend.cinema ? "ห้องมืด เห็นแค่จอ" : "ปิดอยู่ (เห็นห้องจริง)", () -> rend.cinema, GA, GB, () -> { rend.cinema = !rend.cinema; rend.recenter = true; }));
         menu.home.add(new NvUi.Btn("⌨", () -> "คีย์บอร์ด", () -> wKeys.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wKeys.visible, GA, GB, () -> rend.toggle(wKeys, 0f, -24f)));
         menu.home.add(new NvUi.Btn("⚙", () -> "ตั้งค่า", () -> wSet.visible ? "เปิดอยู่" : "ควบคุม แสดงผล VR ทดลอง", () -> wSet.visible, GA, GB, () -> rend.toggle(wSet, 0f, 5f)));
+        tools.add(new NvUi.Btn("🌆", () -> "ฉากเมืองเสมือน", () -> rend.envScene == 1 ? "เปิดอยู่ (แทนภาพกล้อง)" : "ปิดอยู่ (เห็นห้องจริง)", () -> rend.envScene == 1, 0xFF8A5AE0, 0xFF5A32A8, () -> rend.envScene = rend.envScene == 1 ? 0 : 1));
         tools.add(new NvUi.Btn("🦍", () -> "Gorilla World", () -> "เปิดเกมกอริลลา (ต้องติดตั้งแยก)", null, GA, GB, () -> runOnUiThread(() -> {
             try {
                 android.content.Intent gi = getPackageManager().getLaunchIntentForPackage("com.htmltoapk.gorillaworld");
@@ -844,6 +907,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         })));
         tools.add(new NvUi.Btn("⏻", () -> "ออกจากแอป", () -> "ปิด PocketVR", null, 0xFF6A3036, 0xFF4A2024, () -> runOnUiThread(() -> finishAffinity())));
 
+        menu.onMic = () -> toggleVoice();
+        menu.onSearch = () -> startMenuSearch();
         menu.dock.add(new NvUi.Btn("🏠", () -> "เมนู", null, () -> menu.open, 0, 0, () -> menu.toggleOpen()));
         menu.dock.add(new NvUi.Btn("🥽", () -> "แยกจอ", null, () -> rend.stereo, 0, 0, () -> rend.stereo = !rend.stereo));
         menu.dock.add(new NvUi.Btn("👓", () -> "เลนส์", null, () -> rend.lens > 0, 0, 0, () -> rend.lens = (rend.lens + 1) % 4));

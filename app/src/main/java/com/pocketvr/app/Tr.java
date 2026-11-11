@@ -13,6 +13,18 @@ public final class Tr {
     public static volatile boolean thai = false;
     private static final HashMap<String, String> cache = new HashMap<>();
     private static final String[][] PAIRS = {
+        {"ฉากเมืองเสมือน", "Virtual city scene"},
+        {"เปิดอยู่ (แทนภาพกล้อง)", "On (instead of the camera)"},
+        {"ปิดอยู่ (เห็นห้องจริง)", "Off (see the real room)"},
+        {"เบราว์เซอร์", "Browser"},
+        {"นาฬิกา", "Clock"},
+        {"แกลเลอรี", "Gallery"},
+        {"ค้นหา", "Search"},
+        {"ออฟไลน์", "Offline"},
+        {"มือถือ", "Mobile"},
+        {"ยังไม่มีรายการ", "Nothing here yet"},
+        {"สั่งด้วยเสียง: เปิดอยู่ (แตะเพื่อปิด)", "Voice commands: on (tap to turn off)"},
+        {"สั่งด้วยเสียง: แตะเพื่อเปิด", "Voice commands: tap to turn on"},
         {"มือจริงทะลุจอ", "Real hand through windows"},
         {"มือกระจกใส (เส้นขอบ + ฟิล์ม)", "Glass hand (outline + film)"},
         {"ภาษาที่ฟัง", "Listening language"},
