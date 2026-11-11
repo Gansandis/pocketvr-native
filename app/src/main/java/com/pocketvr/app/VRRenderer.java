@@ -667,8 +667,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             else w.animOn = false;
             android.opengl.Matrix.transposeM(tA, 0, rn, 0);
             w.rot = tA.clone();
-            w.rollKeep = keepOf(headRoll(w.rot));
-            for (Win an : wins) if (an != w && an.anchor && shown(an) && an.rot != null) { w.rollKeep = an.rollKeep; break; }      // beside the main menu: the same tilt as it, so they line up
+            w.rollKeep = 0f;                                           // like a real thing in the room: level with the floor, whatever the head's tilt was when it came up (it used to keep up to 25 deg of it, which left windows rolled once the head was straight again)
             if (w.aimV != null) aimDir(w, w.aimV);
             else if (w.offYaw != 0f || w.offPitch != 0f) aimWin(w, w.offYaw, w.offPitch);
             w.scale = w.wantScale > 0 ? w.wantScale : openScale(w);
