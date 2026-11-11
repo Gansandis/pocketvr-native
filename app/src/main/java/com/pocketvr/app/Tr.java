@@ -13,6 +13,7 @@ public final class Tr {
     public static volatile boolean thai = false;
     private static final HashMap<String, String> cache = new HashMap<>();
     private static final String[][] PAIRS = {
+        {"มือกระจกใส (เส้นขอบ + ฟิล์ม)", "Glass hand (outline + film)"},
         {"ภาษาที่ฟัง", "Listening language"},
         {"ตามภาษาแอป", "Follow app language"},
         {"อังกฤษ (English)", "English"},

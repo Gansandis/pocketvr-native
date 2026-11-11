@@ -900,8 +900,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         for (Win w : wins) { w.tex = 0; w.texW = 0; w.texH = 0; }      // a new graphics context: every window picture must be uploaded again in full
         progRing = prog(
             "attribute vec2 p; varying vec2 uv; void main(){ gl_Position=vec4(p,0.,1.); uv=p*0.5+0.5; }",
-            "precision mediump float; uniform sampler2D tex; uniform vec2 px; uniform float rad; varying vec2 uv;" +
+            "precision mediump float; uniform sampler2D tex; uniform vec2 px; uniform float rad; uniform vec4 h0; uniform vec4 h1; uniform vec3 hs; uniform float gl; varying vec2 uv;" +
             "float s(float x, float y){ return texture2D(tex,uv+vec2(x,y)*px*rad).r; }" +
+            // how much of this spot belongs to the hand and not to the forearm: full over the palm and fingers, melting away from the wrist down the arm
+            "float hf(vec4 h, vec2 q){ vec2 d=q-h.xy; float t=dot(d,h.zw); float L=hs.x; return smoothstep(-0.30*L,0.40*L,t)*(1.0-smoothstep(2.2*L,3.4*L,length(d))); }" +
             "void main(){" +
             " float m = s(0.,0.)*0.25 + (s(1.,0.)+s(-1.,0.)+s(0.,1.)+s(0.,-1.))*0.125 + (s(1.,1.)+s(-1.,1.)+s(1.,-1.)+s(-1.,-1.))*0.0625;" +
             " float w = (s(3.,0.)+s(-3.,0.)+s(0.,3.)+s(0.,-3.))*0.25;" +
@@ -909,8 +911,16 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             " float glow = 0.45*smoothstep(0.0,0.6,w)*(1.0-smoothstep(0.30,0.50,m));" +
             " float e = max(line, glow);" +
             " float dk = 0.40*(1.0 - smoothstep(0.0, 0.16, abs(m-0.28)));" +
-            " float a = max(e, dk);" +
-            " gl_FragColor = vec4(vec3(0.92,0.97,1.0)*e, a); }");
+            " float fl = 0.0;" +
+            " if (gl > 0.5) {" +
+            "  vec2 q = vec2(uv.x*hs.y, uv.y);" +
+            "  float f = hf(h0, q); if (hs.z > 1.5) f = max(f, hf(h1, q));" +
+            "  float ins = smoothstep(0.40, 0.62, m);" +
+            "  fl = 0.24*ins*f;" +                                           // a thin clear white film over the hand, like frosted glass
+            "  e *= 0.35 + 0.65*f; dk *= f;" +
+            " }" +
+            " float a = max(max(e, dk), fl);" +
+            " gl_FragColor = vec4(vec3(0.92,0.97,1.0)*max(e, fl), a); }");
         progAA = prog(
             "attribute vec2 p; attribute vec4 q; varying vec4 vq; void main(){ gl_Position=vec4(p,0.,1.); vq=q; }",
             "precision mediump float; uniform vec3 col; uniform float sf; uniform float fade; varying vec4 vq;" +
@@ -1767,6 +1777,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // step 1 of the outline: the soft hand shape into the small mask. This is done BEFORE the camera picture is started, so the big scene
     // picture is drawn in one go (switching away from it half way makes a phone GPU save and reload the whole picture: a lot of memory traffic)
     private boolean maskReady = false;
+    private final float[] ringH = new float[8];
     private void renderMask(float[] r) {
         maskReady = false;
         int n = (int) r[0];
@@ -1833,6 +1844,26 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform1i(ul(progRing, "tex"), 0);
         GLES20.glUniform2f(ul(progRing, "px"), 1f / maskW, 1f / maskH);
         GLES20.glUniform1f(ul(progRing, "rad"), 2.4f);
+        // for the glass look: where each wrist is and which way the hand points (in picture-height units), so the film and the line melt away down the forearm
+        float asp = (float) sceneW / Math.max(1, sceneH);
+        float[] hu = ringH;
+        java.util.Arrays.fill(hu, 0f);
+        hu[3] = 1f; hu[7] = 1f;
+        float palmL = 0.12f;
+        for (int i = 0; i < n && i < 2; i++) {
+            float x0 = r[1 + i * 63], y0 = r[1 + i * 63 + 1], x9 = r[1 + i * 63 + 27], y9 = r[1 + i * 63 + 28];
+            if (rot180) { x0 = 1f - x0; y0 = 1f - y0; x9 = 1f - x9; y9 = 1f - y9; }
+            float ux0 = (x0 * 2f - 1f) * camScale * 0.5f + 0.5f, uy0 = 0.5f - (y0 * 2f - 1f) * camScale * 0.5f;
+            float ux9 = (x9 * 2f - 1f) * camScale * 0.5f + 0.5f, uy9 = 0.5f - (y9 * 2f - 1f) * camScale * 0.5f;
+            float dx = (ux9 - ux0) * asp, dy = uy9 - uy0, dl = (float) Math.hypot(dx, dy);
+            if (dl < 1e-4f) { dx = 0f; dy = 1f; dl = 1f; }
+            hu[i * 4] = ux0 * asp; hu[i * 4 + 1] = uy0; hu[i * 4 + 2] = dx / dl; hu[i * 4 + 3] = dy / dl;
+            if (i == 0) palmL = Math.max(0.03f, dl); else palmL = (palmL + Math.max(0.03f, dl)) * 0.5f;
+        }
+        GLES20.glUniform4f(ul(progRing, "h0"), hu[0], hu[1], hu[2], hu[3]);
+        GLES20.glUniform4f(ul(progRing, "h1"), hu[4], hu[5], hu[6], hu[7]);
+        GLES20.glUniform3f(ul(progRing, "hs"), palmL * 1.15f, asp, n);
+        GLES20.glUniform1f(ul(progRing, "gl"), skel == 2 ? 1f : 0f);
         drawQuad(progRing);
         GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
         GLES20.glDisable(GLES20.GL_BLEND);
@@ -1997,7 +2028,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
         }
         predictNow(now);                                    // where the hand is on screen right now (needed first: the outline mask is made before the scene picture)
-        if (skel == 2) renderMask(dispDraw); else maskReady = false;
+        if (skel >= 2) renderMask(dispDraw); else maskReady = false;
         // 1) scene picture: camera (or the 360 picture) + hand skeleton
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0]);
         GLES20.glViewport(0, 0, sceneW, sceneH);
@@ -2048,7 +2079,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         computePanel();
         cursor();
         drawWins();
-        if (skel == 1) drawSkeleton(dispDraw); else if (skel == 2) drawOutline(dispDraw);
+        if (skel == 1) drawSkeleton(dispDraw); else if (skel >= 2) drawOutline(dispDraw);
         drawCursor();
 
         // 2) screen: mono or split, with lens warp
