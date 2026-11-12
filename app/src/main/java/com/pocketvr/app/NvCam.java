@@ -68,7 +68,7 @@ public class NvCam {
     private final float[] cat = new float[2];
     /** the colour of THIS person's skin in the light of the moment, learnt from points on the palm of the hand the model found:
      *  {Cb mean, Cr mean, Cb spread, Cr spread, time (ms) it was learnt}. The renderer uses it to tell skin from background (an adaptive skin model, not a fixed colour range). */
-    public volatile float[] skin = new float[]{0, 0, 0, 0, 0, 0};
+    public volatile float[] skin = new float[]{0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     private static final int[][] SKIN_PTS = {{0, 0}, {1, 1}, {2, 2}, {5, 5}, {9, 9}, {13, 13}, {17, 17}, {0, 9}, {0, 5}, {0, 17}, {5, 9}, {9, 13}, {13, 17}, {2, 5}, {1, 5}, {5, 6}, {9, 10}, {13, 14}, {0, 2}};
     private void updateSkin(Bitmap bmp, float[] res) {
         int w = bmp.getWidth(), h = bmp.getHeight();
@@ -96,9 +96,57 @@ public class NvCam {
         ey /= n;
         for (int i = 0; i < n; i++) if (Math.abs(cbs[i] - mcb) < 0.07f && Math.abs(crs[i] - mcr) < 0.07f) { vc += (cbs[i] - ec) * (cbs[i] - ec); vr += (crs[i] - er) * (crs[i] - er); }
         float dc = Math.max(0.022f, (float) Math.sqrt(vc / k)) + 0.012f, dr = Math.max(0.022f, (float) Math.sqrt(vr / k)) + 0.012f;      // some room for the shade over the hand
+        // the BACKGROUND round the hand (what lies just beyond the fingertips and to the sides), learnt the same way: a pixel is skin only if it is closer to the hand's colour than to the background's.
+        // (a wooden floor or table has nearly the colour of skin, but not the same as THIS hand and THIS floor)
+        float bcb = 0, bcr = 0, bdc = 0, bdr = 0, bgOn = 0;
+        {
+            float sz = (float) Math.hypot((res[1 + 9 * 3] - res[1]) * w, (res[1 + 9 * 3 + 1] - res[2]) * h);
+            float[] bx = new float[9], by = new float[9];
+            int nb = 0;
+            int[][] tips = {{4, 3}, {8, 7}, {12, 11}, {16, 15}, {20, 19}};
+            for (int[] t : tips) {
+                float dx = (res[1 + t[0] * 3] - res[1 + t[1] * 3]) * w, dy = (res[1 + t[0] * 3 + 1] - res[1 + t[1] * 3 + 1]) * h, l = (float) Math.hypot(dx, dy);
+                if (l < 1e-3f) continue;
+                bx[nb] = res[1 + t[0] * 3] * w + dx / l * sz * 0.45f; by[nb] = res[1 + t[0] * 3 + 1] * h + dy / l * sz * 0.45f; nb++;
+            }
+            {   // the side of the little finger and the side of the thumb, away from the palm's middle
+                float mx = (res[1 + 0 * 3] + res[1 + 9 * 3]) * 0.5f * w, my = (res[1 + 0 * 3 + 1] + res[1 + 9 * 3 + 1]) * 0.5f * h;
+                int[] sd = {17, 2};
+                for (int q : sd) {
+                    float dx = res[1 + q * 3] * w - mx, dy = res[1 + q * 3 + 1] * h - my, l = (float) Math.hypot(dx, dy);
+                    if (l < 1e-3f) continue;
+                    bx[nb] = mx + dx / l * sz * 1.05f; by[nb] = my + dy / l * sz * 1.05f; nb++;
+                }
+            }
+            float[] bc = new float[nb], br2 = new float[nb]; int m = 0;
+            for (int i = 0; i < nb; i++) {
+                int xi = (int) bx[i], yi = (int) by[i];
+                if (xi < 2 || yi < 2 || xi >= w - 2 || yi >= h - 2) continue;
+                float r = 0, g = 0, b = 0;
+                for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) { int p = bmp.getPixel(xi + dx, yi + dy); r += (p >> 16) & 255; g += (p >> 8) & 255; b += p & 255; }
+                r /= 9 * 255f; g /= 9 * 255f; b /= 9 * 255f;
+                float cb2 = -0.169f * r - 0.331f * g + 0.5f * b + 0.5f, cr2 = 0.5f * r - 0.419f * g - 0.081f * b + 0.5f;
+                if (Math.abs(cb2 - ec) < dc * 1.2f && Math.abs(cr2 - er) < dr * 1.2f) continue;          // that is the hand itself (a bent finger): not background
+                bc[m] = cb2; br2[m] = cr2; m++;
+            }
+            if (m >= 3) {
+                float[] a2 = java.util.Arrays.copyOf(bc, m), b2 = java.util.Arrays.copyOf(br2, m);
+                java.util.Arrays.sort(a2); java.util.Arrays.sort(b2);
+                float mc = a2[m / 2], mr = b2[m / 2], s1 = 0, s2 = 0; int kk = 0;
+                for (int i = 0; i < m; i++) if (Math.abs(bc[i] - mc) < 0.07f && Math.abs(br2[i] - mr) < 0.07f) { s1 += bc[i]; s2 += br2[i]; kk++; }
+                if (kk >= 2) {
+                    bcb = s1 / kk; bcr = s2 / kk; float v1 = 0, v2 = 0;
+                    for (int i = 0; i < m; i++) if (Math.abs(bc[i] - mc) < 0.07f && Math.abs(br2[i] - mr) < 0.07f) { v1 += (bc[i] - bcb) * (bc[i] - bcb); v2 += (br2[i] - bcr) * (br2[i] - bcr); }
+                    bdc = Math.max(0.022f, (float) Math.sqrt(v1 / kk)) + 0.012f; bdr = Math.max(0.022f, (float) Math.sqrt(v2 / kk)) + 0.012f;
+                    bgOn = Math.hypot((bcb - ec) / dc, (bcr - er) / dr) > 0.9 ? 1f : 0f;                // the two colours must really differ, else it is skin only
+                    float[] ov = skin;
+                    if (bgOn > 0.5f && ov.length > 10 && ov[6] > 0.5f) { float t = 0.4f; bcb = ov[7] + (bcb - ov[7]) * t; bcr = ov[8] + (bcr - ov[8]) * t; bdc = ov[9] + (bdc - ov[9]) * t; bdr = ov[10] + (bdr - ov[10]) * t; }
+                }
+            }
+        }
         float[] pv = skin; if (pv[2] > 0) ey = pv[5] + (ey - pv[5]) * 0.3f; long now = System.currentTimeMillis();
         if (pv[2] > 0 && Math.abs(pv[0] - ec) < 0.12f) { float t = 0.3f; ec = pv[0] + (ec - pv[0]) * t; er = pv[1] + (er - pv[1]) * t; dc = pv[2] + (dc - pv[2]) * t; dr = pv[3] + (dr - pv[3]) * t; }
-        skin = new float[]{ec, er, dc, dr, 1f, ey};
+        skin = new float[]{ec, er, dc, dr, 1f, ey, bgOn, bcb, bcr, bdc, bdr};
         skinT = now;
     }
     public volatile long skinT = 0;
