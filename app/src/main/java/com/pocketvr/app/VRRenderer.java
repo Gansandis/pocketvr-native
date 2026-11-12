@@ -872,7 +872,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
             "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; varying vec2 pp;" +
-            "float skinAt(vec3 c){ float cb=-0.169*c.r-0.331*c.g+0.5*c.b+0.5, cr=0.5*c.r-0.419*c.g-0.081*c.b+0.5, yy=0.299*c.r+0.587*c.g+0.114*c.b; return (1.-smoothstep(0.75,1.25,length(vec2(cb-0.41,cr-0.60)/vec2(0.15,0.12))))*smoothstep(0.02,0.10,yy); }" +
+            "float skinAt(vec3 c){ float cb=-0.169*c.r-0.331*c.g+0.5*c.b+0.5, cr=0.5*c.r-0.419*c.g-0.081*c.b+0.5, yy=0.299*c.r+0.587*c.g+0.114*c.b; return (1.-smoothstep(0.75,1.25,length(vec2(cb-0.41,cr-0.60)/vec2(0.13,0.10))))*smoothstep(0.02,0.10,yy); }" +
             "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
             " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; }" +
             " vec2 t=q*0.5+0.5; t=mix(t,1.-t,rf); vec2 uv=vec2(t.x,1.-t.y); vec4 c=texture2D(tex,uv); vec4 c0=c;" +
@@ -882,12 +882,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             " if(mkOn>0.5){ vec2 mu=pp*mz*0.5+0.5;" +
             "  float m=texture2D(mk,mu).r*0.25+(texture2D(mk,mu+vec2(mpx.x,0.)).r+texture2D(mk,mu-vec2(mpx.x,0.)).r+texture2D(mk,mu+vec2(0.,mpx.y)).r+texture2D(mk,mu-vec2(0.,mpx.y)).r)*0.125" +
             "   +(texture2D(mk,mu+mpx).r+texture2D(mk,mu-mpx).r+texture2D(mk,mu+vec2(mpx.x,-mpx.y)).r+texture2D(mk,mu+vec2(-mpx.x,mpx.y)).r)*0.0625;" +
-            "  float a=smoothstep(0.30,0.60,m); if(a<0.01){ gl_FragColor=vec4(0.); return; }" +
+            "  float gc=texture2D(mk,mu).g*0.4+(texture2D(mk,mu+vec2(mpx.x,0.)).g+texture2D(mk,mu-vec2(mpx.x,0.)).g+texture2D(mk,mu+vec2(0.,mpx.y)).g+texture2D(mk,mu-vec2(0.,mpx.y)).g)*0.15;" +
+            "  float core=smoothstep(0.35,0.65,gc);" +
+            "  float a=smoothstep(0.30,0.60,m); if(a<0.01&&core<0.01){ gl_FragColor=vec4(0.); return; }" +
             "  float sk=skinAt(c0.rgb);" +
-            "  vec2 o1=vec2(px.x*4.,0.), o2=vec2(0.,px.y*4.);" +
+            "  vec2 o1=vec2(px.x*3.,0.), o2=vec2(0.,px.y*3.);" +
             "  float sa=(sk+skinAt(texture2D(tex,uv+o1).rgb)+skinAt(texture2D(tex,uv-o1).rgb)+skinAt(texture2D(tex,uv+o2).rgb)+skinAt(texture2D(tex,uv-o2).rgb))*0.2;" +
-            "  sk=max(sk,sa*1.5);" +
-            "  a*=smoothstep(0.10,0.45,sk); gl_FragColor=vec4(c.rgb*a,a); } else gl_FragColor=c; }");
+            "  sk=max(sk,sa*1.2);" +
+            "  a=max(a*smoothstep(0.25,0.55,sk),core);" +
+            "  gl_FragColor=vec4(c.rgb*a,a); } else gl_FragColor=c; }");
         progCol = prog(
             "attribute vec2 p; uniform float ps; void main(){ gl_Position=vec4(p,0.,1.); gl_PointSize=ps; }",
             "precision mediump float; uniform vec4 col; uniform float rnd; void main(){ if (rnd>0.5 && length(gl_PointCoord-0.5)>0.5) discard; gl_FragColor=col; }");
@@ -2005,37 +2008,45 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         maskReady = true;
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, maskFbo[0]);
         GLES20.glViewport(0, 0, maskW, maskH);
+        GLES20.glColorMask(true, true, true, true);
         GLES20.glClearColor(0, 0, 0, 0);
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         float hwS = sceneW / 2f, hhS = sceneH / 2f;
-        for (int i = 0; i < n; i++) {
-            float[] X = ohX, Y = ohY;
-            for (int k = 0; k < 21; k++) {
-                float hx = r[1 + i * 63 + k * 3], hy = r[1 + i * 63 + k * 3 + 1];
-                if (rot180) { hx = 1f - hx; hy = 1f - hy; }
-                X[k] = (hx * 2f - 1f) * hwS * camScale; Y[k] = (1f - hy * 2f) * hhS * camScale;
-            }
-            float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
-            final boolean thr = skel == 4;
-            float hw = Math.max(3f, size * (thr ? 0.17f : 0.115f));   // see-through: a generous area, the real skin colour of the picture then cuts the exact outline
-            aaBegin();
-            for (int b = 0; b < BONES.length; b += 2) {
-                int p0 = BONES[b], p1 = BONES[b + 1];
-                float x1 = X[p1], y1 = Y[p1];
-                if (p1 == 4 || p1 == 8 || p1 == 12 || p1 == 16 || p1 == 20) {   // the end cap must not stick out beyond the fingertip
-                    float dx = x1 - X[p0], dy = y1 - Y[p0], l = (float) Math.hypot(dx, dy);
-                    if (l > 1e-3f) { x1 -= dx / l * hw * 0.8f; y1 -= dy / l * hw * 0.8f; }
+        final boolean thr = skel == 4;
+        for (int pass = (thr ? 0 : 1); pass < 2; pass++) {              // pass 0 (thr only): R = the skin-checked band around the hand; pass 1: G (thr) or the whole thing (other modes) = the sure core
+            if (thr) GLES20.glColorMask(pass == 0, pass == 1, false, true);
+            for (int i = 0; i < n; i++) {
+                float[] X = ohX, Y = ohY;
+                for (int k = 0; k < 21; k++) {
+                    float hx = r[1 + i * 63 + k * 3], hy = r[1 + i * 63 + k * 3 + 1];
+                    if (rot180) { hx = 1f - hx; hy = 1f - hy; }
+                    X[k] = (hx * 2f - 1f) * hwS * camScale; Y[k] = (1f - hy * 2f) * hhS * camScale;
                 }
-                aaSeg(X[p0], Y[p0], x1, y1, hw);
+                float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
+                boolean core = thr && pass == 1;
+                float hw = Math.max(3f, size * (thr ? (core ? 0.072f : 0.125f) : 0.115f));
+                aaBegin();
+                for (int b2 = 0; b2 < BONES.length; b2 += 2) {
+                    int p0 = BONES[b2], p1 = BONES[b2 + 1];
+                    float x1 = X[p1], y1 = Y[p1];
+                    if (p1 == 4 || p1 == 8 || p1 == 12 || p1 == 16 || p1 == 20) {
+                        float dx = x1 - X[p0], dy = y1 - Y[p0], l = (float) Math.hypot(dx, dy);
+                        if (l > 1e-3f) {
+                            float ext = thr ? (core ? -0.0f : 0.05f * size) : -hw * 0.8f;   // see-through: the stroke reaches to the nail (the end cap adds the rest); the other modes keep the cap inside the fingertip
+                            x1 += dx / l * ext; y1 += dy / l * ext;
+                        }
+                    }
+                    aaSeg(X[p0], Y[p0], x1, y1, hw);
+                }
+                aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.30f : 0.42f) : 0.38f));
+                if (thr && size > 1e-3f) {
+                    float ax = (X[0] - X[9]) / size, ay = (Y[0] - Y[9]) / size;
+                    aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * (core ? 0.22f : 0.36f));
+                }
+                aaFlush(1f, 1f, 1f);
             }
-            // palm filling: a fat stroke between the wrist and the knuckles (kept inside the real palm)
-            aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? 0.55f : 0.38f));
-            if (thr && size > 1e-3f) {                       // the forearm too, so the whole arm is seen through the windows (it runs on past the edge of the picture)
-                float ax = (X[0] - X[9]) / size, ay = (Y[0] - Y[9]) / size;
-                aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * 0.45f);
-            }
-            aaFlush(1f, 1f, 1f);
         }
+        GLES20.glColorMask(true, true, true, true);
     }
 
     // step 2 of the outline: a thin line along the middle of the blurred mask, drawn on the scene picture
