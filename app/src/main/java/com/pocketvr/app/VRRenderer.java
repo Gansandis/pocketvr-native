@@ -1152,11 +1152,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // the hand outline / skeleton is drawn where the hand is in the camera picture that is on screen right now (that picture is already a bit old),
         // so it sticks to the real hand; the pointer below looks ahead instead, to feel quick
         if (r[0] >= 1) {                                    // a hand that is not followed by the camera is drawn from its speed instead
-            float dl = Math.max(0, Math.min(now - handT - 16, 90)) / 1000f;       // drawn where the hand really is in the picture on screen: only a short, careful step on from the model's answer (a long guess made the outline float away from the hand)
+            float dl = Math.max(0, Math.min(now - handT - 16, skel == 4 ? 140 : 90)) / 1000f;       // drawn where the hand really is in the picture on screen: only a short, careful step on from the model's answer (a long guess made the outline float away from the hand)
             for (int i = 1; i < r.length; i++) {
                 if ((i - 1) % 3 == 2) continue;
                 int hnd = (i - 1) / 63;
-                if (hnd >= 2 || !foh[hnd]) dispDraw[i] += dz(vel[i]) * dl * 0.7f;
+                if (hnd >= 2 || !foh[hnd]) dispDraw[i] += dz(vel[i]) * dl * (skel == 4 ? 0.95f : 0.7f);
             }
         }
         if (predict && r[0] >= 1) {
@@ -2024,7 +2024,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 }
                 float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
                 boolean core = thr && pass == 1;
-                float hw = Math.max(3f, size * (thr ? (core ? 0.072f : 0.125f) : 0.115f));
+                float hw = Math.max(3f, size * (thr ? (core ? 0.072f : 0.125f + Math.min(0.10f, handSpd * 0.10f)) : 0.115f));
                 aaBegin();
                 for (int b2 = 0; b2 < BONES.length; b2 += 2) {
                     int p0 = BONES[b2], p1 = BONES[b2 + 1];
@@ -2037,6 +2037,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                         }
                     }
                     aaSeg(X[p0], Y[p0], x1, y1, hw);
+                }
+                if (thr) {                                                          // the skin between thumb and index finger: the model has no points there
+                    float wh = hw * (core ? 1.0f : 0.9f);
+                    aaSeg(X[3], Y[3], X[6], Y[6], wh); aaSeg(X[2], Y[2], X[6], Y[6], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh); aaSeg(X[2], Y[2], X[5], Y[5], wh);
+                    aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, (X[5] + X[6]) / 2f, (Y[5] + Y[6]) / 2f, wh * 1.15f);
                 }
                 aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.30f : 0.42f) : 0.38f));
                 if (thr && size > 1e-3f) {
