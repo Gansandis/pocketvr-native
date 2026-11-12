@@ -1042,6 +1042,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private float[] dispDraw = new float[]{0}, corr = new float[1];
     private float[] drawRes = null;
     private long lastPredT = 0;
+    /** speed with a dead zone: noise of the model while the hand rests must not become a guessed movement */
+    private static float dz(float v) { float a = Math.abs(v) - 0.08f; return a <= 0f ? 0f : (v < 0f ? -a : a); }
     private void predictNow(long now) {
         float[] r = cam.result;
         if (r != lastRes) {
@@ -1113,7 +1115,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         drawRes = r;
         long fdt = lastPredT == 0 ? 16 : Math.max(1, Math.min(60, now - lastPredT));
         lastPredT = now;
-        float decay = (float) Math.exp(-fdt / 90f);
+        float decay = (float) Math.exp(-fdt / 60f);
         for (int i = 0; i < r.length; i++) {
             float v = r[i], vt = r[i];
             if (i > 0) {
@@ -1141,11 +1143,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // the hand outline / skeleton is drawn where the hand is in the camera picture that is on screen right now (that picture is already a bit old),
         // so it sticks to the real hand; the pointer below looks ahead instead, to feel quick
         if (r[0] >= 1) {                                    // a hand that is not followed by the camera is drawn from its speed instead
-            float dl = Math.max(0, Math.min(now - handT - 16, 140)) / 1000f;
+            float dl = Math.max(0, Math.min(now - handT - 16, 90)) / 1000f;       // drawn where the hand really is in the picture on screen: only a short, careful step on from the model's answer (a long guess made the outline float away from the hand)
             for (int i = 1; i < r.length; i++) {
                 if ((i - 1) % 3 == 2) continue;
                 int hnd = (i - 1) / 63;
-                if (hnd >= 2 || !foh[hnd]) dispDraw[i] += vel[i] * dl * 0.9f;
+                if (hnd >= 2 || !foh[hnd]) dispDraw[i] += dz(vel[i]) * dl * 0.7f;
             }
         }
         if (predict && r[0] >= 1) {
@@ -1155,7 +1157,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             for (int i = 1; i < r.length; i++) {
                 if ((i - 1) % 3 == 2) continue;
                 int hnd = (i - 1) / 63;
-                disp[i] += vel[i] * ((hnd < 2 && foh[hnd]) ? leadF : leadM) * 0.9f;
+                disp[i] += dz(vel[i]) * ((hnd < 2 && foh[hnd]) ? leadF : leadM) * 0.9f;
             }
         } else predMs = 0;
     }
