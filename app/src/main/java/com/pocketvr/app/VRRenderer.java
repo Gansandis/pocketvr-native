@@ -1329,7 +1329,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void barGeom(Win w, android.graphics.Bitmap bm) {
         float pw = w.widthM * w.scale * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
         float dk = Math.max(1f, Math.min(5f, Math.max(0.3f, w.dist) / PANEL_D));                       // a window far away (or very big) gets a bar of the same size to the eye
-        float bw = Math.max(0.62f * dk, Math.min(pw, 1.10f * dk)), bh = bw * BAR_H / BAR_W;           // always a big, easy bar, whatever the window's size
+        float bw = Math.max(0.62f * dk, Math.min(pw * 0.75f, 3.2f * dk)), bh = bw * BAR_H / BAR_W;     // grows with the window when it is made bigger           // always a big, easy bar, whatever the window's size
         bg[0] = bw; bg[1] = bh; bg[2] = -(ph / 2f + bh / 2f + 0.012f);                                  // stuck right under the window: one piece with it
     }
 
@@ -2096,9 +2096,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     }
                     aaSeg(X[p0], Y[p0], x1, y1, hw);
                 }
-                if (thr && !core) {                                                 // (band only, so the skin colour checks it) the skin at the root of the thumb: only close to the palm, never out to the thumb's tip
-                    float wh = size * 0.075f;
-                    aaSeg(X[1], Y[1], X[5], Y[5], wh); aaSeg(X[2], Y[2], X[5], Y[5], wh);
+                if (thr) {
+                    if (core) {                                                     // the root of the thumb joins the palm: sure hand (close to the palm only)
+                        aaSeg(X[0], Y[0], X[2], Y[2], hw); aaSeg(X[1], Y[1], X[5], Y[5], hw); aaSeg(X[2], Y[2], X[5], Y[5], hw);
+                    } else {                                                        // the web between thumb and index: wide, but only where the learnt colour table says "hand"
+                        float wh = size * 0.11f;
+                        aaSeg(X[2], Y[2], X[6], Y[6], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh); aaSeg(X[3], Y[3], X[6], Y[6], wh);
+                        aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, (X[5] + X[6]) / 2f, (Y[5] + Y[6]) / 2f, wh * 1.2f);
+                    }
                 }
                 aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.30f : 0.42f) : 0.38f));
                 if (arm && size > 1e-3f) {
