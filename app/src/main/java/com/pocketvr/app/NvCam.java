@@ -66,6 +66,40 @@ public class NvCam {
     private final NvFlow flow = new NvFlow();
     private final byte[] gray = new byte[NvFlow.GW * NvFlow.GH];
     private final float[] cat = new float[2];
+    /** the colour of THIS person's skin in the light of the moment, learnt from points on the palm of the hand the model found:
+     *  {Cb mean, Cr mean, Cb spread, Cr spread, time (ms) it was learnt}. The renderer uses it to tell skin from background (an adaptive skin model, not a fixed colour range). */
+    public volatile float[] skin = new float[]{0, 0, 0, 0, 0};
+    private static final int[][] SKIN_PTS = {{0, 0}, {1, 1}, {2, 2}, {5, 5}, {9, 9}, {13, 13}, {17, 17}, {0, 9}, {0, 5}, {0, 17}, {5, 9}, {9, 13}, {13, 17}, {2, 5}, {1, 5}, {5, 6}, {9, 10}, {13, 14}, {0, 2}};
+    private void updateSkin(Bitmap bmp, float[] res) {
+        int w = bmp.getWidth(), h = bmp.getHeight();
+        float[] cbs = new float[SKIN_PTS.length], crs = new float[SKIN_PTS.length];
+        int n = 0;
+        for (int[] pp : SKIN_PTS) {
+            float x = (res[1 + pp[0] * 3] + res[1 + pp[1] * 3]) * 0.5f * w, y = (res[1 + pp[0] * 3 + 1] + res[1 + pp[1] * 3 + 1]) * 0.5f * h;
+            int xi = (int) x, yi = (int) y;
+            if (xi < 2 || yi < 2 || xi >= w - 2 || yi >= h - 2) continue;
+            float r = 0, g = 0, b = 0;
+            for (int dy = -1; dy <= 1; dy++) for (int dx = -1; dx <= 1; dx++) { int p = bmp.getPixel(xi + dx, yi + dy); r += (p >> 16) & 255; g += (p >> 8) & 255; b += p & 255; }
+            r /= 9 * 255f; g /= 9 * 255f; b /= 9 * 255f;
+            if (0.299f * r + 0.587f * g + 0.114f * b < 0.10f) continue;                 // too dark to tell
+            cbs[n] = -0.169f * r - 0.331f * g + 0.5f * b + 0.5f; crs[n] = 0.5f * r - 0.419f * g - 0.081f * b + 0.5f; n++;
+        }
+        if (n < 5) return;
+        float[] a = java.util.Arrays.copyOf(cbs, n), bb = java.util.Arrays.copyOf(crs, n);
+        java.util.Arrays.sort(a); java.util.Arrays.sort(bb);
+        float mcb = a[n / 2], mcr = bb[n / 2];
+        float sc = 0, sr = 0; int k = 0;
+        for (int i = 0; i < n; i++) if (Math.abs(cbs[i] - mcb) < 0.07f && Math.abs(crs[i] - mcr) < 0.07f) { sc += cbs[i]; sr += crs[i]; k++; }   // points on a ring, a nail or a background seen between the fingers are thrown away
+        if (k < 4) return;
+        float ec = sc / k, er = sr / k, vc = 0, vr = 0;
+        for (int i = 0; i < n; i++) if (Math.abs(cbs[i] - mcb) < 0.07f && Math.abs(crs[i] - mcr) < 0.07f) { vc += (cbs[i] - ec) * (cbs[i] - ec); vr += (crs[i] - er) * (crs[i] - er); }
+        float dc = Math.max(0.022f, (float) Math.sqrt(vc / k)) + 0.012f, dr = Math.max(0.022f, (float) Math.sqrt(vr / k)) + 0.012f;      // some room for the shade over the hand
+        float[] pv = skin; long now = System.currentTimeMillis();
+        if (pv[2] > 0 && Math.abs(pv[0] - ec) < 0.12f) { float t = 0.3f; ec = pv[0] + (ec - pv[0]) * t; er = pv[1] + (er - pv[1]) * t; dc = pv[2] + (dc - pv[2]) * t; dr = pv[3] + (dr - pv[3]) * t; }
+        skin = new float[]{ec, er, dc, dr, 1f};
+        skinT = now;
+    }
+    public volatile long skinT = 0;
     public volatile long resultCapT = 0;           // time (ms, System.nanoTime based) the picture behind `result` was taken
     public volatile boolean filt = true;           // steady the points: little shake when the hand is slow, almost no delay when it is quick
     private float[] fx = new float[127], fd = new float[127];
@@ -375,6 +409,7 @@ public class NvCam {
                         if (!handsOpened) { handsFailed = true; lis.onError("hands: " + hands.error); return; }
                     }
                     float[] res = hands.detect(bmp, ts);          // the picture is reused for the next look, so it is not recycled here
+                    if (res != null && res[0] >= 1 && res.length >= 64) { try { updateSkin(bmp, res); } catch (Throwable ignored) { } }
                     if (res != null) {
                         heldFlag = false;
                         res = holdSecond(res, result, System.nanoTime() / 1000000L);

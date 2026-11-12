@@ -871,8 +871,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCam = prog(
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
-            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; varying vec2 pp;" +
-            "float skinAt(vec3 c){ float cb=-0.169*c.r-0.331*c.g+0.5*c.b+0.5, cr=0.5*c.r-0.419*c.g-0.081*c.b+0.5, yy=0.299*c.r+0.587*c.g+0.114*c.b; return (1.-smoothstep(0.75,1.25,length(vec2(cb-0.41,cr-0.60)/vec2(0.13,0.10))))*smoothstep(0.02,0.10,yy); }" +
+            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; varying vec2 pp;" +
+            "float skinAt(vec3 c){ float cb=-0.169*c.r-0.331*c.g+0.5*c.b+0.5, cr=0.5*c.r-0.419*c.g-0.081*c.b+0.5, yy=0.299*c.r+0.587*c.g+0.114*c.b;" +
+            " vec2 d=smOn>0.5 ? vec2(cb-sm.x,cr-sm.y)/(sm.zw*2.4) : vec2(cb-0.41,cr-0.60)/vec2(0.13,0.10);" +        // learnt skin colour of this person (Gaussian in Cb/Cr, brightness left out so shade does not matter), or a general one until it is learnt
+            " return (1.-smoothstep(0.7,1.2,length(d)))*smoothstep(0.02,0.10,yy); }" +
             "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
             " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; }" +
             " vec2 t=q*0.5+0.5; t=mix(t,1.-t,rf); vec2 uv=vec2(t.x,1.-t.y); vec4 c=texture2D(tex,uv); vec4 c0=c;" +
@@ -1244,6 +1246,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniformMatrix4fv(ul(progCam, "stm"), 1, false, stm, 0);
         GLES20.glUniform1f(ul(progCam, "rf"), rot180 ? 1f : 0f);
         GLES20.glUniform2f(ul(progCam, "px"), 1f / Math.max(1, imgW), 1f / Math.max(1, imgH));
+        { float[] sk = cam.skin; boolean ok = mode == 2 && sk != null && sk[2] > 0f && System.currentTimeMillis() - cam.skinT < 3000;
+          GLES20.glUniform1f(ul(progCam, "smOn"), ok ? 1f : 0f);
+          GLES20.glUniform4f(ul(progCam, "sm"), ok ? sk[0] : 0f, ok ? sk[1] : 0f, ok ? sk[2] : 1f, ok ? sk[3] : 1f); }
         GLES20.glUniform1f(ul(progCam, "amt"), sharpen);
         GLES20.glUniform1f(ul(progCam, "lift"), lift);
         drawQuad(progCam);
