@@ -336,7 +336,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     // The window stands like a wall (top edge up, no sideways tilt) and leans a little towards the eyes: below eye level it tilts its face up, above eye level it tilts down,
     // by half the angle it sits above / below (at most TILT_MAX), so it is easy to read without ever lying flat. It turns about its own centre, so it does not move.
-    private static final float TILT_K = 0.75f, TILT_MAX = 40f;
+    private static final float TILT_K = 0f, TILT_MAX = 0f;   // no lean towards the eyes: a window is a flat vertical plane like a picture on a wall
     private void uprightAboutCentre(Win w) {
         float[] r = w.rot;
         if (r == null) return;
