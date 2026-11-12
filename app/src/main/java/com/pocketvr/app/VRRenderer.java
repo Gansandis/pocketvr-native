@@ -2082,7 +2082,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 }
                 float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
                 boolean core = thr && pass == 1;
-                float hw = Math.max(3f, size * (thr ? (core ? 0.072f : (arm ? 0.15f : 0.095f) + Math.min(0.07f, handSpd * 0.07f)) : 0.115f));
+                float hw = Math.max(3f, size * (thr ? (core ? 0.034f : (arm ? 0.15f : 0.125f) + Math.min(0.07f, handSpd * 0.07f)) : 0.115f));
                 aaBegin();
                 for (int b2 = 0; b2 < BONES.length; b2 += 2) {
                     int p0 = BONES[b2], p1 = BONES[b2 + 1];
@@ -2098,17 +2098,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 }
                 if (thr) {
                     if (core) {                                                     // the root of the thumb joins the palm: sure hand (close to the palm only)
-                        aaSeg(X[0], Y[0], X[2], Y[2], hw); aaSeg(X[1], Y[1], X[5], Y[5], hw); aaSeg(X[2], Y[2], X[5], Y[5], hw);
+                        float cw = size * 0.06f; aaSeg(X[0], Y[0], X[2], Y[2], cw); aaSeg(X[1], Y[1], X[5], Y[5], cw); aaSeg(X[2], Y[2], X[5], Y[5], cw);
                     } else {                                                        // the web between thumb and index: wide, but only where the learnt colour table says "hand"
                         float wh = size * 0.11f;
                         aaSeg(X[2], Y[2], X[6], Y[6], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh); aaSeg(X[3], Y[3], X[6], Y[6], wh);
                         aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, (X[5] + X[6]) / 2f, (Y[5] + Y[6]) / 2f, wh * 1.2f);
                     }
                 }
-                aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.30f : 0.42f) : 0.38f));
+                aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.20f : 0.42f) : 0.38f));
                 if (arm && size > 1e-3f) {
                     float ax = (X[0] - X[9]) / size, ay = (Y[0] - Y[9]) / size;
-                    aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * (core ? 0.22f : 0.36f));
+                    aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * (core ? 0.12f : 0.36f));
                 }
                 aaFlush(1f, 1f, 1f);
             }
