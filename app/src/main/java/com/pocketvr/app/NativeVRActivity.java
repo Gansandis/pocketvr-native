@@ -322,7 +322,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         wKeys = rend.addWindow(kb, 0.80f); wKeys.noGhost = true;
         kbd = kb;
         kb.onClose = () -> { kb.sink = null; rend.setVisible(wKeys, false, 0f, 0f); };
-        wKeys.noBar = true;
+        wKeys.noBar = true; wKeys.lowDock = true;
 
         settings = new NvSettings();
         wSet = rend.addWindow(settings, 1.5f);
@@ -902,7 +902,9 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         for (String[] w : WEB) {
             if (!shownW.add(w[2])) continue;
             final String url = w[1];
-            webs.add(new NvUi.Btn(w[3], () -> w[2], () -> "เปิดลอย", null, 0xFF3A6FD8, 0xFF2547A0, () -> openWebFloating(url)));
+            NvUi.Btn wb = new NvUi.Btn(w[3], () -> w[2], () -> "เปิดลอย", null, 0xFF3A6FD8, 0xFF2547A0, () -> openWebFloating(url));
+            webs.add(wb);
+            loadLogo(wb, url);
         }
         menu.home.add(new NvUi.Btn("🌐", () -> "เบราว์เซอร์", () -> browsersShown() > 0 ? browsersShown() + " หน้าต่าง" : "ปิดอยู่", () -> browsersShown() > 0, GA, GB, () -> {
             if (browsersShown() > 0) {                                     // hide them all (they keep their pages and rest quietly)
@@ -985,6 +987,34 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             }
         } catch (Throwable t) { err = "apps: " + t; }
         menu.relayout();
+    }
+
+    /** the real logo of a website for its card: kept on the phone after the first time (so it also shows offline), fetched in the background */
+    private void loadLogo(final NvUi.Btn b, final String url) {
+        new Thread(() -> {
+            try {
+                String host = android.net.Uri.parse(url).getHost();
+                if (host == null) return;
+                java.io.File f = new java.io.File(getCacheDir(), "logo_" + host.replaceAll("[^a-z0-9.]", "_") + ".png");
+                android.graphics.Bitmap src = f.exists() ? android.graphics.BitmapFactory.decodeFile(f.getAbsolutePath()) : null;
+                if (src == null) {
+                    java.net.HttpURLConnection c = (java.net.HttpURLConnection) new java.net.URL("https://www.google.com/s2/favicons?domain=" + host + "&sz=128").openConnection();
+                    c.setConnectTimeout(6000); c.setReadTimeout(6000);
+                    try (java.io.InputStream in = c.getInputStream()) { src = android.graphics.BitmapFactory.decodeStream(in); }
+                    if (src == null) return;
+                    try (java.io.FileOutputStream o = new java.io.FileOutputStream(f)) { src.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, o); } catch (Throwable ignored) { }
+                }
+                // on a light rounded plate, so a dark or white logo is seen on the dark card
+                android.graphics.Bitmap bm = android.graphics.Bitmap.createBitmap(160, 160, android.graphics.Bitmap.Config.ARGB_8888);
+                android.graphics.Canvas cv = new android.graphics.Canvas(bm);
+                android.graphics.Paint p = new android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG | android.graphics.Paint.FILTER_BITMAP_FLAG);
+                p.setColor(0xFFF4F6FA);
+                cv.drawRoundRect(new android.graphics.RectF(0, 0, 160, 160), 36, 36, p);
+                cv.drawBitmap(src, null, new android.graphics.RectF(30, 30, 130, 130), p);
+                b.icon = bm;
+                runOnUiThread(() -> menu.relayout());
+            } catch (Throwable ignored) { }
+        }, "logo").start();
     }
 
     private static android.graphics.Bitmap iconOf(android.graphics.drawable.Drawable d) {

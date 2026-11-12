@@ -299,9 +299,44 @@ public class NvUi implements NvContent {
     }
 
     /** the picture on a tile: the emoji (Thai mode) or the first letter of the name */
+    /** simple pictures drawn with strokes (original, plain), so a tile says what it is in every language */
+    private boolean pict(String e, float cx, float cy, float s, int color) {
+        if (e == null || e.isEmpty()) return false;
+        int cp = e.codePointAt(0);
+        p.setShader(null); p.setColor(color); p.setStrokeCap(Paint.Cap.ROUND); p.setStrokeJoin(Paint.Join.ROUND);
+        float r = s * 0.62f, sw = Math.max(2.2f, s * 0.085f);
+        p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(sw);
+        RectF b = new RectF(cx - r, cy - r, cx + r, cy + r);
+        switch (cp) {
+            case 0x1F310: cv.drawCircle(cx, cy, r, p); cv.drawOval(new RectF(cx - r * 0.45f, cy - r, cx + r * 0.45f, cy + r), p); cv.drawLine(cx - r, cy, cx + r, cy, p); cv.drawLine(cx - r * 0.85f, cy - r * 0.5f, cx + r * 0.85f, cy - r * 0.5f, p); cv.drawLine(cx - r * 0.85f, cy + r * 0.5f, cx + r * 0.85f, cy + r * 0.5f, p); break;      // globe
+            case 0x1F5BC: cv.drawRoundRect(new RectF(cx - r, cy - r * 0.8f, cx + r, cy + r * 0.8f), 6, 6, p); { android.graphics.Path q = new android.graphics.Path(); q.moveTo(cx - r, cy + r * 0.55f); q.lineTo(cx - r * 0.3f, cy - r * 0.05f); q.lineTo(cx + r * 0.15f, cy + r * 0.4f); q.lineTo(cx + r * 0.5f, cy + r * 0.1f); q.lineTo(cx + r, cy + r * 0.55f); cv.drawPath(q, p); } cv.drawCircle(cx + r * 0.5f, cy - r * 0.35f, r * 0.14f, p); break;       // picture
+            case 0x1F3AC: cv.drawRoundRect(new RectF(cx - r, cy - r * 0.45f, cx + r, cy + r * 0.8f), 6, 6, p); cv.drawRect(new RectF(cx - r, cy - r * 0.85f, cx + r, cy - r * 0.45f), p); for (int k = -1; k <= 1; k++) cv.drawLine(cx + k * r * 0.6f - r * 0.2f, cy - r * 0.85f, cx + k * r * 0.6f + r * 0.1f, cy - r * 0.45f, p); break;                  // clapper
+            case 0x2328: cv.drawRoundRect(new RectF(cx - r, cy - r * 0.6f, cx + r, cy + r * 0.6f), 8, 8, p); p.setStyle(Paint.Style.FILL); for (int k = -2; k <= 2; k++) { cv.drawCircle(cx + k * r * 0.36f, cy - r * 0.22f, sw * 0.55f, p); cv.drawCircle(cx + k * r * 0.36f, cy + r * 0.12f, sw * 0.55f, p); } cv.drawRect(new RectF(cx - r * 0.5f, cy + r * 0.28f, cx + r * 0.5f, cy + r * 0.38f), p); break;   // keyboard
+            case 0x2699: cv.drawCircle(cx, cy, r * 0.5f, p); cv.drawCircle(cx, cy, r * 0.2f, p); for (int k = 0; k < 8; k++) { double a = k * Math.PI / 4; cv.drawLine(cx + (float) Math.cos(a) * r * 0.62f, cy + (float) Math.sin(a) * r * 0.62f, cx + (float) Math.cos(a) * r * 0.95f, cy + (float) Math.sin(a) * r * 0.95f, p); } break;   // gear
+            case 0x1F306: p.setStyle(Paint.Style.FILL); { float[] hh = {0.5f, 0.9f, 0.65f, 1.1f, 0.7f}; for (int k = 0; k < 5; k++) { float x0 = cx - r + k * r * 0.4f; cv.drawRect(new RectF(x0, cy + r * 0.7f - hh[k] * r, x0 + r * 0.34f, cy + r * 0.7f), p); } } break;     // skyline
+            case 0x1F399: cv.drawRoundRect(new RectF(cx - r * 0.28f, cy - r * 0.95f, cx + r * 0.28f, cy + r * 0.15f), 14, 14, p); cv.drawArc(new RectF(cx - r * 0.6f, cy - r * 0.5f, cx + r * 0.6f, cy + r * 0.55f), 20, 140, false, p); cv.drawLine(cx, cy + r * 0.55f, cx, cy + r * 0.95f, p); cv.drawLine(cx - r * 0.35f, cy + r * 0.95f, cx + r * 0.35f, cy + r * 0.95f, p); break;       // microphone
+            case 0x1F5E3: cv.drawRoundRect(new RectF(cx - r, cy - r * 0.75f, cx + r, cy + r * 0.35f), 14, 14, p); cv.drawLine(cx - r * 0.4f, cy + r * 0.35f, cx - r * 0.6f, cy + r * 0.85f, p); cv.drawLine(cx - r * 0.6f, cy + r * 0.85f, cx, cy + r * 0.35f, p); for (int k = -1; k <= 1; k++) cv.drawLine(cx + k * r * 0.45f, cy - r * 0.25f, cx + k * r * 0.45f, cy - r * 0.05f, p); break;   // speech
+            case 0x2694: cv.drawLine(cx - r * 0.85f, cy - r * 0.85f, cx + r * 0.85f, cy + r * 0.85f, p); cv.drawLine(cx + r * 0.85f, cy - r * 0.85f, cx - r * 0.85f, cy + r * 0.85f, p); cv.drawLine(cx - r * 0.55f, cy + r * 0.2f, cx - r * 0.2f, cy + r * 0.55f, p); cv.drawLine(cx + r * 0.55f, cy + r * 0.2f, cx + r * 0.2f, cy + r * 0.55f, p); break;   // swords
+            case 0x1F349: cv.drawArc(new RectF(cx - r, cy - r, cx + r, cy + r), 0, 180, true, p); cv.drawLine(cx - r * 0.9f, cy, cx + r * 0.9f, cy, p); p.setStyle(Paint.Style.FILL); for (int k = -1; k <= 1; k++) cv.drawCircle(cx + k * r * 0.4f, cy + r * 0.38f, sw * 0.6f, p); break;       // watermelon slice
+            case 0x23F1: cv.drawCircle(cx, cy + r * 0.1f, r * 0.8f, p); cv.drawLine(cx, cy + r * 0.1f, cx, cy - r * 0.45f, p); cv.drawLine(cx, cy + r * 0.1f, cx + r * 0.35f, cy + r * 0.3f, p); cv.drawLine(cx - r * 0.2f, cy - r * 0.9f, cx + r * 0.2f, cy - r * 0.9f, p); break;    // timer
+            case 0x1F4CD: cv.drawCircle(cx, cy - r * 0.25f, r * 0.55f, p); cv.drawLine(cx - r * 0.45f, cy + r * 0.1f, cx, cy + r * 0.95f, p); cv.drawLine(cx + r * 0.45f, cy + r * 0.1f, cx, cy + r * 0.95f, p); cv.drawCircle(cx, cy - r * 0.25f, r * 0.2f, p); break;    // pin
+            case 0x1F4C8: cv.drawLine(cx - r, cy - r * 0.8f, cx - r, cy + r * 0.8f, p); cv.drawLine(cx - r, cy + r * 0.8f, cx + r, cy + r * 0.8f, p); { android.graphics.Path q = new android.graphics.Path(); q.moveTo(cx - r * 0.8f, cy + r * 0.5f); q.lineTo(cx - r * 0.2f, cy); q.lineTo(cx + r * 0.2f, cy + r * 0.25f); q.lineTo(cx + r * 0.9f, cy - r * 0.6f); cv.drawPath(q, p); } break;       // chart
+            case 0x1F3E0: { android.graphics.Path q = new android.graphics.Path(); q.moveTo(cx - r, cy); q.lineTo(cx, cy - r * 0.9f); q.lineTo(cx + r, cy); cv.drawPath(q, p); cv.drawRect(new RectF(cx - r * 0.72f, cy, cx + r * 0.72f, cy + r * 0.85f), p); } break;       // home
+            case 0x1F97D: case 0x1F453: cv.drawRoundRect(new RectF(cx - r, cy - r * 0.5f, cx + r, cy + r * 0.5f), 18, 18, p); cv.drawLine(cx, cy - r * 0.5f, cx, cy + r * 0.5f, p); cv.drawCircle(cx - r * 0.5f, cy, r * 0.22f, p); cv.drawCircle(cx + r * 0.5f, cy, r * 0.22f, p); break;       // goggles
+            case 0x270B: for (int k = 0; k < 4; k++) cv.drawLine(cx - r * 0.5f + k * r * 0.33f, cy - r * (0.55f + (k == 1 || k == 2 ? 0.35f : 0.1f)), cx - r * 0.5f + k * r * 0.33f, cy, p); cv.drawRoundRect(new RectF(cx - r * 0.62f, cy - r * 0.1f, cx + r * 0.62f, cy + r * 0.85f), 16, 16, p); cv.drawLine(cx - r * 0.62f, cy + r * 0.1f, cx - r * 0.95f, cy - r * 0.15f, p); break;     // hand
+            case 0x23FB: cv.drawArc(new RectF(cx - r * 0.8f, cy - r * 0.8f, cx + r * 0.8f, cy + r * 0.8f), -60, 300, false, p); cv.drawLine(cx, cy - r * 0.95f, cx, cy - r * 0.15f, p); break;        // power
+            case 0x1F98D: cv.drawCircle(cx, cy, r * 0.35f, p); for (int k = 0; k < 4; k++) cv.drawCircle(cx - r * 0.75f + k * r * 0.5f, cy - r * (k == 0 || k == 3 ? 0.55f : 0.9f), r * 0.17f, p); break;     // paw (plain)
+            case 0x1F578: for (int k = 0; k < 6; k++) { double a = k * Math.PI / 3; cv.drawLine(cx, cy, cx + (float) Math.cos(a) * r, cy + (float) Math.sin(a) * r, p); } cv.drawCircle(cx, cy, r * 0.45f, p); cv.drawCircle(cx, cy, r * 0.85f, p); break;     // web
+            default: p.setStyle(Paint.Style.FILL); return false;
+        }
+        p.setStyle(Paint.Style.FILL);
+        return true;
+    }
+
     private void glyph(Btn b, float cx, float cy, float size, int color) {
         String e = b.emoji == null ? "" : b.emoji;
-        if (Tr.thai && !e.isEmpty()) { NvGlass.font(p, false); raw(e, cx, cy, size, 0xFFFFFFFF, Paint.Align.CENTER); return; }
+        if (pict(e, cx, cy, size, 0xFFFFFFFF)) return;
+        if (!e.isEmpty()) { NvGlass.font(p, false); raw(e, cx, cy, size, 0xFFFFFFFF, Paint.Align.CENTER); return; }          // the picture (emoji) of the card in every language, not only the first letter
         String t = Tr.t(b.label.get()).trim();
         String g = t.isEmpty() ? "•" : t.substring(0, t.offsetByCodePoints(0, 1)).toUpperCase(java.util.Locale.ROOT);
         NvGlass.font(p, true);

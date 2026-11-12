@@ -196,6 +196,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     /** A floating window in the room: it keeps its place when the phone turns, can float a little, be grabbed by its bar, and be pulled bigger or smaller. */
     public static class Win {
+        public boolean lowDock = false;                    // the keyboard: rises up from below at the bottom, and no other window has to slide away for it
         public boolean anchor = false;                      // the main menu: new windows prefer to sit right next to it
         public final NvContent c;
         public final float widthM;
@@ -388,6 +389,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         r[4] = ux; r[5] = uy; r[6] = uz;
     }
 
+    private final float[] lvl = new float[16];
     private float sux = 0, suy = 0, suz = 0;          // smoothed user position, so the estimate arriving in small steps looks smooth
     // When you have walked away from the spot where a window was put up, turning/pushing it "about that old spot" goes the wrong way.
     // So at the moment of grabbing, the window is re-based on where you stand now: same place in the room, now measured from you,
@@ -518,7 +520,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void avoidOverlap(Win w) {
         w.slideDeg = 0f; w.slideDegP = 0f; w.aimV = null;
         if (w.hasSaved) return;
-        if (w.anchor) return;                                     // the main menu always opens straight in front of you, other windows make room by sitting beside it
+        if (w.anchor || w.lowDock) return;                        // the main menu always opens straight in front of you, other windows make room by sitting beside it
         if (w.shrunk) { w.wantScale = 0f; w.shrunk = false; }
         android.graphics.Bitmap bm = w.c.bitmap();
         if (bm == null || bm.getWidth() <= 0) { placeDbg = "place: no picture yet"; return; }
@@ -614,6 +616,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.slideDeg = 0f; w.slideDegP = 0f; w.aimV = null;
         if (w.shrunk) { w.wantScale = 0f; w.shrunk = false; }
         if (w == menuWin && w.newOpen) w.slideDegP = -16f;           // the main menu rises up out of the navigation bar
+        if (w.lowDock) w.slideDegP = -14f;                           // the keyboard rises up from the bottom
         float yc = 0f;                                              // the yaw the new window comes up at: straight ahead, or where the user left it
         if (w.hasSaved) yc = w.offYaw; else w.offYaw = 0f;
         android.graphics.Bitmap bm = w.c.bitmap();
@@ -623,6 +626,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float elN = w.offPitch;
         float hwN = (float) Math.toDegrees(Math.atan(pw / 2f / nearD(d, ph / 4f, tiltSinOfEl(elN))));      // half the lean allowance: windows touch in the middle, hardly any gap
         float hhN = (float) Math.toDegrees(Math.atan(ph / 2f / d));
+        if (w.lowDock) { placeDbg = "place: keyboard at the bottom (nothing slides away)"; return; }
         final float gap = 0.0f;                                   // flush: the edges touch
         java.util.ArrayList<Win> right = new java.util.ArrayList<>(), left = new java.util.ArrayList<>();
         float[] hwO = new float[wins.size()], yf = new float[wins.size()];
@@ -735,9 +739,30 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // no sideways lean in the picture: the window turns about its own centre (about the line to your eyes) until its top edge points up on the screen. This is worked out
         // straight from the geometry of where the window is seen, so a window off to the side or below eye level does not show the slanted top and bottom edges of a wall
         // (and it does not depend on a roll angle that gets noisy when you look up or down). A big difference (the phone held upright) fades out: then the window stays level in the room.
-        float live = 0f;                                              // no following of the phone's sideways tilt any more: windows stay fixed in the room (level), like real things
-        if (live != 0f && !Float.isNaN(live)) { android.opengl.Matrix.rotateM(tD, 0, w.rot, 0, live, 0f, 0f, 1f); android.opengl.Matrix.translateM(mM, 0, tD, 0, bx + sx, by + sy, -w.dist + bz + sz); }
-        else android.opengl.Matrix.translateM(mM, 0, w.rot, 0, bx + sx, by + sy, -w.dist + bz + sz);
+        // a window is a thing in the room: its top edge is made level with the floor here every picture (whatever tilt its stored turn may still carry)
+        float[] rl = lvl; System.arraycopy(w.rot, 0, rl, 0, 16); levelRoll(rl);
+        // A window seen off to the side, or below / above eye level, shows a slanted top edge (how a flat wall looks from the side). That slant is taken out here, worked out for a
+        // head that is NOT tilted (the screen's right taken as level): the window then looks level, and the only tilt left is the room's own tilt in the camera picture.
+        float live = 0f;
+        {
+            float frx = -rn[2], frz = -rn[10];
+            float hl = (float) Math.sqrt(frx * frx + frz * frz);
+            if (hl > 0.25f) {
+                float vrx = -frz / hl, vry = 0f, vrz = frx / hl;            // level screen-right = cross(forward, up)
+                float dd = vrx * rl[8] + vry * rl[9] + vrz * rl[10];
+                float qx = vrx - dd * rl[8], qy = vry - dd * rl[9], qz = vrz - dd * rl[10], ql = (float) Math.sqrt(qx * qx + qy * qy + qz * qz);
+                if (ql > 0.3f) {
+                    qx /= ql; qy /= ql; qz /= ql;
+                    float c = rl[0] * qx + rl[1] * qy + rl[2] * qz;
+                    float sn = (rl[1] * qz - rl[2] * qy) * rl[8] + (rl[2] * qx - rl[0] * qz) * rl[9] + (rl[0] * qy - rl[1] * qx) * rl[10];
+                    live = (float) Math.toDegrees(Math.atan2(sn, c));
+                    if (live > 50f) live = 50f; else if (live < -50f) live = -50f;
+                    if (Float.isNaN(live)) live = 0f;
+                }
+            }
+        }
+        if (live != 0f) { android.opengl.Matrix.rotateM(tD, 0, rl, 0, live, 0f, 0f, 1f); android.opengl.Matrix.translateM(mM, 0, tD, 0, bx + sx, by + sy, -w.dist + bz + sz); }
+        else android.opengl.Matrix.translateM(mM, 0, rl, 0, bx + sx, by + sy, -w.dist + bz + sz);
         if (tilt != 0f) android.opengl.Matrix.rotateM(mM, 0, tilt, 0f, 1f, 0f);
         shiftBy(w, mM, ux, uy, uz);
         android.opengl.Matrix.multiplyMM(w.mv, 0, rn, 0, mM, 0);
@@ -871,10 +896,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCam = prog(
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
-            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; varying vec2 pp;" +
+            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; varying vec2 pp;" +
             "float skinAt(vec3 c){ float cb=-0.169*c.r-0.331*c.g+0.5*c.b+0.5, cr=0.5*c.r-0.419*c.g-0.081*c.b+0.5, yy=0.299*c.r+0.587*c.g+0.114*c.b;" +
-            " vec2 d=smOn>0.5 ? vec2(cb-sm.x,cr-sm.y)/(sm.zw*2.4) : vec2(cb-0.41,cr-0.60)/vec2(0.13,0.10);" +        // learnt skin colour of this person (Gaussian in Cb/Cr, brightness left out so shade does not matter), or a general one until it is learnt
-            " return (1.-smoothstep(0.7,1.2,length(d)))*smoothstep(0.02,0.10,yy); }" +
+            " vec2 d=smOn>0.5 ? vec2(cb-sm.x,cr-sm.y)/(sm.zw*1.8) : vec2(cb-0.41,cr-0.60)/vec2(0.13,0.10);" +        // learnt skin colour of this person (Gaussian in Cb/Cr, brightness left out so shade does not matter), or a general one until it is learnt
+            " return (1.-smoothstep(0.7,1.15,length(d)))*lum*smoothstep(0.02,0.10,yy); }" +
             "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
             " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; }" +
             " vec2 t=q*0.5+0.5; t=mix(t,1.-t,rf); vec2 uv=vec2(t.x,1.-t.y); vec4 c=texture2D(tex,uv); vec4 c0=c;" +
@@ -891,7 +916,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "   float sk=skinAt(c0.rgb);" +
             "   vec2 o1=vec2(px.x*3.,0.), o2=vec2(0.,px.y*3.);" +
             "   float sa=(sk+skinAt(texture2D(tex,uv+o1).rgb)+skinAt(texture2D(tex,uv-o1).rgb)+skinAt(texture2D(tex,uv+o2).rgb)+skinAt(texture2D(tex,uv-o2).rgb))*0.2;" +
-            "   sk=max(sk,sa*1.2);" +
+            "   sk=max(sk,sa*1.0);" +
             "   a=max(a*smoothstep(0.25,0.55,sk),core); gl_FragColor=vec4(a,a,a,a); return; }" +
             "  float m=texture2D(mk,mu).r*0.25+(texture2D(mk,mu+vec2(mpx.x,0.)).r+texture2D(mk,mu-vec2(mpx.x,0.)).r+texture2D(mk,mu+vec2(0.,mpx.y)).r+texture2D(mk,mu-vec2(0.,mpx.y)).r)*0.125" +
             "   +(texture2D(mk,mu+mpx).r+texture2D(mk,mu-mpx).r+texture2D(mk,mu+vec2(mpx.x,-mpx.y)).r+texture2D(mk,mu+vec2(-mpx.x,mpx.y)).r)*0.0625;" +
@@ -1248,6 +1273,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform2f(ul(progCam, "px"), 1f / Math.max(1, imgW), 1f / Math.max(1, imgH));
         { float[] sk = cam.skin; boolean ok = mode == 2 && sk != null && sk[2] > 0f && System.currentTimeMillis() - cam.skinT < 3000;
           GLES20.glUniform1f(ul(progCam, "smOn"), ok ? 1f : 0f);
+          GLES20.glUniform1f(ul(progCam, "sy"), ok && sk.length > 5 ? sk[5] : 0.5f);
           GLES20.glUniform4f(ul(progCam, "sm"), ok ? sk[0] : 0f, ok ? sk[1] : 0f, ok ? sk[2] : 1f, ok ? sk[3] : 1f); }
         GLES20.glUniform1f(ul(progCam, "amt"), sharpen);
         GLES20.glUniform1f(ul(progCam, "lift"), lift);
@@ -2044,7 +2070,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 }
                 float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
                 boolean core = thr && pass == 1;
-                float hw = Math.max(3f, size * (thr ? (core ? 0.048f : 0.15f + Math.min(0.10f, handSpd * 0.10f)) : 0.115f));
+                float hw = Math.max(3f, size * (thr ? (core ? 0.048f : (arm ? 0.15f : 0.105f) + Math.min(0.08f, handSpd * 0.08f)) : 0.115f));
                 aaBegin();
                 for (int b2 = 0; b2 < BONES.length; b2 += 2) {
                     int p0 = BONES[b2], p1 = BONES[b2 + 1];
