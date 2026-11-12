@@ -184,6 +184,64 @@ final class NvVoice {
         return sb.toString();
     }
 
+
+    /** sound-alike folding, so a word the recogniser spelled a little differently (accent, similar consonant/vowel) still lands near the real one */
+    /** the other guesses of the recogniser for the last phrase (used when the first one is not understood) */
+    public volatile String[] alts = new String[0];
+
+    static String fold(String s) {
+        String n = norm(s);
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < n.length(); i++) {
+            char c = n.charAt(i);
+            switch (c) {
+                case 'ก': case 'ข': case 'ค': case 'ฆ': case 'ฅ': case 'ฃ': c = 'k'; break;
+                case 'ต': case 'ท': case 'ธ': case 'ด': case 'ฎ': case 'ฏ': case 'ฑ': case 'ฒ': case 'ถ': case 'ฐ': c = 't'; break;
+                case 'ป': case 'พ': case 'ผ': case 'บ': case 'ภ': c = 'p'; break;
+                case 'ส': case 'ศ': case 'ษ': case 'ซ': case 'ฉ': case 'ช': case 'ฌ': case 'จ': c = 's'; break;
+                case 'ร': case 'ล': case 'ฬ': case 'ฤ': c = 'l'; break;
+                case 'ง': case 'ญ': case 'ณ': case 'น': case 'ม': c = 'n'; break;
+                case 'ฟ': case 'ฝ': case 'ว': c = 'w'; break;
+                case 'ห': case 'ฮ': case 'อ': case 'ย': case 'ๆ': case 'ฯ': case 'ั': case 'ะ': case 'า': case 'ำ': case 'ิ': case 'ี': case 'ึ': case 'ื': case 'ุ': case 'ู': case 'เ': case 'แ': case 'โ': case 'ไ': case 'ใ': case 'ๅ': c = 0; break;
+                default: break;
+            }
+            if (c == 0) continue;
+            if (c >= 'a' && c <= 'z') {
+                if ("aeiouhy".indexOf(c) >= 0) continue;               // latin vowels carry the accent: dropped
+                if (c == 'c' || c == 'q') c = 'k'; else if (c == 'd') c = 't'; else if (c == 'b') c = 'p'; else if (c == 'z' || c == 'x') c = 's'; else if (c == 'r') c = 'l'; else if (c == 'v' || c == 'f') c = 'w'; else if (c == 'g') c = 'k'; else if (c == 'j') c = 's'; else if (c == 'm') c = 'n';
+            }
+            if (sb.length() > 0 && sb.charAt(sb.length() - 1) == c) continue;   // doubled sound
+            sb.append(c);
+        }
+        return sb.toString();
+    }
+
+    static int lev(String a, String b) {
+        int[] p = new int[b.length() + 1], q = new int[b.length() + 1];
+        for (int j = 0; j <= b.length(); j++) p[j] = j;
+        for (int i = 1; i <= a.length(); i++) {
+            q[0] = i;
+            for (int j = 1; j <= b.length(); j++) q[j] = Math.min(Math.min(q[j - 1] + 1, p[j] + 1), p[j - 1] + (a.charAt(i - 1) == b.charAt(j - 1) ? 0 : 1));
+            int[] t = p; p = q; q = t;
+        }
+        return p[b.length()];
+    }
+
+    /** 0..1: how well the heard text contains the name (best window of the heard text against the name, on folded sounds) */
+    static float similar(String heard, String name) {
+        String h = fold(heard), nm = fold(name);
+        if (nm.isEmpty() || h.isEmpty()) return 0f;
+        if (h.contains(nm)) return 1f;
+        float best = 0f;
+        for (int len = Math.max(1, nm.length() - 1); len <= nm.length() + 1 && len <= h.length(); len++)
+            for (int i = 0; i + len <= h.length(); i++) {
+                float sc = 1f - (float) lev(h.substring(i, i + len), nm) / Math.max(len, nm.length());
+                if (sc > best) best = sc;
+            }
+        if (nm.length() <= 2) best *= 0.7f;                         // very short names match too easily
+        return best;
+    }
+
     /** index in the original text just after the wake word, or -1. Looks at the text without spaces and tone marks, so every spelling the recogniser may pick matches. */
     static int wakeEnd(String text) {
         String low = text.toLowerCase(Locale.ROOT);
@@ -212,9 +270,9 @@ final class NvVoice {
         if (wakeText != null) {
             String rest = wakeText.substring(end).trim();
             if (rest.isEmpty()) { armUntil = now + 7000; out.onState("ว่าไง? พูดคำสั่งได้เลย…"); return; }
-            armUntil = 0; out.onCommand(rest); return;
+            armUntil = 0; alts = l.toArray(new String[0]); out.onCommand(rest); return;
         }
-        if (now < armUntil) { armUntil = 0; out.onCommand(l.get(0).trim()); return; }
+        if (now < armUntil) { armUntil = 0; alts = l.toArray(new String[0]); out.onCommand(l.get(0).trim()); return; }
         // not for us: say nothing
     }
 }

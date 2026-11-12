@@ -121,6 +121,9 @@ public class NvUi implements NvContent {
         return l;
     }
 
+    /** every button of every tab (home, apps, web apps, tools...): the voice commands search all of them */
+    public List<Btn> allButtons() { List<Btn> o = new ArrayList<>(); for (Tab t : tabs) o.addAll(t.items); return o; }
+
     public void toggleOpen() { open = !open; layout(); dirty = true; }
     public void toast(String s) { toast = s; toastUntil = System.currentTimeMillis() + 2000; dirty = true; }
     public void markDirty() { dirty = true; }
@@ -228,8 +231,8 @@ public class NvUi implements NvContent {
         Tab ct = tabs.get(tab);
         List<Btn> list = shown(ct);
         float gw = 14 * u;
-        int cols = Math.max(2, (int) ((cw + gw) / (128 * u + gw)));
-        float tw = (cw - (cols - 1) * gw) / cols, th = tw * 0.66f, lab = 46 * u;
+        int cols = Math.max(2, (int) ((cw + gw) / (150 * u + gw)));       // bigger tiles: easier to point at and read from the phone in the box
+        float tw = (cw - (cols - 1) * gw) / cols, th = tw * 0.62f, lab = 52 * u;
         pages = 1;
         cRect.set(cx0 - 6 * u, cy0, cx0 + cw + 6 * u, cy0 + ch);
         for (Tab tt : tabs) for (Btn b : tt.items) b.r.setEmpty();

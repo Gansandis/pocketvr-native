@@ -730,6 +730,39 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         say("พิมพ์: " + s);
     }
 
+
+    private static final String[] FILLER = {"เปิดให้หน่อย", "ให้หน่อย", "หน่อย", "ให้ที", "เปิดแอป", "เปิดหน้าต่าง", "เปิด", "ปิด", "แอปพลิเคชัน", "แอป", "หน้าต่าง", "ขอ", "ช่วย", "ไปที่", "ไปยัง", "ไป", "open", "launch", "start", "run", "show", "close", "the", "app", "please", "window", "go to"};
+    /** last resort: the spoken words are compared by sound with the name of EVERY button / app / tool in the menu; the best (clear) match is pressed */
+    private boolean fuzzyOpen(String raw, boolean close) {
+        java.util.List<String> heard = new java.util.ArrayList<>();
+        heard.add(raw);
+        for (String s : voice.alts) if (s != null && !s.trim().isEmpty() && !heard.contains(s.trim())) heard.add(s.trim());
+        NvUi.Btn best = null; float bs = 0f, second = 0f;
+        for (NvUi.Btn b : menu.allButtons()) {
+            if (b.act == null) continue;
+            String nm; try { nm = b.label.get(); } catch (Throwable t) { continue; }
+            if (nm == null || nm.isEmpty()) continue;
+            String nm2 = Tr.t(nm);
+            float sc = 0f;
+            for (String h : heard) {
+                String hh = h.toLowerCase(java.util.Locale.ROOT);
+                for (String f : FILLER) hh = hh.replace(f, " ");
+                sc = Math.max(sc, Math.max(NvVoice.similar(hh, nm), nm2.equals(nm) ? 0f : NvVoice.similar(hh, nm2)));
+                sc = Math.max(sc, NvVoice.similar(h, nm) * 0.96f);
+            }
+            if (sc > bs) { second = bs; bs = sc; best = b; } else if (sc > second) second = sc;
+        }
+        if (best == null || bs < 0.72f || (second > bs - 0.04f && bs < 1f)) return false;
+        final NvUi.Btn hit = best;
+        boolean isOn = hit.on != null && hit.on.get();
+        if (close && hit.on != null && !isOn) { say("ปิดอยู่แล้ว: " + hit.label.get()); return true; }
+        if (!close && hit.on != null && isOn) { say("เปิดอยู่แล้ว: " + hit.label.get()); return true; }
+        if (close && hit.on == null) { say("ปิดอันนี้ด้วยเสียงไม่ได้: " + hit.label.get()); return true; }
+        say((close ? "ปิด " : "เปิด ") + hit.label.get());
+        runOnUiThread(() -> { try { hit.act.run(); } catch (Throwable t) { say("ทำไม่ได้: " + t.getClass().getSimpleName()); } });
+        return true;
+    }
+
     private void runVoice(String raw) {
         final String n = NvVoice.norm(raw);
         if (n.isEmpty()) return;
@@ -805,6 +838,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             return;
         }
         if (has(n, "เมนู", "menu")) { menu.setOpen(open); say(open ? "เปิดเมนู" : "ปิดเมนู"); return; }
+        if (fuzzyOpen(raw, close)) return;
         say("ไม่เข้าใจ: " + raw.trim() + "  (พูดว่า \"ช่วยด้วย\")");
     }
 
