@@ -1047,6 +1047,13 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     private void immersive() {
+        try {                                                  // the picture also under the camera hole / notch (on the side of the front camera), so the app is really full screen
+            if (android.os.Build.VERSION.SDK_INT >= 28) {
+                android.view.WindowManager.LayoutParams lp = getWindow().getAttributes();
+                lp.layoutInDisplayCutoutMode = android.os.Build.VERSION.SDK_INT >= 30 ? 3 : 1;    // ALWAYS (30+) / SHORT_EDGES
+                getWindow().setAttributes(lp);
+            }
+        } catch (Throwable ignored) { }
         getWindow().getDecorView().setSystemUiVisibility(View.SYSTEM_UI_FLAG_FULLSCREEN | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
                 | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY | View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION | View.SYSTEM_UI_FLAG_LAYOUT_STABLE);
     }

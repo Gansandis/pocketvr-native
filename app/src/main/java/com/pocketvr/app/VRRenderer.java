@@ -899,10 +899,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "   float core=smoothstep(0.35,0.65,gc);" +
             "   float a=smoothstep(0.30,0.60,m); if(a<0.01&&core<0.01){ gl_FragColor=vec4(0.); return; }" +
             "   float sk=skinAt(c0.rgb);" +
-            "   vec2 o1=vec2(px.x*3.,0.), o2=vec2(0.,px.y*3.);" +
-            "   float sa=(sk+skinAt(texture2D(tex,uv+o1).rgb)+skinAt(texture2D(tex,uv-o1).rgb)+skinAt(texture2D(tex,uv+o2).rgb)+skinAt(texture2D(tex,uv-o2).rgb))*0.2;" +
-            "   sk=max(sk,sa*1.0);" +
-            "   a=max(a*smoothstep(0.25,0.55,sk),core); gl_FragColor=vec4(a,a,a,a); return; }" +
+            "   vec2 o1=vec2(px.x*2.,0.), o2=vec2(0.,px.y*2.), o3=vec2(px.x*2.,px.y*2.), o4=vec2(px.x*2.,-px.y*2.);" +
+            "   float sa=(sk*2.+skinAt(texture2D(tex,uv+o1).rgb)+skinAt(texture2D(tex,uv-o1).rgb)+skinAt(texture2D(tex,uv+o2).rgb)+skinAt(texture2D(tex,uv-o2).rgb)" +
+            "    +skinAt(texture2D(tex,uv+o3).rgb)+skinAt(texture2D(tex,uv-o3).rgb)+skinAt(texture2D(tex,uv+o4).rgb)+skinAt(texture2D(tex,uv-o4).rgb))*0.1;" +        // averaged over 9 taps: no speckles, smooth edge
+            "   sk=sa;" +
+            "   a=max(a*smoothstep(0.30,0.62,sk),core); gl_FragColor=vec4(a,a,a,a); return; }" +
             "  float m=texture2D(mk,mu).r*0.25+(texture2D(mk,mu+vec2(mpx.x,0.)).r+texture2D(mk,mu-vec2(mpx.x,0.)).r+texture2D(mk,mu+vec2(0.,mpx.y)).r+texture2D(mk,mu-vec2(0.,mpx.y)).r)*0.125" +
             "   +(texture2D(mk,mu+mpx).r+texture2D(mk,mu-mpx).r+texture2D(mk,mu+vec2(mpx.x,-mpx.y)).r+texture2D(mk,mu+vec2(-mpx.x,mpx.y)).r)*0.0625;" +
             "  float a=smoothstep(0.35,0.65,m); gl_FragColor=vec4(c.rgb*a,a); } else gl_FragColor=c; }");
@@ -1167,11 +1168,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // the hand outline / skeleton is drawn where the hand is in the camera picture that is on screen right now (that picture is already a bit old),
         // so it sticks to the real hand; the pointer below looks ahead instead, to feel quick
         if (r[0] >= 1) {                                    // a hand that is not followed by the camera is drawn from its speed instead
-            float dl = Math.max(0, Math.min(now - handT - 16, skel == 4 ? 140 : 90)) / 1000f;       // drawn where the hand really is in the picture on screen: only a short, careful step on from the model's answer (a long guess made the outline float away from the hand)
+            float dl = Math.max(0, Math.min(now - handT - 16, skel >= 2 ? 140 : 90)) / 1000f;       // drawn where the hand really is in the picture on screen: only a short, careful step on from the model's answer (a long guess made the outline float away from the hand)
             for (int i = 1; i < r.length; i++) {
                 if ((i - 1) % 3 == 2) continue;
                 int hnd = (i - 1) / 63;
-                if (hnd >= 2 || !foh[hnd]) dispDraw[i] += dz(vel[i]) * dl * (skel == 4 ? 0.95f : 0.7f);
+                if (hnd >= 2 || !foh[hnd]) dispDraw[i] += dz(vel[i]) * dl * (skel >= 2 ? 0.95f : 0.7f);
             }
         }
         if (predict && r[0] >= 1) {
@@ -2082,7 +2083,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 }
                 float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
                 boolean core = thr && pass == 1;
-                float hw = Math.max(3f, size * (thr ? (core ? 0.034f : (arm ? 0.15f : 0.125f) + Math.min(0.07f, handSpd * 0.07f)) : 0.115f));
+                float hw = Math.max(3f, size * (thr ? (core ? 0.034f : (arm ? 0.15f : 0.125f) + Math.min(0.10f, handSpd * 0.10f)) : 0.115f));
                 aaBegin();
                 for (int b2 = 0; b2 < BONES.length; b2 += 2) {
                     int p0 = BONES[b2], p1 = BONES[b2 + 1];
