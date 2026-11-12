@@ -877,7 +877,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCam = prog(
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
-            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; uniform sampler2D lut; uniform float lutOn; varying vec2 pp;" +
+            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; uniform sampler2D lut; uniform float lutOn; uniform float geo; varying vec2 pp;" +
             "float skinAt(vec3 c){ float cb=-0.169*c.r-0.331*c.g+0.5*c.b+0.5, cr=0.5*c.r-0.419*c.g-0.081*c.b+0.5, yy=0.299*c.r+0.587*c.g+0.114*c.b;" +
             " vec2 d=smOn>0.5 ? vec2(cb-sm.x,cr-sm.y)/(sm.zw*2.4) : vec2(cb-0.41,cr-0.60)/vec2(0.11,0.09);" +        // learnt skin colour of this person (Gaussian in Cb/Cr, brightness left out so shade does not matter), or a general one until it is learnt
             " float lum=smOn>0.5 ? 1.-smoothstep(0.30,0.48,abs(yy-sy)) : 1.;" +                                      // wood / furniture of a similar colour is usually darker or lighter than the palm
@@ -898,6 +898,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "   float gc=texture2D(mk,mu).g*0.4+(texture2D(mk,mu+vec2(mpx.x,0.)).g+texture2D(mk,mu-vec2(mpx.x,0.)).g+texture2D(mk,mu+vec2(0.,mpx.y)).g+texture2D(mk,mu-vec2(0.,mpx.y)).g)*0.15;" +
             "   float core=smoothstep(0.35,0.65,gc);" +
             "   float a=smoothstep(0.30,0.60,m); if(a<0.01&&core<0.01){ gl_FragColor=vec4(0.); return; }" +
+            "   if(geo>0.5){ a=max(a,core); gl_FragColor=vec4(a,a,a,a); return; }" +                            // outline modes: the shape alone (steady, no flowing from the colour test)
             "   float sk=skinAt(c0.rgb);" +
             "   vec2 o1=vec2(px.x*2.,0.), o2=vec2(0.,px.y*2.), o3=vec2(px.x*2.,px.y*2.), o4=vec2(px.x*2.,-px.y*2.);" +
             "   float sa=(sk*2.+skinAt(texture2D(tex,uv+o1).rgb)+skinAt(texture2D(tex,uv-o1).rgb)+skinAt(texture2D(tex,uv+o2).rgb)+skinAt(texture2D(tex,uv-o2).rgb)" +
@@ -1261,6 +1262,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             byte[] lt = cam.lut; long ltT = cam.lutT;
             boolean lo = mode == 2 && lt != null && lt.length == 1024 && System.currentTimeMillis() - ltT < 3000;
             GLES20.glUniform1i(ul(progCam, "lut"), 2);
+            GLES20.glUniform1f(ul(progCam, "geo"), (mode == 2 && skel != 4) ? 1f : 0f);
             GLES20.glUniform1f(ul(progCam, "lutOn"), lo ? 1f : 0f);
             if (lo) {
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE2);
@@ -2094,23 +2096,24 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     if (p1 == 4 || p1 == 8 || p1 == 12 || p1 == 16 || p1 == 20) {
                         float dx = x1 - X[p0], dy = y1 - Y[p0], l = (float) Math.hypot(dx, dy);
                         if (l > 1e-3f) {
-                            float ext = thr ? (core ? -0.0f : 0.05f * size) : -hw * 0.8f;   // see-through: the stroke reaches to the nail (the end cap adds the rest); the other modes keep the cap inside the fingertip
+                            float ext = thr ? (core ? -0.0f : (arm ? 0.05f : 0.015f) * size) : -hw * 0.8f;   // see-through: the stroke reaches to the nail (the end cap adds the rest); the other modes keep the cap inside the fingertip
                             x1 += dx / l * ext; y1 += dy / l * ext;
                         }
                     }
                     // the width follows the real finger (so the gaps between the fingers stay open): the sure core a little inside of it, the colour-checked band a little outside of it
                     boolean palmLine = p1 == 1 || p1 == 5 || p1 == 9 || p1 == 13 || p1 == 17;
                     float wf = BONE_W[p1 < 21 ? p1 : 0];
-                    float bwid = core ? (palmLine ? 0.10f : Math.max(0.028f, wf - 0.045f)) : (wf + 0.04f + (arm ? 0.02f : 0f) + Math.min(0.06f, handSpd * 0.06f));
+                    float bwid = core ? (palmLine ? 0.10f : Math.max(0.028f, wf - 0.045f)) : (arm ? wf + 0.06f + Math.min(0.06f, handSpd * 0.06f) : wf + 0.012f + Math.min(0.02f, handSpd * 0.02f));
                     aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * bwid));
                 }
                 if (thr) {
                     if (core) {                                                     // the root of the thumb joins the palm: sure hand (close to the palm only)
                         float cw = size * 0.06f; aaSeg(X[0], Y[0], X[2], Y[2], cw); aaSeg(X[1], Y[1], X[5], Y[5], cw); aaSeg(X[2], Y[2], X[5], Y[5], cw);
-                    } else {                                                        // the web between thumb and index: wide, but only where the learnt colour table says "hand"
-                        float wh = size * 0.11f;
-                        aaSeg(X[2], Y[2], X[6], Y[6], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh); aaSeg(X[3], Y[3], X[6], Y[6], wh);
-                        aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, (X[5] + X[6]) / 2f, (Y[5] + Y[6]) / 2f, wh * 1.2f);
+                    } else {
+                        // the thumb root and the web between thumb and index: the triangle (wrist side of the thumb, thumb joint, root of the index) is filled, but nothing reaches out to the index's middle joint
+                        float wh = size * (arm ? 0.10f : 0.085f);
+                        aaSeg(X[0], Y[0], X[2], Y[2], wh); aaSeg(X[1], Y[1], X[5], Y[5], wh); aaSeg(X[2], Y[2], X[5], Y[5], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh * 0.8f);
+                        aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, X[5], Y[5], wh);
                     }
                 }
                 aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.25f : 0.44f) : 0.38f));
