@@ -821,7 +821,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private final float[] stm = new float[16];
     private int vw = 1, vh = 1;
     private int progCam, progCol, progFin, progRing, progCity;
-    private int[] maskFbo = new int[1], maskTex = new int[1];
+    private int[] maskFbo = new int[1], maskTex = new int[1], refFbo = new int[1], refTex = new int[1];   // maskTex: the hand shape from the model; refTex: the same, checked against the skin colour of the camera picture
     private int maskW = 0, maskH = 0;
     private FloatBuffer triBuf;
     private FloatBuffer quad, lineBuf, ptBuf;
@@ -880,17 +880,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             " if(lift>0.){ c.rgb=min(pow(c.rgb,vec3(1./(1.+lift*0.8)))*(1.+lift*0.5),vec3(1.)); }" +
             // masked pass ("see the real hand through the windows"): the camera picture is drawn again, only where the hand is
             " if(mkOn>0.5){ vec2 mu=pp*mz*0.5+0.5;" +
+            "  if(mkOn>1.5){" +                                               // refine: the model's hand shape (R = band, G = sure core) checked against the skin colour of THIS camera picture
+            "   float m=texture2D(mk,mu).r*0.25+(texture2D(mk,mu+vec2(mpx.x,0.)).r+texture2D(mk,mu-vec2(mpx.x,0.)).r+texture2D(mk,mu+vec2(0.,mpx.y)).r+texture2D(mk,mu-vec2(0.,mpx.y)).r)*0.125" +
+            "    +(texture2D(mk,mu+mpx).r+texture2D(mk,mu-mpx).r+texture2D(mk,mu+vec2(mpx.x,-mpx.y)).r+texture2D(mk,mu+vec2(-mpx.x,mpx.y)).r)*0.0625;" +
+            "   float gc=texture2D(mk,mu).g*0.4+(texture2D(mk,mu+vec2(mpx.x,0.)).g+texture2D(mk,mu-vec2(mpx.x,0.)).g+texture2D(mk,mu+vec2(0.,mpx.y)).g+texture2D(mk,mu-vec2(0.,mpx.y)).g)*0.15;" +
+            "   float core=smoothstep(0.35,0.65,gc);" +
+            "   float a=smoothstep(0.30,0.60,m); if(a<0.01&&core<0.01){ gl_FragColor=vec4(0.); return; }" +
+            "   float sk=skinAt(c0.rgb);" +
+            "   vec2 o1=vec2(px.x*3.,0.), o2=vec2(0.,px.y*3.);" +
+            "   float sa=(sk+skinAt(texture2D(tex,uv+o1).rgb)+skinAt(texture2D(tex,uv-o1).rgb)+skinAt(texture2D(tex,uv+o2).rgb)+skinAt(texture2D(tex,uv-o2).rgb))*0.2;" +
+            "   sk=max(sk,sa*1.2);" +
+            "   a=max(a*smoothstep(0.25,0.55,sk),core); gl_FragColor=vec4(a,a,a,a); return; }" +
             "  float m=texture2D(mk,mu).r*0.25+(texture2D(mk,mu+vec2(mpx.x,0.)).r+texture2D(mk,mu-vec2(mpx.x,0.)).r+texture2D(mk,mu+vec2(0.,mpx.y)).r+texture2D(mk,mu-vec2(0.,mpx.y)).r)*0.125" +
             "   +(texture2D(mk,mu+mpx).r+texture2D(mk,mu-mpx).r+texture2D(mk,mu+vec2(mpx.x,-mpx.y)).r+texture2D(mk,mu+vec2(-mpx.x,mpx.y)).r)*0.0625;" +
-            "  float gc=texture2D(mk,mu).g*0.4+(texture2D(mk,mu+vec2(mpx.x,0.)).g+texture2D(mk,mu-vec2(mpx.x,0.)).g+texture2D(mk,mu+vec2(0.,mpx.y)).g+texture2D(mk,mu-vec2(0.,mpx.y)).g)*0.15;" +
-            "  float core=smoothstep(0.35,0.65,gc);" +
-            "  float a=smoothstep(0.30,0.60,m); if(a<0.01&&core<0.01){ gl_FragColor=vec4(0.); return; }" +
-            "  float sk=skinAt(c0.rgb);" +
-            "  vec2 o1=vec2(px.x*3.,0.), o2=vec2(0.,px.y*3.);" +
-            "  float sa=(sk+skinAt(texture2D(tex,uv+o1).rgb)+skinAt(texture2D(tex,uv-o1).rgb)+skinAt(texture2D(tex,uv+o2).rgb)+skinAt(texture2D(tex,uv-o2).rgb))*0.2;" +
-            "  sk=max(sk,sa*1.2);" +
-            "  a=max(a*smoothstep(0.25,0.55,sk),core);" +
-            "  gl_FragColor=vec4(c.rgb*a,a); } else gl_FragColor=c; }");
+            "  float a=smoothstep(0.35,0.65,m); gl_FragColor=vec4(c.rgb*a,a); } else gl_FragColor=c; }");
         progCol = prog(
             "attribute vec2 p; uniform float ps; void main(){ gl_Position=vec4(p,0.,1.); gl_PointSize=ps; }",
             "precision mediump float; uniform vec4 col; uniform float rnd; void main(){ if (rnd>0.5 && length(gl_PointCoord-0.5)>0.5) discard; gl_FragColor=col; }");
@@ -936,7 +939,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "void main(){ float t=clamp(vq.x,0.,vq.z); float d=length(vec2(vq.x-t,vq.y)); float al=clamp((1.-d)*vq.w/sf,0.,1.); gl_FragColor=vec4(col*al,al)*fade; }");
         aaBuf = fb(6 * 6 * 60);
         triBuf = fb(4096);
-        maskW = 0; maskFbo[0] = 0; maskTex[0] = 0;
+        maskW = 0; maskFbo[0] = 0; maskTex[0] = 0; refFbo[0] = 0; refTex[0] = 0;
         progPanel = prog(
             "attribute vec2 p; uniform mat4 mvp; uniform vec2 hs; varying vec2 uv; void main(){ gl_Position=mvp*vec4(p*hs,0.,1.); uv=vec2(p.x*0.5+0.5, 0.5-p.y*0.5); }",
             "precision mediump float; uniform sampler2D tex; uniform float al; varying vec2 uv; void main(){ gl_FragColor=texture2D(tex,uv)*al; }");
@@ -1208,19 +1211,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     /** the camera picture, full screen; or (thru) only where the hand mask is, on top of what is already drawn (the real hand seen through the windows) */
-    private void drawCamera(boolean thru) {
+    private void drawCamera(boolean thru) { drawCamera(thru ? 1 : 0); }
+    private void drawCamera(int mode) {
+        boolean thru = mode > 0;
         GLES20.glUseProgram(progCam);
         GLES20.glUniform1f(ul(progCam, "zs"), camScale);
-        GLES20.glUniform1f(ul(progCam, "mkOn"), thru ? 1f : 0f);
+        GLES20.glUniform1f(ul(progCam, "mkOn"), mode == 2 ? 2f : (mode == 1 ? 1f : 0f));
         GLES20.glUniform1i(ul(progCam, "mk"), 1);                // the mask sampler never shares unit 0 with the camera (two sampler types on one unit is an error)
         if (thru) {
             GLES20.glActiveTexture(GLES20.GL_TEXTURE1);
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, maskTex[0]);
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, mode == 2 ? maskTex[0] : refTex[0]);
             GLES20.glUniform1i(ul(progCam, "mk"), 1);
             GLES20.glUniform2f(ul(progCam, "mpx"), 1f / maskW, 1f / maskH);
             GLES20.glUniform1f(ul(progCam, "mz"), camScale);
-            GLES20.glEnable(GLES20.GL_BLEND);
-            GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+            if (mode == 1) { GLES20.glEnable(GLES20.GL_BLEND); GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA); } else GLES20.glDisable(GLES20.GL_BLEND);
         }
         float[] fr = frameRot, rn0 = rotView;
         boolean wp = reproj && fr != null && rn0 != null;
@@ -1981,6 +1985,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private void ensureMask() {
         if (maskW != 0 && maskW == sceneW * 3 / 4) return;
         if (maskTex[0] != 0) { GLES20.glDeleteTextures(1, maskTex, 0); GLES20.glDeleteFramebuffers(1, maskFbo, 0); }
+        if (refTex[0] != 0) { GLES20.glDeleteTextures(1, refTex, 0); GLES20.glDeleteFramebuffers(1, refFbo, 0); }
         maskW = Math.max(2, sceneW * 3 / 4); maskH = Math.max(2, sceneH * 3 / 4);
         GLES20.glGenTextures(1, maskTex, 0);
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, maskTex[0]);
@@ -1992,6 +1997,16 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glGenFramebuffers(1, maskFbo, 0);
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, maskFbo[0]);
         GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, maskTex[0], 0);
+        GLES20.glGenTextures(1, refTex, 0);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, refTex[0]);
+        GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, maskW, maskH, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+        GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+        GLES20.glGenFramebuffers(1, refFbo, 0);
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, refFbo[0]);
+        GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, refTex[0], 0);
     }
 
     // hand shape (fingers as fat soft bars, palm filled) drawn to a small soft mask; the mask is blurred a little and a thin smooth line
@@ -2012,8 +2027,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glClearColor(0, 0, 0, 0);
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         float hwS = sceneW / 2f, hhS = sceneH / 2f;
-        final boolean thr = skel == 4;
-        for (int pass = (thr ? 0 : 1); pass < 2; pass++) {              // pass 0 (thr only): R = the skin-checked band around the hand; pass 1: G (thr) or the whole thing (other modes) = the sure core
+        final boolean thr = true, arm = skel == 4;
+        for (int pass = 0; pass < 2; pass++) {              // pass 0 (thr only): R = the skin-checked band around the hand; pass 1: G (thr) or the whole thing (other modes) = the sure core
             if (thr) GLES20.glColorMask(pass == 0, pass == 1, false, true);
             for (int i = 0; i < n; i++) {
                 float[] X = ohX, Y = ohY;
@@ -2044,7 +2059,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, (X[5] + X[6]) / 2f, (Y[5] + Y[6]) / 2f, wh * 1.15f);
                 }
                 aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.22f : 0.42f) : 0.38f));
-                if (thr && size > 1e-3f) {
+                if (arm && size > 1e-3f) {
                     float ax = (X[0] - X[9]) / size, ay = (Y[0] - Y[9]) / size;
                     aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * (core ? 0.16f : 0.36f));
                 }
@@ -2080,7 +2095,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glScissor(sx0, sy0, Math.max(1, sx1 - sx0), Math.max(1, sy1 - sy0));
         GLES20.glUseProgram(progRing);
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
-        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, maskTex[0]);
+        GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, refTex[0]);
         GLES20.glUniform1i(ul(progRing, "tex"), 0);
         GLES20.glUniform2f(ul(progRing, "px"), 1f / maskW, 1f / maskH);
         GLES20.glUniform1f(ul(progRing, "rad"), 2.4f);
@@ -2268,7 +2283,16 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
         }
         predictNow(now);                                    // where the hand is on screen right now (needed first: the outline mask is made before the scene picture)
-        if (skel >= 2) renderMask(dispDraw); else maskReady = false;
+        if (skel >= 2) {
+            renderMask(dispDraw);
+            if (maskReady) {                                          // the same for every hand mode: the shape is checked against the skin colour of the camera picture, so it sticks to the real hand
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, refFbo[0]);
+                GLES20.glViewport(0, 0, maskW, maskH);
+                GLES20.glClearColor(0, 0, 0, 0);
+                GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+                drawCamera(2);
+            }
+        } else maskReady = false;
         // 1) scene picture: camera (or the 360 picture) + hand skeleton
         GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo[0]);
         GLES20.glViewport(0, 0, sceneW, sceneH);
