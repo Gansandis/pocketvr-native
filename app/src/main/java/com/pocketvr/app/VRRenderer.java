@@ -741,28 +741,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // (and it does not depend on a roll angle that gets noisy when you look up or down). A big difference (the phone held upright) fades out: then the window stays level in the room.
         // a window is a thing in the room: its top edge is made level with the floor here every picture (whatever tilt its stored turn may still carry)
         float[] rl = lvl; System.arraycopy(w.rot, 0, rl, 0, 16); levelRoll(rl);
-        // A window seen off to the side, or below / above eye level, shows a slanted top edge (how a flat wall looks from the side). That slant is taken out here, worked out for a
-        // head that is NOT tilted (the screen's right taken as level): the window then looks level, and the only tilt left is the room's own tilt in the camera picture.
-        float live = 0f;
-        {
-            float frx = -rn[2], frz = -rn[10];
-            float hl = (float) Math.sqrt(frx * frx + frz * frz);
-            if (hl > 0.25f) {
-                float vrx = -frz / hl, vry = 0f, vrz = frx / hl;            // level screen-right = cross(forward, up)
-                float dd = vrx * rl[8] + vry * rl[9] + vrz * rl[10];
-                float qx = vrx - dd * rl[8], qy = vry - dd * rl[9], qz = vrz - dd * rl[10], ql = (float) Math.sqrt(qx * qx + qy * qy + qz * qz);
-                if (ql > 0.3f) {
-                    qx /= ql; qy /= ql; qz /= ql;
-                    float c = rl[0] * qx + rl[1] * qy + rl[2] * qz;
-                    float sn = (rl[1] * qz - rl[2] * qy) * rl[8] + (rl[2] * qx - rl[0] * qz) * rl[9] + (rl[0] * qy - rl[1] * qx) * rl[10];
-                    live = (float) Math.toDegrees(Math.atan2(sn, c));
-                    if (live > 50f) live = 50f; else if (live < -50f) live = -50f;
-                    if (Float.isNaN(live)) live = 0f;
-                }
-            }
-        }
-        if (live != 0f) { android.opengl.Matrix.rotateM(tD, 0, rl, 0, live, 0f, 0f, 1f); android.opengl.Matrix.translateM(mM, 0, tD, 0, bx + sx, by + sy, -w.dist + bz + sz); }
-        else android.opengl.Matrix.translateM(mM, 0, rl, 0, bx + sx, by + sy, -w.dist + bz + sz);
+        // (the extra roll that was tried here to take out the slant of a window seen from the side turned the windows far too much: taken out again)
+        android.opengl.Matrix.translateM(mM, 0, rl, 0, bx + sx, by + sy, -w.dist + bz + sz);
         if (tilt != 0f) android.opengl.Matrix.rotateM(mM, 0, tilt, 0f, 1f, 0f);
         shiftBy(w, mM, ux, uy, uz);
         android.opengl.Matrix.multiplyMM(w.mv, 0, rn, 0, mM, 0);
