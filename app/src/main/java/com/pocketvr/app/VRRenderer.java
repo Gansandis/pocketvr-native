@@ -874,14 +874,16 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; varying vec2 pp;" +
             "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
             " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; }" +
-            " vec2 t=q*0.5+0.5; t=mix(t,1.-t,rf); vec2 uv=vec2(t.x,1.-t.y); vec4 c=texture2D(tex,uv);" +
+            " vec2 t=q*0.5+0.5; t=mix(t,1.-t,rf); vec2 uv=vec2(t.x,1.-t.y); vec4 c=texture2D(tex,uv); vec4 c0=c;" +
             " if(amt>0.){ vec4 b=(texture2D(tex,uv+vec2(px.x,0.))+texture2D(tex,uv-vec2(px.x,0.))+texture2D(tex,uv+vec2(0.,px.y))+texture2D(tex,uv-vec2(0.,px.y)))*0.25; c=clamp(c+(c-b)*amt,0.,1.); }" +
             " if(lift>0.){ c.rgb=min(pow(c.rgb,vec3(1./(1.+lift*0.8)))*(1.+lift*0.5),vec3(1.)); }" +
             // masked pass ("see the real hand through the windows"): the camera picture is drawn again, only where the hand is
             " if(mkOn>0.5){ vec2 mu=pp*mz*0.5+0.5;" +
             "  float m=texture2D(mk,mu).r*0.25+(texture2D(mk,mu+vec2(mpx.x,0.)).r+texture2D(mk,mu-vec2(mpx.x,0.)).r+texture2D(mk,mu+vec2(0.,mpx.y)).r+texture2D(mk,mu-vec2(0.,mpx.y)).r)*0.125" +
             "   +(texture2D(mk,mu+mpx).r+texture2D(mk,mu-mpx).r+texture2D(mk,mu+vec2(mpx.x,-mpx.y)).r+texture2D(mk,mu+vec2(-mpx.x,mpx.y)).r)*0.0625;" +
-            "  float a=smoothstep(0.34,0.66,m); gl_FragColor=vec4(c.rgb*a,a); } else gl_FragColor=c; }");
+            "  float cb=-0.169*c0.r-0.331*c0.g+0.5*c0.b+0.5, cr=0.5*c0.r-0.419*c0.g-0.081*c0.b+0.5, yy=0.299*c0.r+0.587*c0.g+0.114*c0.b;" +
+            "  float sk=(1.-smoothstep(0.7,1.15,length(vec2(cb-0.40,cr-0.60)/vec2(0.11,0.09))))*smoothstep(0.06,0.16,yy);" +
+            "  float a=smoothstep(0.30,0.60,m)*smoothstep(0.15,0.55,sk); gl_FragColor=vec4(c.rgb*a,a); } else gl_FragColor=c; }");
         progCol = prog(
             "attribute vec2 p; uniform float ps; void main(){ gl_Position=vec4(p,0.,1.); gl_PointSize=ps; }",
             "precision mediump float; uniform vec4 col; uniform float rnd; void main(){ if (rnd>0.5 && length(gl_PointCoord-0.5)>0.5) discard; gl_FragColor=col; }");
@@ -1261,8 +1263,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
 
     // ---- the title bar that floats under every window: back, name, more, bigger, smaller, close ----
-    private static final int BAR_W = 640, BAR_H = 72;
-    private static final float[] BAR_X = {40f, 420f, 477f, 534f, 591f};          // centres of the round buttons (back, more, bigger, smaller, close)
+    private static final int BAR_W = 900, BAR_H = 100, NBTN = 6;
+    private static final float[] BAR_X = {56f, 770f, 640f, 570f, 842f, 500f};     // centres of the round buttons: 0 back, 1 more, 2 bigger (+), 3 smaller (-), 4 close, 5 keyboard
+    public volatile Runnable onKeysBtn;                                            // the keyboard button of the bar (set by the activity)
     private Win barHovWin = null; private int barHovIdx = -1;
     private final float[] bg = new float[3], barMv = new float[16], barMvp = new float[16];
 
@@ -1272,8 +1275,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     /** width, height and how far down (metres, in the window's own plane) the bar is */
     private void barGeom(Win w, android.graphics.Bitmap bm) {
         float pw = w.widthM * w.scale * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
-        float bw = Math.max(0.24f, Math.min(pw * 0.60f, 0.80f)), bh = bw * BAR_H / BAR_W;
-        bg[0] = bw; bg[1] = bh; bg[2] = -(ph / 2f + bh / 2f + Math.max(0.016f, bh * 0.35f));
+        float bw = Math.max(0.62f, Math.min(pw, 1.10f)), bh = bw * BAR_H / BAR_W;                       // always a big, easy bar, whatever the window's size
+        bg[0] = bw; bg[1] = bh; bg[2] = -(ph / 2f + bh / 2f + 0.012f);                                  // stuck right under the window: one piece with it
     }
 
     private String barTitle(Win w) { try { return w.titleFn != null ? w.titleFn.get() : w.title; } catch (Throwable t) { return w.title; } }
@@ -1288,28 +1291,32 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         NvGlass.fill(cv, p, pill, (ga << 24) | 0x0F1628, pill.height() / 2f);
         NvGlass.ring(cv, p, pill, 0x33FFFFFF, 1.8f, pill.height() / 2f);
         float cy = BAR_H / 2f;
-        for (int i = 0; i < 5; i++) {
-            float cx = BAR_X[i], rr = 25f;
+        for (int i = 0; i < NBTN; i++) {
+            float cx = BAR_X[i], rr = 34f;
             boolean hot = w.barHov == i, dim = i == 0 && w.onBack == null;
             if (hot) NvGlass.fill(cv, p, new android.graphics.RectF(cx - rr, cy - rr, cx + rr, cy + rr), i == 4 ? 0xFFE5484D : 0x55FFFFFF, rr);
+            cv.save(); cv.translate(cx, cy); cv.scale(1.35f, 1.35f); cv.translate(-cx, -cy);
             p.setShader(null); p.setStyle(android.graphics.Paint.Style.STROKE); p.setStrokeWidth(3.2f); p.setStrokeCap(android.graphics.Paint.Cap.ROUND);
             p.setColor(dim ? 0x55FFFFFF : 0xFFFFFFFF);
             switch (i) {
                 case 0: cv.drawLine(cx + 4, cy - 10, cx - 6, cy, p); cv.drawLine(cx - 6, cy, cx + 4, cy + 10, p); break;
                 case 1: p.setStyle(android.graphics.Paint.Style.FILL); for (int k = -1; k <= 1; k++) cv.drawCircle(cx + k * 9, cy, 2.8f, p); break;
-                case 2: cv.drawLine(cx - 9, cy - 3, cx - 9, cy - 9, p); cv.drawLine(cx - 9, cy - 9, cx - 3, cy - 9, p); cv.drawLine(cx + 9, cy + 3, cx + 9, cy + 9, p); cv.drawLine(cx + 9, cy + 9, cx + 3, cy + 9, p); cv.drawLine(cx + 9, cy - 3, cx + 9, cy - 9, p); cv.drawLine(cx + 9, cy - 9, cx + 3, cy - 9, p); cv.drawLine(cx - 9, cy + 3, cx - 9, cy + 9, p); cv.drawLine(cx - 9, cy + 9, cx - 3, cy + 9, p); break;
-                case 3: cv.drawLine(cx - 9, cy + 4, cx + 9, cy + 4, p); break;
+                case 2: cv.drawLine(cx - 9, cy, cx + 9, cy, p); cv.drawLine(cx, cy - 9, cx, cy + 9, p); break;
+                case 20: cv.drawLine(cx - 9, cy - 3, cx - 9, cy - 9, p); cv.drawLine(cx - 9, cy - 9, cx - 3, cy - 9, p); cv.drawLine(cx + 9, cy + 3, cx + 9, cy + 9, p); cv.drawLine(cx + 9, cy + 9, cx + 3, cy + 9, p); cv.drawLine(cx + 9, cy - 3, cx + 9, cy - 9, p); cv.drawLine(cx + 9, cy - 9, cx + 3, cy - 9, p); cv.drawLine(cx - 9, cy + 3, cx - 9, cy + 9, p); cv.drawLine(cx - 9, cy + 9, cx - 3, cy + 9, p); break;
+                case 3: cv.drawLine(cx - 9, cy, cx + 9, cy, p); break;
+                case 5: { android.graphics.RectF kr = new android.graphics.RectF(cx - 11, cy - 7, cx + 11, cy + 7); cv.drawRoundRect(kr, 3, 3, p); p.setStyle(android.graphics.Paint.Style.FILL); for (int a = -1; a <= 1; a++) { cv.drawCircle(cx + a * 6, cy - 2.5f, 1.3f, p); cv.drawCircle(cx + a * 6, cy + 2f, 1.3f, p); } break; }
                 default: cv.drawLine(cx - 8, cy - 8, cx + 8, cy + 8, p); cv.drawLine(cx + 8, cy - 8, cx - 8, cy + 8, p); break;
             }
+            cv.restore();
             p.setStyle(android.graphics.Paint.Style.FILL);
         }
         String t = Tr.t(barTitle(w));
         NvGlass.font(p, true);
         p.setColor(0xFFFFFFFF); p.setTextAlign(android.graphics.Paint.Align.LEFT);
-        float size = 27f, maxW = 330f;
+        float size = 36f, maxW = 340f;
         p.setTextSize(size);
         while (p.measureText(t) > maxW && size > 12) { size -= 1; p.setTextSize(size); }
-        cv.drawText(t, 84f, cy + size * 0.35f, p);
+        cv.drawText(t, 112f, cy + size * 0.35f, p);
         w.barDrawnHov = w.barHov; w.barDrawnTitle = barTitle(w);
     }
 
@@ -1375,19 +1382,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         return true;
     }
 
-    /** 0..4 = a round button, 5 = the empty part (grab to move the window), -1 = outside the pill */
+    /** 0..5 = a round button, 6 = the empty part (grab to move the window), -1 = outside the pill */
     private int barRegion(float x, float y) {
         float cy = BAR_H / 2f;
-        for (int i = 0; i < 5; i++) if (Math.hypot(x - BAR_X[i], y - cy) < 32f) return i;
-        return (x >= 0 && x <= BAR_W && y >= -6 && y <= BAR_H + 6) ? 5 : -1;
+        for (int i = 0; i < NBTN; i++) if (Math.hypot(x - BAR_X[i], y - cy) < 40f) return i;
+        return (x >= 0 && x <= BAR_W && y >= -6 && y <= BAR_H + 6) ? 6 : -1;
     }
 
     private void barAct(Win w, int idx) {
         switch (idx) {
             case 0: if (w.onBack != null) try { w.onBack.run(); } catch (Throwable ignored) { } break;
             case 1: w.placeReq = true; w.newOpen = false; break;                                           // "more": bring it back in front of you
-            case 2: w.scale = w.scale > 1.3f ? 1f : Math.min(2.5f, w.scale * 1.6f); break;                 // bigger / back to normal size
-            case 3: setVisible(w, false, 0f, 0f); break;                                                     // smaller: put it away (it stays loaded)
+            case 2: w.scale = Math.min(3.0f, w.scale * 1.18f); w.wantScale = w.scale; break;               // bigger (+)
+            case 3: w.scale = Math.max(0.35f, w.scale / 1.18f); w.wantScale = w.scale; break;              // smaller (-)
+            case 5: { Runnable k = onKeysBtn; if (k != null) try { k.run(); } catch (Throwable ignored) { } break; }
             case 4: if (w.onClose != null) try { w.onClose.run(); } catch (Throwable ignored) { } else setVisible(w, false, 0f, 0f); break;
             default: break;
         }
@@ -1772,7 +1780,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
         }
         barHovWin = barWin; barHovIdx = barWin != null ? barReg : -1;
-        if (barWin != null && pinching && !prevPinch && barReg >= 0 && barReg < 5) { holdPop(cnx, cny, false); barAct(barWin, barReg); }
+        if (barWin != null && pinching && !prevPinch && barReg >= 0 && barReg < 6) { holdPop(cnx, cny, false); barAct(barWin, barReg); }
         gripHot = gripWin != null || (dragWin != null && resizing);
         // OK sign (thumb and index in a ring, the other three fingers stretched out) held for a moment over empty space:
         // all windows go back to the standard places and sizes
@@ -1803,7 +1811,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             gripWin.c.setDragging(true);
             wins.remove(gripWin); wins.add(gripWin);
         }
-        Win gwin = (target != null && target.c.handleRecent()) ? target : ((barWin != null && barReg == 5) ? barWin : null);
+        Win gwin = (target != null && target.c.handleRecent()) ? target : ((barWin != null && barReg == 6) ? barWin : null);
         if (gwin != null && pinching && !prevPinch) {      // grabbed the bar under a window
             if (motion != null && motion.enabled) rebase(gwin, sux, suy, suz);
             dragWin = gwin;
@@ -2005,7 +2013,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
             float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
             final boolean thr = skel == 4;
-            float hw = Math.max(3f, size * (thr ? 0.10f : 0.115f));
+            float hw = Math.max(3f, size * (thr ? 0.17f : 0.115f));   // see-through: a generous area, the real skin colour of the picture then cuts the exact outline
             aaBegin();
             for (int b = 0; b < BONES.length; b += 2) {
                 int p0 = BONES[b], p1 = BONES[b + 1];
@@ -2017,10 +2025,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 aaSeg(X[p0], Y[p0], x1, y1, hw);
             }
             // palm filling: a fat stroke between the wrist and the knuckles (kept inside the real palm)
-            aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * 0.38f);
+            aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? 0.55f : 0.38f));
             if (thr && size > 1e-3f) {                       // the forearm too, so the whole arm is seen through the windows (it runs on past the edge of the picture)
                 float ax = (X[0] - X[9]) / size, ay = (Y[0] - Y[9]) / size;
-                aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * 0.33f);
+                aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * 0.45f);
             }
             aaFlush(1f, 1f, 1f);
         }

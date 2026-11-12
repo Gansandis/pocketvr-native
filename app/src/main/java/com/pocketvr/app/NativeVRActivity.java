@@ -200,6 +200,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         cam = new NvCam(this, hands, this);
         cam.detPaceMs = 0;
         rend = new VRRenderer(this, cam);
+        rend.onKeysBtn = () -> rend.toggle(wKeys, 0f, -24f);                // the keyboard button of the bar under every window
         motion = new NvMotion();
         motion.rot = () -> rend.rotCopy();
         cam.motion = motion;
@@ -918,7 +919,6 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             else openGallery();
         }));
         menu.home.add(new NvUi.Btn("🎬", () -> "โหมดโรงหนัง", () -> rend.cinema ? "ห้องมืด เห็นแค่จอ" : "ปิดอยู่ (เห็นห้องจริง)", () -> rend.cinema, GA, GB, () -> { rend.cinema = !rend.cinema; rend.recenter = true; }));
-        menu.home.add(new NvUi.Btn("⌨", () -> "คีย์บอร์ด", () -> wKeys.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wKeys.visible, GA, GB, () -> rend.toggle(wKeys, 0f, -24f)));
         menu.home.add(new NvUi.Btn("⚙", () -> "ตั้งค่า", () -> wSet.visible ? "เปิดอยู่" : "ควบคุม แสดงผล VR ทดลอง", () -> wSet.visible, GA, GB, () -> rend.toggle(wSet, 0f, 5f)));
         tools.add(new NvUi.Btn("🌆", () -> "ฉากเมืองเสมือน", () -> rend.envScene == 1 ? "เปิดอยู่ (แทนภาพกล้อง)" : "ปิดอยู่ (เห็นห้องจริง)", () -> rend.envScene == 1, 0xFF8A5AE0, 0xFF5A32A8, () -> rend.envScene = rend.envScene == 1 ? 0 : 1));
         tools.add(new NvUi.Btn("🦍", () -> "Gorilla World", () -> "เปิดเกมกอริลลา (ต้องติดตั้งแยก)", null, GA, GB, () -> runOnUiThread(() -> {
@@ -944,6 +944,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.onMic = () -> toggleVoice();
         menu.onSearch = () -> startMenuSearch();
         menu.dock.add(new NvUi.Btn("🏠", () -> "เมนู", null, () -> menu.open, 0, 0, () -> menu.toggleOpen()));
+        menu.dock.add(new NvUi.Btn("⌨", () -> "คีย์บอร์ด", null, () -> wKeys.visible, 0, 0, () -> rend.toggle(wKeys, 0f, -24f)));
         menu.dock.add(new NvUi.Btn("🥽", () -> "แยกจอ", null, () -> rend.stereo, 0, 0, () -> rend.stereo = !rend.stereo));
         menu.dock.add(new NvUi.Btn("👓", () -> "เลนส์", null, () -> rend.lens > 0, 0, 0, () -> rend.lens = (rend.lens + 1) % 4));
         menu.dock.add(new NvUi.Btn("✋", () -> "คาดการณ์", null, () -> rend.predict, 0, 0, () -> rend.predict = !rend.predict));
