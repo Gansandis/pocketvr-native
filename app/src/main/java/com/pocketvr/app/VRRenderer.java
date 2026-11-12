@@ -2056,7 +2056,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 }
                 float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
                 boolean core = thr && pass == 1;
-                float hw = Math.max(3f, size * (thr ? (core ? 0.072f : (arm ? 0.15f : 0.115f) + Math.min(0.08f, handSpd * 0.08f)) : 0.115f));
+                float hw = Math.max(3f, size * (thr ? (core ? 0.072f : (arm ? 0.15f : 0.095f) + Math.min(0.07f, handSpd * 0.07f)) : 0.115f));
                 aaBegin();
                 for (int b2 = 0; b2 < BONES.length; b2 += 2) {
                     int p0 = BONES[b2], p1 = BONES[b2 + 1];
@@ -2070,10 +2070,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     }
                     aaSeg(X[p0], Y[p0], x1, y1, hw);
                 }
-                if (thr && !core) {                                                 // (band only, so the skin colour checks it) the skin between thumb and index finger: the model has no points there
-                    float wh = hw * 1.1f;
-                    aaSeg(X[3], Y[3], X[6], Y[6], wh); aaSeg(X[2], Y[2], X[6], Y[6], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh); aaSeg(X[2], Y[2], X[5], Y[5], wh);
-                    aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, (X[5] + X[6]) / 2f, (Y[5] + Y[6]) / 2f, wh * 1.15f);
+                if (thr && !core) {                                                 // (band only, so the skin colour checks it) the skin at the root of the thumb: only close to the palm, never out to the thumb's tip
+                    float wh = size * 0.075f;
+                    aaSeg(X[1], Y[1], X[5], Y[5], wh); aaSeg(X[2], Y[2], X[5], Y[5], wh);
                 }
                 aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.30f : 0.42f) : 0.38f));
                 if (arm && size > 1e-3f) {
