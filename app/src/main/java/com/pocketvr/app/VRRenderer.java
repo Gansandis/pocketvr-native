@@ -2059,6 +2059,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // picture is drawn in one go (switching away from it half way makes a phone GPU save and reload the whole picture: a lot of memory traffic)
     private boolean maskReady = false;
     private final float[] ringH = new float[8];
+    /** half width of the bone ending at each landmark, in hand-size units (size = wrist to the root of the middle finger): the fingers get thinner towards the tip, the palm lines are wide */
+    private static final float[] BONE_W = {0f, 0.10f, 0.11f, 0.105f, 0.09f, 0.10f, 0.088f, 0.078f, 0.068f, 0.10f, 0.092f, 0.082f, 0.07f, 0.10f, 0.088f, 0.078f, 0.066f, 0.10f, 0.072f, 0.064f, 0.056f};
+
     private void renderMask(float[] r) {
         maskReady = false;
         int n = (int) r[0];
@@ -2095,7 +2098,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                             x1 += dx / l * ext; y1 += dy / l * ext;
                         }
                     }
-                    aaSeg(X[p0], Y[p0], x1, y1, hw);
+                    // the width follows the real finger (so the gaps between the fingers stay open): the sure core a little inside of it, the colour-checked band a little outside of it
+                    boolean palmLine = p1 == 1 || p1 == 5 || p1 == 9 || p1 == 13 || p1 == 17;
+                    float wf = BONE_W[p1 < 21 ? p1 : 0];
+                    float bwid = core ? (palmLine ? 0.10f : Math.max(0.028f, wf - 0.045f)) : (wf + 0.04f + (arm ? 0.02f : 0f) + Math.min(0.06f, handSpd * 0.06f));
+                    aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * bwid));
                 }
                 if (thr) {
                     if (core) {                                                     // the root of the thumb joins the palm: sure hand (close to the palm only)
@@ -2106,7 +2113,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                         aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, (X[5] + X[6]) / 2f, (Y[5] + Y[6]) / 2f, wh * 1.2f);
                     }
                 }
-                aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.20f : 0.42f) : 0.38f));
+                aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.25f : 0.44f) : 0.38f));
                 if (arm && size > 1e-3f) {
                     float ax = (X[0] - X[9]) / size, ay = (Y[0] - Y[9]) / size;
                     aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * (core ? 0.12f : 0.36f));
