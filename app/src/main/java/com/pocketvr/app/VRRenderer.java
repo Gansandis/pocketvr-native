@@ -2024,7 +2024,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 }
                 float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
                 boolean core = thr && pass == 1;
-                float hw = Math.max(3f, size * (thr ? (core ? 0.072f : 0.125f + Math.min(0.10f, handSpd * 0.10f)) : 0.115f));
+                float hw = Math.max(3f, size * (thr ? (core ? 0.048f : 0.15f + Math.min(0.10f, handSpd * 0.10f)) : 0.115f));
                 aaBegin();
                 for (int b2 = 0; b2 < BONES.length; b2 += 2) {
                     int p0 = BONES[b2], p1 = BONES[b2 + 1];
@@ -2038,15 +2038,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     }
                     aaSeg(X[p0], Y[p0], x1, y1, hw);
                 }
-                if (thr) {                                                          // the skin between thumb and index finger: the model has no points there
-                    float wh = hw * (core ? 1.0f : 0.9f);
+                if (thr && !core) {                                                 // (band only, so the skin colour checks it) the skin between thumb and index finger: the model has no points there
+                    float wh = hw * 1.1f;
                     aaSeg(X[3], Y[3], X[6], Y[6], wh); aaSeg(X[2], Y[2], X[6], Y[6], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh); aaSeg(X[2], Y[2], X[5], Y[5], wh);
                     aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, (X[5] + X[6]) / 2f, (Y[5] + Y[6]) / 2f, wh * 1.15f);
                 }
-                aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.30f : 0.42f) : 0.38f));
+                aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.22f : 0.42f) : 0.38f));
                 if (thr && size > 1e-3f) {
                     float ax = (X[0] - X[9]) / size, ay = (Y[0] - Y[9]) / size;
-                    aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * (core ? 0.22f : 0.36f));
+                    aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * (core ? 0.16f : 0.36f));
                 }
                 aaFlush(1f, 1f, 1f);
             }
