@@ -826,6 +826,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private final float[] stm = new float[16];
     private int vw = 1, vh = 1;
     private int progCam, progCol, progFin, progRing, progCity;
+    private int lutTex = 0; private long lutUp = 0;
     private int[] maskFbo = new int[1], maskTex = new int[1], refFbo = new int[1], refTex = new int[1];   // maskTex: the hand shape from the model; refTex: the same, checked against the skin colour of the camera picture
     private int maskW = 0, maskH = 0;
     private FloatBuffer triBuf;
@@ -876,12 +877,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCam = prog(
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
-            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; varying vec2 pp;" +
+            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; uniform sampler2D lut; uniform float lutOn; varying vec2 pp;" +
             "float skinAt(vec3 c){ float cb=-0.169*c.r-0.331*c.g+0.5*c.b+0.5, cr=0.5*c.r-0.419*c.g-0.081*c.b+0.5, yy=0.299*c.r+0.587*c.g+0.114*c.b;" +
             " vec2 d=smOn>0.5 ? vec2(cb-sm.x,cr-sm.y)/(sm.zw*2.4) : vec2(cb-0.41,cr-0.60)/vec2(0.11,0.09);" +        // learnt skin colour of this person (Gaussian in Cb/Cr, brightness left out so shade does not matter), or a general one until it is learnt
             " float lum=smOn>0.5 ? 1.-smoothstep(0.30,0.48,abs(yy-sy)) : 1.;" +                                      // wood / furniture of a similar colour is usually darker or lighter than the palm
             " float bgk=1.;" +
             " if(smOn>0.5 && sbOn>0.5){ vec2 ds=vec2(cb-sm.x,cr-sm.y)/sm.zw, db=vec2(cb-sb.x,cr-sb.y)/sb.zw; float gs=exp(-0.5*dot(ds,ds)), gb=exp(-0.5*dot(db,db)); bgk=smoothstep(0.30,0.70,gs/(gs+gb+0.001)); }" +   // closer to the hand's colour than to the background's colour (floor, table)
+            " if(lutOn>0.5){ float pr=texture2D(lut,clamp(vec2(cb,cr),0.,1.)).r; return smoothstep(0.35,0.70,pr)*smoothstep(0.02,0.10,yy); }" +                    // the colour table learnt from the real pixels of this hand and of the room round it
             " return (1.-smoothstep(0.7,1.15,length(d)))*lum*bgk*smoothstep(0.02,0.10,yy); }" +
             "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
             " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; }" +
@@ -949,7 +951,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "void main(){ float t=clamp(vq.x,0.,vq.z); float d=length(vec2(vq.x-t,vq.y)); float al=clamp((1.-d)*vq.w/sf,0.,1.); gl_FragColor=vec4(col*al,al)*fade; }");
         aaBuf = fb(6 * 6 * 60);
         triBuf = fb(4096);
-        maskW = 0; maskFbo[0] = 0; maskTex[0] = 0; refFbo[0] = 0; refTex[0] = 0;
+        lutTex = 0; maskW = 0; maskFbo[0] = 0; maskTex[0] = 0; refFbo[0] = 0; refTex[0] = 0;
         progPanel = prog(
             "attribute vec2 p; uniform mat4 mvp; uniform vec2 hs; varying vec2 uv; void main(){ gl_Position=mvp*vec4(p*hs,0.,1.); uv=vec2(p.x*0.5+0.5, 0.5-p.y*0.5); }",
             "precision mediump float; uniform sampler2D tex; uniform float al; varying vec2 uv; void main(){ gl_FragColor=texture2D(tex,uv)*al; }");
@@ -1254,6 +1256,29 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniformMatrix4fv(ul(progCam, "stm"), 1, false, stm, 0);
         GLES20.glUniform1f(ul(progCam, "rf"), rot180 ? 1f : 0f);
         GLES20.glUniform2f(ul(progCam, "px"), 1f / Math.max(1, imgW), 1f / Math.max(1, imgH));
+        {   // the learnt colour table (32 x 32 over Cb / Cr): a probability of "hand" for every colour
+            byte[] lt = cam.lut; long ltT = cam.lutT;
+            boolean lo = mode == 2 && lt != null && lt.length == 1024 && System.currentTimeMillis() - ltT < 3000;
+            GLES20.glUniform1i(ul(progCam, "lut"), 2);
+            GLES20.glUniform1f(ul(progCam, "lutOn"), lo ? 1f : 0f);
+            if (lo) {
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE2);
+                if (lutTex == 0) {
+                    int[] t = new int[1]; GLES20.glGenTextures(1, t, 0); lutTex = t[0]; lutUp = 0;
+                    GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, lutTex);
+                    GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+                    GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+                    GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+                    GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+                } else GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, lutTex);
+                if (lutUp != ltT) {
+                    GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1);
+                    GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, 32, 32, 0, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, java.nio.ByteBuffer.wrap(lt));
+                    lutUp = ltT;
+                }
+                GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+            }
+        }
         { float[] sk = cam.skin; boolean ok = mode == 2 && sk != null && sk[2] > 0f && System.currentTimeMillis() - cam.skinT < 3000;
           GLES20.glUniform1f(ul(progCam, "smOn"), ok ? 1f : 0f);
           GLES20.glUniform1f(ul(progCam, "sy"), ok && sk.length > 5 ? sk[5] : 0.5f);
@@ -1293,7 +1318,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // ---- the title bar that floats under every window: back, name, more, bigger, smaller, close ----
     private static final int BAR_W = 900, BAR_H = 100, NBTN = 6;
     private static final float[] BAR_X = {56f, 770f, 640f, 570f, 842f, 500f};     // centres of the round buttons: 0 back, 1 more, 2 bigger (+), 3 smaller (-), 4 close, 5 keyboard
-    public volatile Runnable onKeysBtn;                                            // the keyboard button of the bar (set by the activity)
+    public volatile java.util.function.Consumer<Win> onKeysBtn;                                            // the keyboard button of the bar (set by the activity)
     private Win barHovWin = null; private int barHovIdx = -1;
     private final float[] bg = new float[3], barMv = new float[16], barMvp = new float[16];
 
@@ -1303,7 +1328,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     /** width, height and how far down (metres, in the window's own plane) the bar is */
     private void barGeom(Win w, android.graphics.Bitmap bm) {
         float pw = w.widthM * w.scale * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
-        float bw = Math.max(0.62f, Math.min(pw, 1.10f)), bh = bw * BAR_H / BAR_W;                       // always a big, easy bar, whatever the window's size
+        float dk = Math.max(1f, Math.min(5f, Math.max(0.3f, w.dist) / PANEL_D));                       // a window far away (or very big) gets a bar of the same size to the eye
+        float bw = Math.max(0.62f * dk, Math.min(pw, 1.10f * dk)), bh = bw * BAR_H / BAR_W;           // always a big, easy bar, whatever the window's size
         bg[0] = bw; bg[1] = bh; bg[2] = -(ph / 2f + bh / 2f + 0.012f);                                  // stuck right under the window: one piece with it
     }
 
@@ -1423,7 +1449,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             case 1: w.placeReq = true; w.newOpen = false; break;                                           // "more": bring it back in front of you
             case 2: w.scale = Math.min(3.0f, w.scale * 1.18f); w.wantScale = w.scale; break;               // bigger (+)
             case 3: w.scale = Math.max(0.35f, w.scale / 1.18f); w.wantScale = w.scale; break;              // smaller (-)
-            case 5: { Runnable k = onKeysBtn; if (k != null) try { k.run(); } catch (Throwable ignored) { } break; }
+            case 5: { java.util.function.Consumer<Win> k = onKeysBtn; if (k != null) try { k.accept(w); } catch (Throwable ignored) { } break; }
             case 4: if (w.onClose != null) try { w.onClose.run(); } catch (Throwable ignored) { } else setVisible(w, false, 0f, 0f); break;
             default: break;
         }

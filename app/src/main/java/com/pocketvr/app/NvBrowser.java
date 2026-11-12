@@ -66,7 +66,7 @@ public class NvBrowser implements NvContent {
         act = a; ui = uiHandler; vb = new VirtualBrowser(a);
         mk(BACK, "◀", 10); mk(FWD, "▶", 76); mk(RELOAD, "⟳", 142);
         float x = W - 70;
-        mkr(CLOSE, "✕", x); x -= 66; mkr(KEYB, "⌨", x); x -= 66; mkr(DESK, "🖥", x); x -= 66; mkr(TABS, "1", x); x -= 66; mkr(NEWTAB, "＋", x); x -= 66; mkr(NEWWIN, "⧉", x);
+        mkr(CLOSE, "✕", x); x -= 66; mkr(DESK, "🖥", x); x -= 66; mkr(TABS, "1", x); x -= 66; mkr(NEWTAB, "＋", x); x -= 66; mkr(NEWWIN, "⧉", x);
         B u = new B(); u.type = URL; u.label = ""; u.r.set(212, 10, x - 6, 74); btns.add(u);
     }
 

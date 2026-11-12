@@ -150,6 +150,73 @@ public class NvCam {
         skinT = now;
     }
     public volatile long skinT = 0;
+    /** the colour table of the hand against the room: 32 x 32 over (Cb, Cr), a byte per colour = how likely that colour is the hand (0..255). It is learnt from the REAL pixels
+     *  of the picture: those inside the bones of the hand are "hand", those far from the hand are "room" (histograms of both, then hand / (hand + room): the Bayes skin
+     *  classifier of Jones and Rehg, trained again at every look, with the hand points of the model as the teacher). */
+    public volatile byte[] lut = null;
+    public volatile long lutT = 0;
+    private final float[] hsH = new float[1024], hbH = new float[1024];
+    private static final int[][] BONE = {{0, 1}, {1, 2}, {2, 3}, {3, 4}, {0, 5}, {5, 6}, {6, 7}, {7, 8}, {9, 10}, {10, 11}, {11, 12}, {13, 14}, {14, 15}, {15, 16}, {0, 17}, {17, 18}, {18, 19}, {19, 20}, {5, 9}, {9, 13}, {13, 17}};
+    private boolean lutHas = false;
+    private void updateLut(Bitmap bmp, float[] res) {
+        int w = bmp.getWidth(), h = bmp.getHeight(), nh = Math.min(2, (int) res[0]);
+        if (nh < 1 || res.length < 1 + nh * 63) return;
+        float[][] px = new float[nh][42];
+        float[] sz = new float[nh];
+        for (int i = 0; i < nh; i++) {
+            for (int k = 0; k < 21; k++) { px[i][k * 2] = res[1 + i * 63 + k * 3] * w; px[i][k * 2 + 1] = res[1 + i * 63 + k * 3 + 1] * h; }
+            sz[i] = Math.max(8f, (float) Math.hypot(px[i][18] - px[i][0], px[i][19] - px[i][1]));
+        }
+        float[] nsH = new float[1024], nsB = new float[1024];
+        int cH = 0, cB = 0;
+        int[] row = new int[w];
+        for (int y = 1; y < h - 1; y += 2) {
+            bmp.getPixels(row, 0, w, 0, y, w, 1);
+            for (int x = 1; x < w - 1; x += 2) {
+                // nearest distance to a bone of each hand, in units of that hand's size
+                float best = 1e9f;
+                for (int i = 0; i < nh; i++) {
+                    float[] P = px[i];
+                    for (int[] b : BONE) {
+                        float ax = P[b[0] * 2], ay = P[b[0] * 2 + 1], bx = P[b[1] * 2] - ax, by = P[b[1] * 2 + 1] - ay;
+                        float l2 = bx * bx + by * by, t = l2 < 1e-3f ? 0f : ((x - ax) * bx + (y - ay) * by) / l2;
+                        t = t < 0f ? 0f : (t > 1f ? 1f : t);
+                        float dx = x - (ax + bx * t), dy = y - (ay + by * t);
+                        float d = (float) Math.sqrt(dx * dx + dy * dy) / sz[i];
+                        if (d < best) best = d;
+                    }
+                    // palm: the middle of the palm is a bone of its own, fat
+                    float mx = (P[0] + P[18]) * 0.5f, my = (P[1] + P[19]) * 0.5f;
+                    float dp = (float) Math.hypot(x - mx, y - my) / sz[i] - 0.15f;
+                    if (dp < best) best = dp;
+                }
+                int p = row[x];
+                float r = ((p >> 16) & 255) / 255f, g = ((p >> 8) & 255) / 255f, b2 = (p & 255) / 255f;
+                float yy = 0.299f * r + 0.587f * g + 0.114f * b2;
+                if (yy < 0.06f) continue;
+                int ib = (int) ((-0.169f * r - 0.331f * g + 0.5f * b2 + 0.5f) * 32f), ir = (int) ((0.5f * r - 0.419f * g - 0.081f * b2 + 0.5f) * 32f);
+                ib = ib < 0 ? 0 : (ib > 31 ? 31 : ib); ir = ir < 0 ? 0 : (ir > 31 ? 31 : ir);
+                if (best < 0.055f) { nsH[ib * 32 + ir]++; cH++; }                  // inside the bones: surely hand (fingers are about 0.08-0.1 wide in these units, so this is their middle)
+                else if (best > 0.42f) { nsB[ib * 32 + ir]++; cB++; }               // far from the hand: the room
+            }
+        }
+        if (cH < 40 || cB < 200) return;
+        float a = lutHas ? 0.5f : 0f;                                              // mix with what was learnt before (steady, but follows the light)
+        for (int i = 0; i < 1024; i++) { hsH[i] = hsH[i] * a + nsH[i] / cH; hbH[i] = hbH[i] * a + nsB[i] / cB; }
+        lutHas = true;
+        float[] pr = new float[1024];
+        for (int i = 0; i < 1024; i++) { float s = hsH[i], r = hbH[i]; pr[i] = s < 2e-4f ? 0f : s / (s + r * 1.0f + 1e-5f); }
+        byte[] out = new byte[1024];
+        for (int ib = 0; ib < 32; ib++) for (int ir = 0; ir < 32; ir++) {                 // a light blur, so a colour that was never seen exactly is judged by its neighbours
+            float sum = 0, wt = 0;
+            for (int db = -1; db <= 1; db++) for (int dr = -1; dr <= 1; dr++) {
+                int jb = ib + db, jr = ir + dr; if (jb < 0 || jr < 0 || jb > 31 || jr > 31) continue;
+                float k = (db == 0 && dr == 0) ? 2f : 1f; sum += pr[jb * 32 + jr] * k; wt += k;
+            }
+            out[ib * 32 + ir] = (byte) Math.round(255f * sum / wt);
+        }
+        lut = out; lutT = System.currentTimeMillis();
+    }
     public volatile long resultCapT = 0;           // time (ms, System.nanoTime based) the picture behind `result` was taken
     public volatile boolean filt = true;           // steady the points: little shake when the hand is slow, almost no delay when it is quick
     private float[] fx = new float[127], fd = new float[127];
@@ -459,7 +526,7 @@ public class NvCam {
                         if (!handsOpened) { handsFailed = true; lis.onError("hands: " + hands.error); return; }
                     }
                     float[] res = hands.detect(bmp, ts);          // the picture is reused for the next look, so it is not recycled here
-                    if (res != null && res[0] >= 1 && res.length >= 64) { try { updateSkin(bmp, res); } catch (Throwable ignored) { } }
+                    if (res != null && res[0] >= 1 && res.length >= 64) { try { updateSkin(bmp, res); } catch (Throwable ignored) { } try { updateLut(bmp, res); } catch (Throwable ignored) { } }
                     if (res != null) {
                         heldFlag = false;
                         res = holdSecond(res, result, System.nanoTime() / 1000000L);

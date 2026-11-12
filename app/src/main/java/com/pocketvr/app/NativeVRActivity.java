@@ -200,7 +200,12 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         cam = new NvCam(this, hands, this);
         cam.detPaceMs = 0;
         rend = new VRRenderer(this, cam);
-        rend.onKeysBtn = () -> rend.toggle(wKeys, 0f, -24f);                // the keyboard button of the bar under every window
+        rend.onKeysBtn = w -> {                                              // the keyboard button of the bar under every window: it types into THAT window
+            if (wKeys.visible) { kbd.sink = null; rend.setVisible(wKeys, false, 0f, 0f); return; }
+            if (w.c instanceof NvBrowser) { NvBrowser nb = (NvBrowser) w.c; if (nb.kbHost != null) { nb.kbHost.showKeyboard(nb.pageSink); return; } }
+            if (w.c instanceof NvAppWin) { NvAppWin na = (NvAppWin) w.c; if (na.kbHost != null) { na.kbHost.showKeyboard(na.sink); return; } }
+            rend.toggle(wKeys, 0f, -24f);
+        };
         motion = new NvMotion();
         motion.rot = () -> rend.rotCopy();
         cam.motion = motion;
