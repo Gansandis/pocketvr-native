@@ -336,7 +336,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     // The window stands like a wall (top edge up, no sideways tilt) and leans a little towards the eyes: below eye level it tilts its face up, above eye level it tilts down,
     // by half the angle it sits above / below (at most TILT_MAX), so it is easy to read without ever lying flat. It turns about its own centre, so it does not move.
-    private static final float TILT_K = 0f, TILT_MAX = 0f;   // no lean towards the eyes: a window is a flat vertical plane like a picture on a wall
+    private static final float TILT_K = 0.75f, TILT_MAX = 40f;   // below eye level the face tilts up, above it tilts down (towards the eyes)
     private void uprightAboutCentre(Win w) {
         float[] r = w.rot;
         if (r == null) return;
@@ -872,6 +872,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
             "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; varying vec2 pp;" +
+            "float skinAt(vec3 c){ float cb=-0.169*c.r-0.331*c.g+0.5*c.b+0.5, cr=0.5*c.r-0.419*c.g-0.081*c.b+0.5, yy=0.299*c.r+0.587*c.g+0.114*c.b; return (1.-smoothstep(0.75,1.25,length(vec2(cb-0.41,cr-0.60)/vec2(0.15,0.12))))*smoothstep(0.02,0.10,yy); }" +
             "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
             " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; }" +
             " vec2 t=q*0.5+0.5; t=mix(t,1.-t,rf); vec2 uv=vec2(t.x,1.-t.y); vec4 c=texture2D(tex,uv); vec4 c0=c;" +
@@ -881,9 +882,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             " if(mkOn>0.5){ vec2 mu=pp*mz*0.5+0.5;" +
             "  float m=texture2D(mk,mu).r*0.25+(texture2D(mk,mu+vec2(mpx.x,0.)).r+texture2D(mk,mu-vec2(mpx.x,0.)).r+texture2D(mk,mu+vec2(0.,mpx.y)).r+texture2D(mk,mu-vec2(0.,mpx.y)).r)*0.125" +
             "   +(texture2D(mk,mu+mpx).r+texture2D(mk,mu-mpx).r+texture2D(mk,mu+vec2(mpx.x,-mpx.y)).r+texture2D(mk,mu+vec2(-mpx.x,mpx.y)).r)*0.0625;" +
-            "  float cb=-0.169*c0.r-0.331*c0.g+0.5*c0.b+0.5, cr=0.5*c0.r-0.419*c0.g-0.081*c0.b+0.5, yy=0.299*c0.r+0.587*c0.g+0.114*c0.b;" +
-            "  float sk=(1.-smoothstep(0.7,1.15,length(vec2(cb-0.40,cr-0.60)/vec2(0.11,0.09))))*smoothstep(0.06,0.16,yy);" +
-            "  float a=smoothstep(0.30,0.60,m)*smoothstep(0.15,0.55,sk); gl_FragColor=vec4(c.rgb*a,a); } else gl_FragColor=c; }");
+            "  float a=smoothstep(0.30,0.60,m); if(a<0.01){ gl_FragColor=vec4(0.); return; }" +
+            "  float sk=skinAt(c0.rgb);" +
+            "  vec2 o1=vec2(px.x*4.,0.), o2=vec2(0.,px.y*4.);" +
+            "  float sa=(sk+skinAt(texture2D(tex,uv+o1).rgb)+skinAt(texture2D(tex,uv-o1).rgb)+skinAt(texture2D(tex,uv+o2).rgb)+skinAt(texture2D(tex,uv-o2).rgb))*0.2;" +
+            "  sk=max(sk,sa*1.5);" +
+            "  a*=smoothstep(0.10,0.45,sk); gl_FragColor=vec4(c.rgb*a,a); } else gl_FragColor=c; }");
         progCol = prog(
             "attribute vec2 p; uniform float ps; void main(){ gl_Position=vec4(p,0.,1.); gl_PointSize=ps; }",
             "precision mediump float; uniform vec4 col; uniform float rnd; void main(){ if (rnd>0.5 && length(gl_PointCoord-0.5)>0.5) discard; gl_FragColor=col; }");
