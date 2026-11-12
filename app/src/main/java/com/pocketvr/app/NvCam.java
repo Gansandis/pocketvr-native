@@ -95,7 +95,7 @@ public class NvCam {
         for (int i = 0; i < n; i++) ey += yys[i];
         ey /= n;
         for (int i = 0; i < n; i++) if (Math.abs(cbs[i] - mcb) < 0.07f && Math.abs(crs[i] - mcr) < 0.07f) { vc += (cbs[i] - ec) * (cbs[i] - ec); vr += (crs[i] - er) * (crs[i] - er); }
-        float dc = Math.max(0.018f, (float) Math.sqrt(vc / k)) + 0.008f, dr = Math.max(0.018f, (float) Math.sqrt(vr / k)) + 0.008f;      // some room for the shade over the hand
+        float dc = Math.max(0.022f, (float) Math.sqrt(vc / k)) + 0.012f, dr = Math.max(0.022f, (float) Math.sqrt(vr / k)) + 0.012f;      // some room for the shade over the hand
         float[] pv = skin; if (pv[2] > 0) ey = pv[5] + (ey - pv[5]) * 0.3f; long now = System.currentTimeMillis();
         if (pv[2] > 0 && Math.abs(pv[0] - ec) < 0.12f) { float t = 0.3f; ec = pv[0] + (ec - pv[0]) * t; er = pv[1] + (er - pv[1]) * t; dc = pv[2] + (dc - pv[2]) * t; dr = pv[3] + (dr - pv[3]) * t; }
         skin = new float[]{ec, er, dc, dr, 1f, ey};

@@ -878,8 +878,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
             "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; varying vec2 pp;" +
             "float skinAt(vec3 c){ float cb=-0.169*c.r-0.331*c.g+0.5*c.b+0.5, cr=0.5*c.r-0.419*c.g-0.081*c.b+0.5, yy=0.299*c.r+0.587*c.g+0.114*c.b;" +
-            " vec2 d=smOn>0.5 ? vec2(cb-sm.x,cr-sm.y)/(sm.zw*1.9) : vec2(cb-0.41,cr-0.60)/vec2(0.11,0.09);" +        // learnt skin colour of this person (Gaussian in Cb/Cr, brightness left out so shade does not matter), or a general one until it is learnt
-            " float lum=smOn>0.5 ? 1.-smoothstep(0.20,0.36,abs(yy-sy)) : 1.;" +                                      // wood / furniture of a similar colour is usually darker or lighter than the palm
+            " vec2 d=smOn>0.5 ? vec2(cb-sm.x,cr-sm.y)/(sm.zw*2.4) : vec2(cb-0.41,cr-0.60)/vec2(0.11,0.09);" +        // learnt skin colour of this person (Gaussian in Cb/Cr, brightness left out so shade does not matter), or a general one until it is learnt
+            " float lum=smOn>0.5 ? 1.-smoothstep(0.30,0.48,abs(yy-sy)) : 1.;" +                                      // wood / furniture of a similar colour is usually darker or lighter than the palm
             " return (1.-smoothstep(0.7,1.15,length(d)))*lum*smoothstep(0.02,0.10,yy); }" +
             "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
             " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; }" +
@@ -2051,7 +2051,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 }
                 float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
                 boolean core = thr && pass == 1;
-                float hw = Math.max(3f, size * (thr ? (core ? 0.048f : (arm ? 0.15f : 0.105f) + Math.min(0.08f, handSpd * 0.08f)) : 0.115f));
+                float hw = Math.max(3f, size * (thr ? (core ? 0.072f : (arm ? 0.15f : 0.115f) + Math.min(0.08f, handSpd * 0.08f)) : 0.115f));
                 aaBegin();
                 for (int b2 = 0; b2 < BONES.length; b2 += 2) {
                     int p0 = BONES[b2], p1 = BONES[b2 + 1];
@@ -2070,10 +2070,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     aaSeg(X[3], Y[3], X[6], Y[6], wh); aaSeg(X[2], Y[2], X[6], Y[6], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh); aaSeg(X[2], Y[2], X[5], Y[5], wh);
                     aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, (X[5] + X[6]) / 2f, (Y[5] + Y[6]) / 2f, wh * 1.15f);
                 }
-                aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.22f : 0.42f) : 0.38f));
+                aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.30f : 0.42f) : 0.38f));
                 if (arm && size > 1e-3f) {
                     float ax = (X[0] - X[9]) / size, ay = (Y[0] - Y[9]) / size;
-                    aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * (core ? 0.16f : 0.36f));
+                    aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * (core ? 0.22f : 0.36f));
                 }
                 aaFlush(1f, 1f, 1f);
             }
