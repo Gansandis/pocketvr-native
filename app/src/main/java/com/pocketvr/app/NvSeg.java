@@ -143,8 +143,13 @@ final class NvSeg {
                 p[i] = v;
             }
         }
+        // the answer is given as a smooth field of log-odds (not as saturated 0 / 1 probabilities): the renderer stretches it with linear filtering, and the
+        // line where it crosses zero then runs smoothly between the pixels instead of in steps of a whole pixel
+        float[] f = U;
+        for (int i = 0; i < n; i++) { float qq = q[i]; qq = qq < 1e-3f ? 1e-3f : (qq > 0.999f ? 0.999f : qq); f[i] = (float) Math.log(qq / (1f - qq)); }
+        blur(f);
         byte[] out = new byte[n];
-        for (int i = 0; i < n; i++) out[i] = (byte) Math.round(p[i] * 255f);
+        for (int i = 0; i < n; i++) { float v = (f[i] / 12f + 0.5f) * 255f; out[i] = (byte) Math.round(v < 0f ? 0f : (v > 255f ? 255f : v)); }
         return out;
     }
 

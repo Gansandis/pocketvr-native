@@ -587,8 +587,11 @@ public class NvCam {
                     if (keep != null) {
                         try {
                             if (res != null && res[0] >= 1 && res.length >= 64) {
-                                try { updateSkin(keep, res); } catch (Throwable e) { segErr = "skin:" + e; }
-                                try { updateLut(keep, res); } catch (Throwable e) { segErr = "lut:" + e; }
+                                // the colour tables are only needed when the cutting of the hand is not working (they are heavy: it was the reason the looks for hands became slower)
+                                if (!segOn || segCount == 0 || !segErr.isEmpty()) {
+                                    try { updateSkin(keep, res); } catch (Throwable e) { segErr = "skin:" + e; }
+                                    try { updateLut(keep, res); } catch (Throwable e) { segErr = "lut:" + e; }
+                                }
                                 try { segStart(keep, res); } catch (Throwable e) { segErr = "start:" + e; }
                             }
                         } finally { try { keep.recycle(); } catch (Throwable ignored) { } }
