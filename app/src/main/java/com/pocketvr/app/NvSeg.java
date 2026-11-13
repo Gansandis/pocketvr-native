@@ -21,7 +21,7 @@ final class NvSeg {
     private final byte[] kind = new byte[S * S];             // 0 = hard room, 1 = near (unsure), 2 = probably hand, 3 = surely hand
     private final int[] idx = new int[S * S];
     private final float[][] E = new float[4][S * S];
-    private final float[] hf = new float[512], hb = new float[512];
+    private final float[] hf = new float[4096], hb = new float[4096];
     private static final int[] DY = {0, 1, 1, 1}, DX = {1, 0, 1, -1};
     private static final float[] DL = {1f, 1f, 0.70710678f, 0.70710678f};
 
@@ -60,7 +60,7 @@ final class NvSeg {
             } else dA[y * S + x] = 1e9f;
         }
         // 2) seeds and the prior
-        float sureH = Math.max(1.2f, size * 0.02f), probH = size * 0.075f, nearH = size * 0.18f, hardH = size * 0.26f;
+        float sureH = Math.max(1.2f, size * 0.02f), probH = size * 0.075f, nearH = size * 0.18f, hardH = size * HARD;
         float sureA = size * 0.12f, probA = size * 0.28f, nearA = size * 0.40f, hardA = size * 0.50f;
         for (int i = 0; i < n; i++) {
             float d = dB[i], da = dA[i];
@@ -71,11 +71,15 @@ final class NvSeg {
             else if (d <= hardH || da <= hardA) k = 1;
             else k = 0;
             kind[i] = k;
-            pF[i] = k == 3 ? 0.97f : (k == 2 ? 0.70f : (d <= nearH || da <= nearA ? 0.35f : (k == 1 ? 0.12f : 0.05f)));
+            {   // how likely "hand" is from the distance to the skeleton alone: a finger is about 0.09 of the hand size from its bone to its edge, so beyond that it gets quickly unlikely
+                float ph = sigf((size * 0.100f - d) / (size * 0.035f)), pa = arm ? sigf((size * 0.34f - da) / (size * 0.08f)) : 0f;
+                float pp = Math.max(ph, pa);
+                pF[i] = k == 3 ? 0.97f : (pp < 0.04f ? 0.04f : (pp > 0.95f ? 0.95f : pp));
+            }
             p[i] = pF[i];
             int c = rgb[i];
-            int r = (c >> 21) & 7, g = (c >> 13) & 7, b = (c >> 5) & 7;
-            idx[i] = r * 64 + g * 8 + b;
+            int r = (c >> 20) & 15, g = (c >> 12) & 15, b = (c >> 4) & 15;
+            idx[i] = r * 256 + g * 16 + b;
         }
         // 3) edge weights between neighbours (contrast sensitive)
         double var = 0; int cnt = 0;
@@ -85,10 +89,10 @@ final class NvSeg {
                 int y2 = y + DY[d], x2 = x + DX[d];
                 if (y2 >= S || x2 < 0 || x2 >= S) { e[y * S + x] = 0f; continue; }
                 e[y * S + x] = cdist(rgb[y * S + x], rgb[y2 * S + x2]);
-                var += e[y * S + x]; cnt++;
+                if (dB[y * S + x] < size * 0.30f) { var += e[y * S + x]; cnt++; }
             }
         }
-        float inv = (float) (1.0 / (2.0 * (var / Math.max(1, cnt) + 1e-3)));
+        float inv = (float) (1.0 / (2.0 * (var / Math.max(1, cnt) + 1e-3) * VF));
         for (int d = 0; d < 4; d++) {
             float[] e = E[d];
             for (int y = 0; y < S; y++) for (int x = 0; x < S; x++) {
@@ -99,10 +103,16 @@ final class NvSeg {
         }
         // 4) a few rounds: learn the two colour histograms from the current guess, then smooth with the MRF
         for (int round = 0; round < 2; round++) {
-            java.util.Arrays.fill(hf, 0.5f); java.util.Arrays.fill(hb, 0.5f);
-            for (int i = 0; i < n; i++) { if (kind[i] != 0) hf[idx[i]] += p[i]; hb[idx[i]] += 1f - p[i]; }
+            java.util.Arrays.fill(hf, 0.15f); java.util.Arrays.fill(hb, 0.15f);
+            for (int i = 0; i < n; i++) {
+                // the hand colours come from where the hand surely is (and, in later rounds, from what the last round called hand); the room colours from far away and from what was called room.
+                // The unsure ring round the hand teaches nothing at first: it holds both.
+                float wf = kind[i] >= 2 ? (round == 0 ? (kind[i] == 3 ? 1f : 0.35f) : p[i]) : (round == 0 ? 0f : (kind[i] == 1 ? p[i] * 0.6f : 0f));
+                float wb = kind[i] == 0 ? 1f : (kind[i] == 1 ? (round == 0 ? 0.25f : 1f - p[i]) : (round == 0 ? 0f : 1f - p[i]));
+                hf[idx[i]] += wf; hb[idx[i]] += wb;
+            }
             float sf = 0, sb = 0;
-            for (int i = 0; i < 512; i++) { sf += hf[i]; sb += hb[i]; }
+            for (int i = 0; i < 4096; i++) { sf += hf[i]; sb += hb[i]; }
             for (int i = 0; i < n; i++) U[i] = (float) Math.log((hf[idx[i]] / sf) / (hb[idx[i]] / sb));
             blur(U);
             for (int i = 0; i < n; i++) {
@@ -122,7 +132,7 @@ final class NvSeg {
                         int y3 = y - DY[d], x3 = x - DX[d];
                         if (y3 >= 0 && x3 >= 0 && x3 < S) msg += E[d][y3 * S + x3] * (2f * q[y3 * S + x3] - 1f);
                     }
-                    tmp[i] = sig(L0[i] + 2.2f * msg);
+                    tmp[i] = sig(L0[i] + LAM * msg);
                 }
                 System.arraycopy(tmp, 0, q, 0, n);
             }
@@ -138,6 +148,8 @@ final class NvSeg {
         return out;
     }
 
+    static final float HARD = 0.22f, VF = 0.5f, LAM = 2.2f;
+    private static float sigf(float x) { return 1f / (1f + (float) Math.exp(-x)); }
     private static float cdist(int a, int b) {
         int dr = ((a >> 16) & 255) - ((b >> 16) & 255), dg = ((a >> 8) & 255) - ((b >> 8) & 255), db = (a & 255) - (b & 255);
         return dr * dr + dg * dg + db * db;
