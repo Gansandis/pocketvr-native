@@ -224,6 +224,9 @@ public class NvCam {
     public volatile SegOut[] segs = new SegOut[2];
     public volatile boolean segArm = false;                       // the forearm counts as hand too (set by the renderer)
     public volatile boolean segOn = true;
+    public volatile String segErr = "";
+    public volatile int segCount = 0;
+    public volatile float segMs = 0f;
     private final java.util.concurrent.atomic.AtomicBoolean segBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
     private volatile ExecutorService segEx = null;
     private int[] segSrc = null;
@@ -251,6 +254,7 @@ public class NvCam {
         final int W = w, H = h; final long t = System.currentTimeMillis();
         ex.execute(() -> {
             try {
+                long m0 = System.nanoTime();
                 SegOut[] out = new SegOut[2];
                 for (int i = 0; i < nh; i++) {
                     float sc = S / rois[i][2];
@@ -261,8 +265,8 @@ public class NvCam {
                     o.x0 = rois[i][0]; o.y0 = rois[i][1]; o.side = rois[i][2]; o.W = W; o.H = H; o.lm = lms[i]; o.t = t; o.arm = arm;
                     out[i] = o;
                 }
-                segs = out;
-            } catch (Throwable ignored) {
+                segs = out; segCount++; segMs += ((System.nanoTime() - m0) / 1e6f - segMs) * 0.3f; segErr = "";
+            } catch (Throwable e) { segErr = String.valueOf(e);
             } finally { segBusy.set(false); }
         });
     }
@@ -577,7 +581,7 @@ public class NvCam {
                         if (!handsOpened) { handsFailed = true; lis.onError("hands: " + hands.error); return; }
                     }
                     float[] res = hands.detect(bmp, ts);          // the picture is reused for the next look, so it is not recycled here
-                    if (res != null && res[0] >= 1 && res.length >= 64) { try { updateSkin(bmp, res); } catch (Throwable ignored) { } try { updateLut(bmp, res); } catch (Throwable ignored) { } try { segStart(bmp, res); } catch (Throwable ignored) { } }
+                    if (res != null && res[0] >= 1 && res.length >= 64) { try { updateSkin(bmp, res); } catch (Throwable ignored) { } try { updateLut(bmp, res); } catch (Throwable ignored) { } try { segStart(bmp, res); } catch (Throwable e) { segErr = "start:" + e; } }
                     if (res != null) {
                         heldFlag = false;
                         res = holdSecond(res, result, System.nanoTime() / 1000000L);

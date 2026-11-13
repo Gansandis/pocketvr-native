@@ -2138,17 +2138,21 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     /** puts the hand cut out of the real pixels (NvSeg) into the B channel of the mask, moved and turned to where the hand is NOW (the cut was made ~100 ms ago, the 21 points have moved since) */
+    public volatile String segDbg = "";
     private final float[] sgP = new float[8];
     private static final int[] SG_PAL = {0, 5, 9, 13, 17};
     private void drawSegs(float[] r, int n) {
         cam.segArm = skel == 4;
         NvCam.SegOut[] ss = cam.segs;
-        if (ss == null || progSeg == 0) return;
+        if (ss == null || progSeg == 0) { segDbg = "seg: ไม่มีข้อมูล (" + (progSeg == 0 ? "shader" : "null") + ") ผิดพลาด=" + cam.segErr; return; }
+        String dbg = "seg: รอบ " + cam.segCount + " " + Math.round(cam.segMs) + "ms" + (cam.segErr.isEmpty() ? "" : " ผิดพลาด=" + cam.segErr);
         long now = System.currentTimeMillis();
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         for (int i = 0; i < n && i < 2; i++) {
             NvCam.SegOut s = ss[i];
-            if (s == null || s.p == null || now - s.t > 700 || s.arm != (skel == 4) || r.length < 1 + (i + 1) * 63) continue;
+            if (s == null || s.p == null) { dbg += " | มือ" + i + ": ยังไม่มีผลตัด"; continue; }
+            if (now - s.t > 700) { dbg += " | มือ" + i + ": เก่า " + (now - s.t) + "ms"; continue; }
+            if (s.arm != (skel == 4) || r.length < 1 + (i + 1) * 63) { dbg += " | มือ" + i + ": โหมดแขนไม่ตรง"; continue; }
             float W = s.W, H = s.H;
             // similarity (turn + scale + move) that carries the palm points of the cut to the palm points now
             float cx = 0, cy = 0, nx = 0, ny = 0;
@@ -2174,6 +2178,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float t0 = Math.min(1f, Math.max(0f, (dev - 0.10f) / 0.14f));
             float w = 1f - t0 * t0 * (3f - 2f * t0);
             float ag = (now - s.t - 350f) / 350f; if (ag > 0f) w *= 1f - Math.min(1f, ag);
+            dbg += String.format(" | มือ%d: เบี่ยง %.2f น้ำหนัก %.2f อายุ %dms", i, dev, w, now - s.t);
             if (w < 0.02f) continue;
             if (segTex[i] == 0) {
                 int[] t = new int[1]; GLES20.glGenTextures(1, t, 0); segTex[i] = t[0]; segUp[i] = null;
@@ -2217,6 +2222,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glColorMask(true, true, true, true);
             segDraw = true;
         }
+        segDbg = dbg;
     }
 
     // step 2 of the outline: a thin line along the middle of the blurred mask, drawn on the scene picture
