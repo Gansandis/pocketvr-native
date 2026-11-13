@@ -220,7 +220,8 @@ public class NvCam {
 
     // ---- the hand cut out of the real pixels (see NvSeg) ----
     /** what the cutting made for one hand: a small probability picture of a square area (x0, y0, side in pixels of a W x H picture), and the 21 points it was made from */
-    public static final class SegOut { public byte[] p; public float x0, y0, side; public int W, H; public float[] lm; public long t; public boolean arm; }
+    public static final class SegOut { public byte[] p, cl, la;   // p = the cut (log-odds), cl = the colour table, la = cut + widened cut, two bytes per pixel, as the renderer takes it
+         public float x0, y0, side; public int W, H; public float[] lm; public long t; public boolean arm; }
     public volatile SegOut[] segs = new SegOut[2];
     public volatile boolean segArm = false;                       // the forearm counts as hand too (set by the renderer)
     public volatile boolean segOn = true;
@@ -262,13 +263,65 @@ public class NvCam {
                     for (int k = 0; k < 21; k++) { q[k * 2] = (lms[i][k * 2] - rois[i][0]) * sc; q[k * 2 + 1] = (lms[i][k * 2 + 1] - rois[i][1]) * sc; }
                     SegOut o = new SegOut();
                     o.p = segWorker.run(crops[i], q, szs[i] * sc, arm);
+                    o.cl = segWorker.lut.clone();
                     o.x0 = rois[i][0]; o.y0 = rois[i][1]; o.side = rois[i][2]; o.W = W; o.H = H; o.lm = lms[i]; o.t = t; o.arm = arm;
+                    segBlend(o, segPrev[i]);
+                    {   // widened cut: where the hand may be by now (the cut is ~100 ms old, the hand has moved on); the renderer decides inside it with the colours of the CURRENT picture
+                        byte[] dl = NvSeg.dilate(o.p, Math.max(2, Math.round(0.14f * szs[i] * sc)));
+                        byte[] la = new byte[S * S * 2];
+                        for (int k = 0; k < S * S; k++) { la[k * 2] = o.p[k]; la[k * 2 + 1] = dl[k]; }
+                        o.la = la;
+                    }
+                    segPrev[i] = o;
                     out[i] = o;
                 }
                 segs = out; segCount++; segMs += ((System.nanoTime() - m0) / 1e6f - segMs) * 0.3f; segErr = "";
             } catch (Throwable e) { segErr = String.valueOf(e);
             } finally { segBusy.set(false); }
         });
+    }
+
+    private final SegOut[] segPrev = new SegOut[2];
+    private static final int[] SG_PAL = {0, 5, 9, 13, 17};
+    /** the cut of the last look, carried to where the hand is now, is mixed into the new cut: the edge no longer jumps from one look to the next (the log-odds are mixed, so a steady edge stays where it is) */
+    private static void segBlend(SegOut n, SegOut o) {
+        if (o == null || o.p == null || o.arm != n.arm || o.W != n.W || o.H != n.H || n.t - o.t > 300) return;
+        float cx = 0, cy = 0, nx = 0, ny = 0;                         // o = old (c), n = new (n)
+        for (int k : SG_PAL) { cx += o.lm[k * 2]; cy += o.lm[k * 2 + 1]; nx += n.lm[k * 2]; ny += n.lm[k * 2 + 1]; }
+        cx /= 5f; cy /= 5f; nx /= 5f; ny /= 5f;
+        float sr = 0, si = 0, den = 0;
+        for (int k : SG_PAL) {
+            float a = o.lm[k * 2] - cx, b = o.lm[k * 2 + 1] - cy, a2 = n.lm[k * 2] - nx, b2 = n.lm[k * 2 + 1] - ny;
+            sr += a2 * a + b2 * b; si += b2 * a - a2 * b; den += a * a + b * b;
+        }
+        if (den < 1e-3f) return;
+        sr /= den; si /= den;
+        float m2 = sr * sr + si * si, sc = (float) Math.sqrt(m2);
+        if (sc < 0.6f || sc > 1.6f) return;
+        float dev = 0, szn = (float) Math.hypot(n.lm[18] - n.lm[0], n.lm[19] - n.lm[1]);
+        for (int k = 0; k < 21; k++) {
+            float a = o.lm[k * 2] - cx, b = o.lm[k * 2 + 1] - cy;
+            dev += (float) Math.hypot(nx + sr * a - si * b - n.lm[k * 2], ny + si * a + sr * b - n.lm[k * 2 + 1]);
+        }
+        dev = dev / 21f / Math.max(4f, szn);
+        if (dev > 0.12f) return;                                       // the fingers moved too much: the old cut says nothing about the new one
+        final int S = NvSeg.S;
+        float wOld = 0.35f * (1f - dev / 0.12f);
+        byte[] res = new byte[S * S];
+        for (int y = 0; y < S; y++) for (int x = 0; x < S; x++) {
+            float bx = n.x0 + (x + 0.5f) * n.side / S, by = n.y0 + (y + 0.5f) * n.side / S;      // pixel of the new cut, in picture pixels
+            float dx = bx - nx, dy = by - ny;
+            float px = cx + (dx * sr + dy * si) / m2, py = cy + (dy * sr - dx * si) / m2;       // where it was at the old look (inverse turn)
+            float u = (px - o.x0) / o.side * S - 0.5f, v = (py - o.y0) / o.side * S - 0.5f;
+            float nv = (n.p[y * S + x] & 255) / 255f * 12f - 6f;
+            if (u < 0f || v < 0f || u > S - 1f || v > S - 1f) { res[y * S + x] = n.p[y * S + x]; continue; }
+            int u0 = (int) u, v0 = (int) v; float fu = u - u0, fv = v - v0; int u1 = Math.min(S - 1, u0 + 1), v1 = Math.min(S - 1, v0 + 1);
+            float ov = (((o.p[v0 * S + u0] & 255) * (1f - fu) + (o.p[v0 * S + u1] & 255) * fu) * (1f - fv) + ((o.p[v1 * S + u0] & 255) * (1f - fu) + (o.p[v1 * S + u1] & 255) * fu) * fv) / 255f * 12f - 6f;
+            float f = nv * (1f - wOld) + ov * wOld;
+            float q = (f / 12f + 0.5f) * 255f;
+            res[y * S + x] = (byte) Math.round(q < 0f ? 0f : (q > 255f ? 255f : q));
+        }
+        n.p = res;
     }
     private final NvSeg segWorker = new NvSeg();
     public volatile long resultCapT = 0;           // time (ms, System.nanoTime based) the picture behind `result` was taken

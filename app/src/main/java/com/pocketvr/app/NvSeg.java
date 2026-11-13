@@ -9,7 +9,7 @@ package com.pocketvr.app;
  * The result is a small S x S probability picture of a square area around the hand.
  */
 final class NvSeg {
-    static final int S = 96;
+    static final int S = 112;
     private static final int[][] BONES = {{0, 1}, {1, 2}, {2, 3}, {3, 4}, {0, 5}, {5, 6}, {6, 7}, {7, 8}, {9, 10}, {10, 11}, {11, 12}, {13, 14}, {14, 15}, {15, 16}, {0, 17}, {17, 18}, {18, 19}, {19, 20}, {5, 9}, {9, 13}, {13, 17}, {0, 9}, {1, 5}, {2, 5}};
     private static final int[] POLY = {0, 1, 5, 9, 13, 17};
     private static final float[] SIG = new float[1025];
@@ -18,6 +18,8 @@ final class NvSeg {
 
     // scratch (the worker is a single thread, so these are reused)
     private final float[] dB = new float[S * S], dA = new float[S * S], pF = new float[S * S], p = new float[S * S], q = new float[S * S], L0 = new float[S * S], U = new float[S * S], tmp = new float[S * S];
+    /** after run(): the colour table (64 x 64 bytes: 16 tiles of 16 x 16, tile = blue box, x = red box, y = green box) = log-odds hand / room of every colour box, 0..255 stands for -5..+5 */
+    final byte[] lut = new byte[4096];
     private final byte[] kind = new byte[S * S];             // 0 = hard room, 1 = near (unsure), 2 = probably hand, 3 = surely hand
     private final int[] idx = new int[S * S];
     private final float[][] E = new float[4][S * S];
@@ -143,6 +145,22 @@ final class NvSeg {
                 p[i] = v;
             }
         }
+        {   // the colour table from the final answer: the renderer judges every pixel of the CURRENT camera picture with it
+            java.util.Arrays.fill(hf, 0.15f); java.util.Arrays.fill(hb, 0.15f);
+            for (int i = 0; i < n; i++) {
+                float wf = kind[i] >= 2 ? p[i] : (kind[i] == 1 ? p[i] * 0.6f : 0f);
+                float wb = kind[i] == 0 ? 1f : 1f - p[i];
+                hf[idx[i]] += wf; hb[idx[i]] += wb;
+            }
+            float sf = 0, sb = 0;
+            for (int i = 0; i < 4096; i++) { sf += hf[i]; sb += hb[i]; }
+            for (int r = 0; r < 16; r++) for (int g = 0; g < 16; g++) for (int b = 0; b < 16; b++) {
+                int i = r * 256 + g * 16 + b;
+                float cl = (float) Math.log((hf[i] / sf) / (hb[i] / sb));
+                cl = cl < -5f ? -5f : (cl > 5f ? 5f : cl);
+                lut[((b >> 2) * 16 + g) * 64 + (b & 3) * 16 + r] = (byte) Math.round((cl / 10f + 0.5f) * 255f);
+            }
+        }
         // the answer is given as a smooth field of log-odds (not as saturated 0 / 1 probabilities): the renderer stretches it with linear filtering, and the
         // line where it crosses zero then runs smoothly between the pixels instead of in steps of a whole pixel
         float[] f = U;
@@ -176,6 +194,23 @@ final class NvSeg {
             int u = y > 0 ? y - 1 : y, d = y < S - 1 ? y + 1 : y;
             a[y * S + x] = (tmp[u * S + x] + 2f * tmp[y * S + x] + tmp[d * S + x]) * 0.25f;
         }
+    }
+
+    /** widens the "hand" area of a log-odds picture (as bytes) by r pixels: the largest value within r pixels (a square, done in two passes) */
+    static byte[] dilate(byte[] a, int r) {
+        final int n = S * S;
+        byte[] t = new byte[n], o = new byte[n];
+        for (int y = 0; y < S; y++) for (int x = 0; x < S; x++) {
+            int m = 0, x0 = Math.max(0, x - r), x1 = Math.min(S - 1, x + r);
+            for (int k = x0; k <= x1; k++) { int v = a[y * S + k] & 255; if (v > m) m = v; }
+            t[y * S + x] = (byte) m;
+        }
+        for (int y = 0; y < S; y++) for (int x = 0; x < S; x++) {
+            int m = 0, y0 = Math.max(0, y - r), y1 = Math.min(S - 1, y + r);
+            for (int k = y0; k <= y1; k++) { int v = t[k * S + x] & 255; if (v > m) m = v; }
+            o[y * S + x] = (byte) m;
+        }
+        return o;
     }
 
     /** the square area (x0, y0, side) in picture pixels that holds the hand (and the forearm) with some room round it */
