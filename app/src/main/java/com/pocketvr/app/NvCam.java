@@ -267,7 +267,10 @@ public class NvCam {
                     o.x0 = rois[i][0]; o.y0 = rois[i][1]; o.side = rois[i][2]; o.W = W; o.H = H; o.lm = lms[i]; o.t = t; o.arm = arm;
                     segBlend(o, segPrev[i]);
                     {   // widened cut: where the hand may be by now (the cut is ~100 ms old, the hand has moved on); the renderer decides inside it with the colours of the CURRENT picture
-                        byte[] dl = NvSeg.dilate(o.p, Math.max(2, Math.round(0.14f * szs[i] * sc)));
+                        // how far the hand may have gone since the cut was made: small when the hand is slow (fewer wrong pixels beside it), larger when it is quick
+                        float spd = 0.15f; SegOut po = segPrev[i];
+                        if (po != null && po.lm != null && o.t - po.t < 400) { float mx = 0, my = 0; for (int k : SG_PAL) { mx += o.lm[k * 2] - po.lm[k * 2]; my += o.lm[k * 2 + 1] - po.lm[k * 2 + 1]; } spd = (float) Math.hypot(mx, my) / 5f / szs[i]; }
+                        byte[] dl = NvSeg.dilate(o.p, Math.max(2, Math.round(Math.min(0.16f, 0.06f + 0.5f * spd) * szs[i] * sc)));
                         byte[] la = new byte[S * S * 2];
                         for (int k = 0; k < S * S; k++) { la[k * 2] = o.p[k]; la[k * 2 + 1] = dl[k]; }
                         o.la = la;

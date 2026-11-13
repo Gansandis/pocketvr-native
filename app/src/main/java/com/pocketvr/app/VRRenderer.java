@@ -827,7 +827,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private int vw = 1, vh = 1;
     private int progCam, progCol, progFin, progRing, progCity;
     private int lutTex = 0; private long lutUp = 0;
-    private int segLutTex = 0, segLutUse = 0; private NvCam.SegOut segLutFor = null; private int progSeg = 0; private final int[] segTex = new int[2]; private final NvCam.SegOut[] segUp = new NvCam.SegOut[2]; private boolean segDraw = false;
+    private float segTr = 3f; private int segLutTex = 0, segLutUse = 0; private NvCam.SegOut segLutFor = null; private int progSeg = 0; private final int[] segTex = new int[2]; private final NvCam.SegOut[] segUp = new NvCam.SegOut[2]; private boolean segDraw = false;
     private final float[] sgV = new float[16]; private final java.nio.FloatBuffer sgBuf = java.nio.ByteBuffer.allocateDirect(16 * 4).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
     private int[] maskFbo = new int[1], maskTex = new int[1], refFbo = new int[1], refTex = new int[1];   // maskTex: the hand shape from the model; refTex: the same, checked against the skin colour of the camera picture
     private int maskW = 0, maskH = 0;
@@ -879,7 +879,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCam = prog(
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
-            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; uniform sampler2D lut; uniform float lutOn; uniform float geo; uniform float so; uniform sampler2D cl; varying vec2 pp;" +
+            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; uniform sampler2D lut; uniform float lutOn; uniform float geo; uniform float so; uniform float tr; uniform sampler2D cl; varying vec2 pp;" +
             "float clog(vec3 c){ vec3 u=clamp(c*16.-0.5,0.,15.); float b0=floor(u.b), fb=u.b-b0, b1=min(b0+1.,15.);" +
             " vec2 x0=vec2(mod(b0,4.)*16.+u.r+0.5, floor(b0/4.)*16.+u.g+0.5)*(1./64.), x1=vec2(mod(b1,4.)*16.+u.r+0.5, floor(b1/4.)*16.+u.g+0.5)*(1./64.);" +
             " return (mix(texture2D(cl,x0).r,texture2D(cl,x1).r,fb)-0.5)*10.; }" +
@@ -903,10 +903,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "   float gc=texture2D(mk,mu).g*0.4+(texture2D(mk,mu+vec2(mpx.x,0.)).g+texture2D(mk,mu-vec2(mpx.x,0.)).g+texture2D(mk,mu+vec2(0.,mpx.y)).g+texture2D(mk,mu-vec2(0.,mpx.y)).g)*0.15;" +
             "   float core=smoothstep(0.35,0.65,gc);" +
             "   if(so>0.5){ float g=texture2D(mk,mu).b*0.4+(texture2D(mk,mu+vec2(mpx.x,0.)).b+texture2D(mk,mu-vec2(mpx.x,0.)).b+texture2D(mk,mu+vec2(0.,mpx.y)).b+texture2D(mk,mu-vec2(0.,mpx.y)).b)*0.15; float segA=smoothstep(0.40,0.60,g); float a2=max(segA,core);" +
-            "    if(so>1.5){ if(m<0.03&&g<0.05&&core<0.05){ gl_FragColor=vec4(0.); return; } vec2 o1=vec2(px.x*3.,0.), o2=vec2(0.,px.y*3.);" +                                        // the colours of THIS camera picture (not of the picture the cut was made from) decide inside the widened cut
-            "     float lg=(clog(c0.rgb)*2.+clog(texture2D(tex,uv+o1).rgb)+clog(texture2D(tex,uv-o1).rgb)+clog(texture2D(tex,uv+o2).rgb)+clog(texture2D(tex,uv-o2).rgb))/6.;" +
+            "    if(so>1.5){ if(m<0.03&&g<0.05&&core<0.05){ gl_FragColor=vec4(0.); return; } vec2 o1=vec2(px.x*tr,0.), o2=vec2(0.,px.y*tr), o3=o1+o2, o4=o1-o2;" +                                        // the colours of THIS camera picture (not of the picture the cut was made from) decide inside the widened cut
+            "     float lg=(clog(c0.rgb)*4.+(clog(texture2D(tex,uv+o1).rgb)+clog(texture2D(tex,uv-o1).rgb)+clog(texture2D(tex,uv+o2).rgb)+clog(texture2D(tex,uv-o2).rgb))*2.+clog(texture2D(tex,uv+o3).rgb)+clog(texture2D(tex,uv-o3).rgb)+clog(texture2D(tex,uv+o4).rgb)+clog(texture2D(tex,uv-o4).rgb))/16.;" +
             "     float cp=1./(1.+exp(-lg)); float dilA=smoothstep(0.30,0.55,m);" +                                  // m = the widened cut (R)
-            "     a2=max(max(smoothstep(0.62,0.85,cp)*dilA, segA*smoothstep(0.10,0.35,cp)), core*smoothstep(0.05,0.20,cp)); }" +
+            "     a2=max(max(smoothstep(0.62,0.85,cp)*dilA, segA*smoothstep(0.15,0.45,cp)), core*smoothstep(0.05,0.20,cp)); }" +
             "    gl_FragColor=vec4(a2,a2,a2,a2); return; }" +   // the hand cut out of the real pixels (NvSeg), carried to where the hand is now
             "   float a=smoothstep(0.30,0.60,m); if(a<0.01&&core<0.01){ gl_FragColor=vec4(0.); return; }" +
             "   if(geo>0.5){ a=max(a,core); gl_FragColor=vec4(a,a,a,a); return; }" +                            // outline modes: the shape alone (steady, no flowing from the colour test)
@@ -1280,6 +1280,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glUniform1f(ul(progCam, "geo"), (mode == 2 && skel != 4) ? 1f : 0f);
             GLES20.glUniform1f(ul(progCam, "so"), (mode == 2 && segDraw) ? (segLutUse != 0 ? 2f : 1f) : 0f);
             GLES20.glUniform1i(ul(progCam, "cl"), 3);
+            GLES20.glUniform1f(ul(progCam, "tr"), segTr);
             if (mode == 2 && segDraw && segLutUse != 0) { GLES20.glActiveTexture(GLES20.GL_TEXTURE3); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, segLutUse); GLES20.glActiveTexture(GLES20.GL_TEXTURE0); }
             GLES20.glUniform1f(ul(progCam, "lutOn"), lo ? 1f : 0f);
             if (lo) {
@@ -2185,6 +2186,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 dev += (float) Math.hypot(tx - r[1 + i * 63 + k * 3] * W, ty - r[1 + i * 63 + k * 3 + 1] * H);
             }
             dev = dev / 21f / Math.max(4f, szc);
+            segTr = Math.min(6f, Math.max(3f, 0.012f * szc / Math.max(1f, W) * Math.max(1, imgW)));
             float t0 = Math.min(1f, Math.max(0f, (dev - 0.10f) / 0.14f));
             float w = 1f - t0 * t0 * (3f - 2f * t0);
             float ag = (now - s.t - 350f) / 350f; if (ag > 0f) w *= 1f - Math.min(1f, ag);
