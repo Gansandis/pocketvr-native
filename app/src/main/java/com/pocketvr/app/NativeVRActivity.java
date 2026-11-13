@@ -185,7 +185,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.165 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.189 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }

@@ -217,6 +217,56 @@ public class NvCam {
         }
         lut = out; lutT = System.currentTimeMillis();
     }
+
+    // ---- the hand cut out of the real pixels (see NvSeg) ----
+    /** what the cutting made for one hand: a small probability picture of a square area (x0, y0, side in pixels of a W x H picture), and the 21 points it was made from */
+    public static final class SegOut { public byte[] p; public float x0, y0, side; public int W, H; public float[] lm; public long t; public boolean arm; }
+    public volatile SegOut[] segs = new SegOut[2];
+    public volatile boolean segArm = false;                       // the forearm counts as hand too (set by the renderer)
+    public volatile boolean segOn = true;
+    private final java.util.concurrent.atomic.AtomicBoolean segBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
+    private volatile ExecutorService segEx = null;
+    private int[] segSrc = null;
+    private void segStart(Bitmap bmp, float[] res) {
+        if (!segOn) { segs = new SegOut[2]; return; }
+        int w = bmp.getWidth(), h = bmp.getHeight(), nh = Math.min(2, (int) res[0]);
+        if (nh < 1 || res.length < 1 + nh * 63 || segBusy.get()) return;
+        if (segSrc == null || segSrc.length != w * h) segSrc = new int[w * h];
+        bmp.getPixels(segSrc, 0, w, 0, 0, w, h);
+        final boolean arm = segArm;
+        final int S = NvSeg.S;
+        final int[][] crops = new int[nh][S * S];
+        final float[][] lms = new float[nh][42], rois = new float[nh][];
+        final float[] szs = new float[nh];
+        for (int i = 0; i < nh; i++) {
+            float[] lm = lms[i];
+            for (int k = 0; k < 21; k++) { lm[k * 2] = res[1 + i * 63 + k * 3] * w; lm[k * 2 + 1] = res[1 + i * 63 + k * 3 + 1] * h; }
+            szs[i] = Math.max(8f, (float) Math.hypot(lm[18] - lm[0], lm[19] - lm[1]));
+            rois[i] = NvSeg.roi(lm, szs[i], arm);
+            NvSeg.crop(segSrc, w, h, rois[i][0], rois[i][1], rois[i][2], crops[i]);
+        }
+        if (!segBusy.compareAndSet(false, true)) return;
+        ExecutorService ex = segEx;
+        if (ex == null) { synchronized (this) { if (segEx == null) segEx = Executors.newSingleThreadExecutor(); ex = segEx; } }
+        final int W = w, H = h; final long t = System.currentTimeMillis();
+        ex.execute(() -> {
+            try {
+                SegOut[] out = new SegOut[2];
+                for (int i = 0; i < nh; i++) {
+                    float sc = S / rois[i][2];
+                    float[] q = new float[42];
+                    for (int k = 0; k < 21; k++) { q[k * 2] = (lms[i][k * 2] - rois[i][0]) * sc; q[k * 2 + 1] = (lms[i][k * 2 + 1] - rois[i][1]) * sc; }
+                    SegOut o = new SegOut();
+                    o.p = segWorker.run(crops[i], q, szs[i] * sc, arm);
+                    o.x0 = rois[i][0]; o.y0 = rois[i][1]; o.side = rois[i][2]; o.W = W; o.H = H; o.lm = lms[i]; o.t = t; o.arm = arm;
+                    out[i] = o;
+                }
+                segs = out;
+            } catch (Throwable ignored) {
+            } finally { segBusy.set(false); }
+        });
+    }
+    private final NvSeg segWorker = new NvSeg();
     public volatile long resultCapT = 0;           // time (ms, System.nanoTime based) the picture behind `result` was taken
     public volatile boolean filt = true;           // steady the points: little shake when the hand is slow, almost no delay when it is quick
     private float[] fx = new float[127], fd = new float[127];
@@ -379,6 +429,7 @@ public class NvCam {
             detEx.shutdown();
             detEx = null;
         }
+        { ExecutorService se = segEx; if (se != null) { se.shutdown(); segEx = null; } segs = new SegOut[2]; segBusy.set(false); }
         handsOpened = false;
         detBusy.set(false);
         detBmp = null; fOk = false; flow.reset(); flowOk = false; flowMask = 0;
@@ -526,7 +577,7 @@ public class NvCam {
                         if (!handsOpened) { handsFailed = true; lis.onError("hands: " + hands.error); return; }
                     }
                     float[] res = hands.detect(bmp, ts);          // the picture is reused for the next look, so it is not recycled here
-                    if (res != null && res[0] >= 1 && res.length >= 64) { try { updateSkin(bmp, res); } catch (Throwable ignored) { } try { updateLut(bmp, res); } catch (Throwable ignored) { } }
+                    if (res != null && res[0] >= 1 && res.length >= 64) { try { updateSkin(bmp, res); } catch (Throwable ignored) { } try { updateLut(bmp, res); } catch (Throwable ignored) { } try { segStart(bmp, res); } catch (Throwable ignored) { } }
                     if (res != null) {
                         heldFlag = false;
                         res = holdSecond(res, result, System.nanoTime() / 1000000L);

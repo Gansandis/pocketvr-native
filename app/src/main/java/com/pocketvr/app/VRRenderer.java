@@ -827,6 +827,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private int vw = 1, vh = 1;
     private int progCam, progCol, progFin, progRing, progCity;
     private int lutTex = 0; private long lutUp = 0;
+    private int progSeg = 0; private final int[] segTex = new int[2]; private final NvCam.SegOut[] segUp = new NvCam.SegOut[2]; private boolean segDraw = false;
+    private final float[] sgV = new float[16]; private final java.nio.FloatBuffer sgBuf = java.nio.ByteBuffer.allocateDirect(16 * 4).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
     private int[] maskFbo = new int[1], maskTex = new int[1], refFbo = new int[1], refTex = new int[1];   // maskTex: the hand shape from the model; refTex: the same, checked against the skin colour of the camera picture
     private int maskW = 0, maskH = 0;
     private FloatBuffer triBuf;
@@ -877,7 +879,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCam = prog(
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
-            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; uniform sampler2D lut; uniform float lutOn; uniform float geo; varying vec2 pp;" +
+            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; uniform sampler2D lut; uniform float lutOn; uniform float geo; uniform float so; varying vec2 pp;" +
             "float skinAt(vec3 c){ float cb=-0.169*c.r-0.331*c.g+0.5*c.b+0.5, cr=0.5*c.r-0.419*c.g-0.081*c.b+0.5, yy=0.299*c.r+0.587*c.g+0.114*c.b;" +
             " vec2 d=smOn>0.5 ? vec2(cb-sm.x,cr-sm.y)/(sm.zw*2.4) : vec2(cb-0.41,cr-0.60)/vec2(0.11,0.09);" +        // learnt skin colour of this person (Gaussian in Cb/Cr, brightness left out so shade does not matter), or a general one until it is learnt
             " float lum=smOn>0.5 ? 1.-smoothstep(0.30,0.48,abs(yy-sy)) : 1.;" +                                      // wood / furniture of a similar colour is usually darker or lighter than the palm
@@ -897,6 +899,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "    +(texture2D(mk,mu+mpx).r+texture2D(mk,mu-mpx).r+texture2D(mk,mu+vec2(mpx.x,-mpx.y)).r+texture2D(mk,mu+vec2(-mpx.x,mpx.y)).r)*0.0625;" +
             "   float gc=texture2D(mk,mu).g*0.4+(texture2D(mk,mu+vec2(mpx.x,0.)).g+texture2D(mk,mu-vec2(mpx.x,0.)).g+texture2D(mk,mu+vec2(0.,mpx.y)).g+texture2D(mk,mu-vec2(0.,mpx.y)).g)*0.15;" +
             "   float core=smoothstep(0.35,0.65,gc);" +
+            "   if(so>0.5){ float g=texture2D(mk,mu).b*0.4+(texture2D(mk,mu+vec2(mpx.x,0.)).b+texture2D(mk,mu-vec2(mpx.x,0.)).b+texture2D(mk,mu+vec2(0.,mpx.y)).b+texture2D(mk,mu-vec2(0.,mpx.y)).b)*0.15; float a2=max(smoothstep(0.40,0.60,g),core); gl_FragColor=vec4(a2,a2,a2,a2); return; }" +   // the hand cut out of the real pixels (NvSeg), carried to where the hand is now
             "   float a=smoothstep(0.30,0.60,m); if(a<0.01&&core<0.01){ gl_FragColor=vec4(0.); return; }" +
             "   if(geo>0.5){ a=max(a,core); gl_FragColor=vec4(a,a,a,a); return; }" +                            // outline modes: the shape alone (steady, no flowing from the colour test)
             "   float sk=skinAt(c0.rgb);" +
@@ -911,6 +914,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCol = prog(
             "attribute vec2 p; uniform float ps; void main(){ gl_Position=vec4(p,0.,1.); gl_PointSize=ps; }",
             "precision mediump float; uniform vec4 col; uniform float rnd; void main(){ if (rnd>0.5 && length(gl_PointCoord-0.5)>0.5) discard; gl_FragColor=col; }");
+        progSeg = prog(
+            "attribute vec2 p; attribute vec2 t; varying vec2 uv; void main(){ gl_Position=vec4(p,0.,1.); uv=t; }",
+            "precision mediump float; uniform sampler2D tex; uniform float w; varying vec2 uv; void main(){ float v=texture2D(tex,uv).r; gl_FragColor=vec4(0.,0.,v,w); }");
+        segTex[0] = 0; segTex[1] = 0; segUp[0] = null; segUp[1] = null;
         progFin = prog(
             "attribute vec2 p; varying vec2 c; void main(){ gl_Position=vec4(p,0.,1.); c=p; }",
             "precision mediump float; uniform sampler2D tex; uniform vec2 sc; uniform float k; uniform float sh; uniform float ca; varying vec2 c;" +
@@ -1263,6 +1270,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             boolean lo = mode == 2 && lt != null && lt.length == 1024 && System.currentTimeMillis() - ltT < 3000;
             GLES20.glUniform1i(ul(progCam, "lut"), 2);
             GLES20.glUniform1f(ul(progCam, "geo"), (mode == 2 && skel != 4) ? 1f : 0f);
+            GLES20.glUniform1f(ul(progCam, "so"), (mode == 2 && segDraw) ? 1f : 0f);
             GLES20.glUniform1f(ul(progCam, "lutOn"), lo ? 1f : 0f);
             if (lo) {
                 GLES20.glActiveTexture(GLES20.GL_TEXTURE2);
@@ -2078,7 +2086,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float hwS = sceneW / 2f, hhS = sceneH / 2f;
         final boolean thr = true, arm = skel == 4;
         for (int pass = 0; pass < 2; pass++) {              // pass 0 (thr only): R = the skin-checked band around the hand; pass 1: G (thr) or the whole thing (other modes) = the sure core
-            if (thr) GLES20.glColorMask(pass == 0, pass == 1, false, true);
+            if (thr) GLES20.glColorMask(pass == 0, pass == 1, pass == 0, true);
             for (int i = 0; i < n; i++) {
                 float[] X = ohX, Y = ohY;
                 for (int k = 0; k < 21; k++) {
@@ -2125,6 +2133,90 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
         }
         GLES20.glColorMask(true, true, true, true);
+        segDraw = false;
+        if (thr) { try { drawSegs(r, n); } catch (Throwable t) { segDraw = false; } }
+    }
+
+    /** puts the hand cut out of the real pixels (NvSeg) into the B channel of the mask, moved and turned to where the hand is NOW (the cut was made ~100 ms ago, the 21 points have moved since) */
+    private final float[] sgP = new float[8];
+    private static final int[] SG_PAL = {0, 5, 9, 13, 17};
+    private void drawSegs(float[] r, int n) {
+        cam.segArm = skel == 4;
+        NvCam.SegOut[] ss = cam.segs;
+        if (ss == null || progSeg == 0) return;
+        long now = System.currentTimeMillis();
+        GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+        for (int i = 0; i < n && i < 2; i++) {
+            NvCam.SegOut s = ss[i];
+            if (s == null || s.p == null || now - s.t > 700 || s.arm != (skel == 4) || r.length < 1 + (i + 1) * 63) continue;
+            float W = s.W, H = s.H;
+            // similarity (turn + scale + move) that carries the palm points of the cut to the palm points now
+            float cx = 0, cy = 0, nx = 0, ny = 0;
+            for (int k : SG_PAL) { cx += s.lm[k * 2]; cy += s.lm[k * 2 + 1]; nx += r[1 + i * 63 + k * 3] * W; ny += r[1 + i * 63 + k * 3 + 1] * H; }
+            cx /= 5f; cy /= 5f; nx /= 5f; ny /= 5f;
+            float sr = 0, si = 0, den = 0;
+            for (int k : SG_PAL) {
+                float a = s.lm[k * 2] - cx, b = s.lm[k * 2 + 1] - cy, a2 = r[1 + i * 63 + k * 3] * W - nx, b2 = r[1 + i * 63 + k * 3 + 1] * H - ny;
+                sr += a2 * a + b2 * b; si += b2 * a - a2 * b; den += a * a + b * b;
+            }
+            if (den < 1e-3f) continue;
+            sr /= den; si /= den;
+            float sc = (float) Math.hypot(sr, si);
+            if (sc < 0.5f || sc > 2f) continue;
+            // how well the moved cut still fits the hand: the fingers may have bent since (then the cut is trusted less and the plain shape takes over)
+            float dev = 0, szc = (float) Math.hypot((r[1 + i * 63 + 27] - r[1 + i * 63]) * W, (r[1 + i * 63 + 28] - r[1 + i * 63 + 1]) * H);
+            for (int k = 0; k < 21; k++) {
+                float a = s.lm[k * 2] - cx, b = s.lm[k * 2 + 1] - cy;
+                float tx = nx + sr * a - si * b, ty = ny + si * a + sr * b;
+                dev += (float) Math.hypot(tx - r[1 + i * 63 + k * 3] * W, ty - r[1 + i * 63 + k * 3 + 1] * H);
+            }
+            dev = dev / 21f / Math.max(4f, szc);
+            float t0 = Math.min(1f, Math.max(0f, (dev - 0.10f) / 0.14f));
+            float w = 1f - t0 * t0 * (3f - 2f * t0);
+            float ag = (now - s.t - 350f) / 350f; if (ag > 0f) w *= 1f - Math.min(1f, ag);
+            if (w < 0.02f) continue;
+            if (segTex[i] == 0) {
+                int[] t = new int[1]; GLES20.glGenTextures(1, t, 0); segTex[i] = t[0]; segUp[i] = null;
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, segTex[i]);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE);
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE);
+            } else GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, segTex[i]);
+            if (segUp[i] != s) {
+                GLES20.glPixelStorei(GLES20.GL_UNPACK_ALIGNMENT, 1);
+                GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_LUMINANCE, NvSeg.S, NvSeg.S, 0, GLES20.GL_LUMINANCE, GLES20.GL_UNSIGNED_BYTE, java.nio.ByteBuffer.wrap(s.p));
+                segUp[i] = s;
+            }
+            // the four corners of the square area, carried to now, then into the scene (same mapping as the 21 points)
+            float[] v4 = sgV;
+            for (int c = 0; c < 4; c++) {
+                float u = (c & 1), vv = (c >> 1);
+                float bx = s.x0 + u * s.side, by = s.y0 + vv * s.side;
+                float a = bx - cx, b = by - cy;
+                float qx = (nx + sr * a - si * b) / W, qy = (ny + si * a + sr * b) / H;
+                if (rot180) { qx = 1f - qx; qy = 1f - qy; }
+                v4[c * 4] = (qx * 2f - 1f) * camScale; v4[c * 4 + 1] = (1f - qy * 2f) * camScale; v4[c * 4 + 2] = u; v4[c * 4 + 3] = vv;
+            }
+            sgBuf.position(0); sgBuf.put(v4, 0, 16); sgBuf.position(0);
+            GLES20.glUseProgram(progSeg);
+            GLES20.glColorMask(false, false, true, false);
+            GLES20.glEnable(GLES20.GL_BLEND);
+            GLES20.glBlendFunc(GLES20.GL_SRC_ALPHA, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+            GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, segTex[i]);
+            GLES20.glUniform1i(ul(progSeg, "tex"), 0);
+            GLES20.glUniform1f(ul(progSeg, "w"), w);
+            int ap = attr(progSeg, "p", 0), at = attr(progSeg, "t", 1);
+            GLES20.glEnableVertexAttribArray(ap); GLES20.glEnableVertexAttribArray(at);
+            sgBuf.position(0); GLES20.glVertexAttribPointer(ap, 2, GLES20.GL_FLOAT, false, 16, sgBuf);
+            sgBuf.position(2); GLES20.glVertexAttribPointer(at, 2, GLES20.GL_FLOAT, false, 16, sgBuf);
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+            GLES20.glDisableVertexAttribArray(ap); GLES20.glDisableVertexAttribArray(at);
+            GLES20.glDisable(GLES20.GL_BLEND);
+            GLES20.glColorMask(true, true, true, true);
+            segDraw = true;
+        }
     }
 
     // step 2 of the outline: a thin line along the middle of the blurred mask, drawn on the scene picture
