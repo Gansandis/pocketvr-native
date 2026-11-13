@@ -906,7 +906,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "    if(so>1.5){ if(m<0.03&&g<0.05&&core<0.05){ gl_FragColor=vec4(0.); return; } vec2 o1=vec2(px.x*3.,0.), o2=vec2(0.,px.y*3.);" +                                        // the colours of THIS camera picture (not of the picture the cut was made from) decide inside the widened cut
             "     float lg=(clog(c0.rgb)*2.+clog(texture2D(tex,uv+o1).rgb)+clog(texture2D(tex,uv-o1).rgb)+clog(texture2D(tex,uv+o2).rgb)+clog(texture2D(tex,uv-o2).rgb))/6.;" +
             "     float cp=1./(1.+exp(-lg)); float dilA=smoothstep(0.30,0.55,m);" +                                  // m = the widened cut (R)
-            "     a2=max(max(smoothstep(0.35,0.65,cp)*dilA, segA*smoothstep(0.10,0.35,cp)), core*smoothstep(0.05,0.20,cp)); }" +
+            "     a2=max(max(smoothstep(0.62,0.85,cp)*dilA, segA*smoothstep(0.10,0.35,cp)), core*smoothstep(0.05,0.20,cp)); }" +
             "    gl_FragColor=vec4(a2,a2,a2,a2); return; }" +   // the hand cut out of the real pixels (NvSeg), carried to where the hand is now
             "   float a=smoothstep(0.30,0.60,m); if(a<0.01&&core<0.01){ gl_FragColor=vec4(0.); return; }" +
             "   if(geo>0.5){ a=max(a,core); gl_FragColor=vec4(a,a,a,a); return; }" +                            // outline modes: the shape alone (steady, no flowing from the colour test)
