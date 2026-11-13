@@ -580,8 +580,19 @@ public class NvCam {
                         handsOpened = hands.open(act.getApplicationContext(), openedGpu, openedN);
                         if (!handsOpened) { handsFailed = true; lis.onError("hands: " + hands.error); return; }
                     }
-                    float[] res = hands.detect(bmp, ts);          // the picture is reused for the next look, so it is not recycled here
-                    if (res != null && res[0] >= 1 && res.length >= 64) { try { updateSkin(bmp, res); } catch (Throwable ignored) { } try { updateLut(bmp, res); } catch (Throwable ignored) { } try { segStart(bmp, res); } catch (Throwable e) { segErr = "start:" + e; } }
+                    // the hand model closes the picture it is given (and that recycles the bitmap), so a copy is kept for the colour learning and the cutting of the hand
+                    Bitmap keep = null;
+                    try { keep = bmp.copy(Bitmap.Config.ARGB_8888, false); } catch (Throwable e) { segErr = "copy:" + e; }
+                    float[] res = hands.detect(bmp, ts);
+                    if (keep != null) {
+                        try {
+                            if (res != null && res[0] >= 1 && res.length >= 64) {
+                                try { updateSkin(keep, res); } catch (Throwable e) { segErr = "skin:" + e; }
+                                try { updateLut(keep, res); } catch (Throwable e) { segErr = "lut:" + e; }
+                                try { segStart(keep, res); } catch (Throwable e) { segErr = "start:" + e; }
+                            }
+                        } finally { try { keep.recycle(); } catch (Throwable ignored) { } }
+                    }
                     if (res != null) {
                         heldFlag = false;
                         res = holdSecond(res, result, System.nanoTime() / 1000000L);
