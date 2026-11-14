@@ -33,6 +33,7 @@ public class NvHands {
     public volatile boolean onlyMine = true;               // keep only the hands of the user: a hand that is small in the picture (far away = someone else) is dropped
         /** per hand (same order as the result): how likely it is the user's LEFT hand, 0..1; -1 = not known. The model judges from how the hand looks as if the picture were a mirror, and the back camera does not mirror, so its "Right" is the user's left. */
     public volatile float[] leftness = new float[]{-1f, -1f};
+    public volatile float[] conf = new float[]{0f, 0f};
     private long lastProbe = 0, lastTwoSeen = 0;
     private static final long HOLD_TWO_MS = 250;
     private static final long PROBE_MS = 450;  // how often the two-hand model looks for a second hand while only one is in view
@@ -117,7 +118,7 @@ public class NvHands {
                     mx = Math.max(mx, sz[i]);
                 }
                 List<List<NormalizedLandmark>> kept = new java.util.ArrayList<>();
-                float[] lk = new float[all.size()];
+                float[] lk = new float[all.size()], sk = new float[all.size()];
                 int nk = 0;
                 final float fw = 0.5f / (float) Math.tan(Math.toRadians(HFOV_DEG / 2.0));
                 float[] dist = new float[sz.length];
@@ -145,7 +146,7 @@ public class NvHands {
                 } else {
                     for (int i = 0; i < sz.length; i++) take[i] = okc[i];
                 }
-                for (int i = 0; i < sz.length; i++) if (take[i]) { kept.add(all.get(i)); lk[nk++] = lf[i]; }
+                for (int i = 0; i < sz.length; i++) if (take[i]) { kept.add(all.get(i)); sk[nk] = sc[i]; lk[nk++] = lf[i]; }
                 if (nk > 0) {                                        // remember where they are; a hand that is followed for a second becomes "mine"
                     lkN = 0;
                     for (List<NormalizedLandmark> hh : kept) if (lkN < 2) { lkX[lkN] = hh.get(0).x(); lkY[lkN] = hh.get(0).y(); lkD[lkN] = 0f; lkN++; }
@@ -157,6 +158,7 @@ public class NvHands {
                 if (!lockMine) locked = false;
                 all = kept;
                 System.arraycopy(lk, 0, lf, 0, nk);
+                System.arraycopy(sk, 0, sc, 0, nk);
             }
             Integer[] order = new Integer[all.size()];
             for (int i = 0; i < order.length; i++) order[i] = i;
@@ -167,6 +169,9 @@ public class NvHands {
             float[] ln = new float[]{-1f, -1f};
             for (int i = 0; i < order.length && i < 2; i++) ln[i] = lf[order[i]];
             leftness = ln;
+            float[] cn = new float[]{0f, 0f};                  // how sure the model is about each hand (the handedness score): a hand it only half believes in is faded out by the renderer
+            for (int i = 0; i < order.length && i < 2; i++) cn[i] = sc[order[i]];
+            conf = cn;
             List<List<NormalizedLandmark>> sorted = new java.util.ArrayList<>();
             for (int i = 0; i < order.length; i++) sorted.add(all.get(order[i]));
             all = sorted;

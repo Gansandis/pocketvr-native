@@ -38,6 +38,8 @@ public class NvCam {
 
     private final Activity act;
     private final NvHands hands;
+    /** how sure the hand model is about each hand in the last answer (0..1) */
+    public float[] handConf() { return hands.conf; }
     private final Listener lis;
 
     private HandlerThread ht;

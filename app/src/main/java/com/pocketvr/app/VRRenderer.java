@@ -828,7 +828,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private int progCam, progCol, progFin, progRing, progCity;
     private int lutTex = 0; private long lutUp = 0;
     private float segTr = 3f; private int segLutTex = 0, segLutUse = 0; private NvCam.SegOut segLutFor = null; private int progSeg = 0; private final int[] segTex = new int[2]; private final NvCam.SegOut[] segUp = new NvCam.SegOut[2]; private boolean segDraw = false;
-    private final float[] sgV = new float[16]; private final java.nio.FloatBuffer sgBuf = java.nio.ByteBuffer.allocateDirect(16 * 4).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
+    private final NvWarp sgWarp = new NvWarp(); private final float[] sgNow = new float[42], sgPos = new float[NvWarp.NV * 2], sgMesh = new float[NvWarp.G * NvWarp.G * 6 * 4];
+    private final java.nio.FloatBuffer sgBuf = java.nio.ByteBuffer.allocateDirect(NvWarp.G * NvWarp.G * 6 * 4 * 4).order(java.nio.ByteOrder.nativeOrder()).asFloatBuffer();
     private int[] maskFbo = new int[1], maskTex = new int[1], refFbo = new int[1], refTex = new int[1];   // maskTex: the hand shape from the model; refTex: the same, checked against the skin colour of the camera picture
     private int maskW = 0, maskH = 0;
     private FloatBuffer triBuf;
@@ -879,7 +880,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCam = prog(
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
-            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; uniform sampler2D lut; uniform float lutOn; uniform float geo; uniform float so; uniform float tr; uniform sampler2D cl; varying vec2 pp;" +
+            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform float ha; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; uniform sampler2D lut; uniform float lutOn; uniform float geo; uniform float so; uniform float tr; uniform sampler2D cl; varying vec2 pp;" +
             "float clog(vec3 c){ vec3 u=clamp(c*16.-0.5,0.,15.); float b0=floor(u.b), fb=u.b-b0, b1=min(b0+1.,15.);" +
             " vec2 x0=vec2(mod(b0,4.)*16.+u.r+0.5, floor(b0/4.)*16.+u.g+0.5)*(1./64.), x1=vec2(mod(b1,4.)*16.+u.r+0.5, floor(b1/4.)*16.+u.g+0.5)*(1./64.);" +
             " return (mix(texture2D(cl,x0).r,texture2D(cl,x1).r,fb)-0.5)*10.; }" +
@@ -907,15 +908,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "     float lg=(clog(c0.rgb)*4.+(clog(texture2D(tex,uv+o1).rgb)+clog(texture2D(tex,uv-o1).rgb)+clog(texture2D(tex,uv+o2).rgb)+clog(texture2D(tex,uv-o2).rgb))*2.+clog(texture2D(tex,uv+o3).rgb)+clog(texture2D(tex,uv-o3).rgb)+clog(texture2D(tex,uv+o4).rgb)+clog(texture2D(tex,uv-o4).rgb))/16.;" +
             "     float cp=1./(1.+exp(-lg)); float dilA=smoothstep(0.30,0.55,m);" +                                  // m = the widened cut (R)
             "     a2=max(max(smoothstep(0.62,0.85,cp)*dilA, segA*smoothstep(0.15,0.45,cp)), core*smoothstep(0.05,0.20,cp)); }" +
-            "    gl_FragColor=vec4(a2,a2,a2,a2); return; }" +   // the hand cut out of the real pixels (NvSeg), carried to where the hand is now
+            "    gl_FragColor=vec4(a2,a2,a2,a2)*ha; return; }" +   // the hand cut out of the real pixels (NvSeg), carried to where the hand is now
             "   float a=smoothstep(0.30,0.60,m); if(a<0.01&&core<0.01){ gl_FragColor=vec4(0.); return; }" +
-            "   if(geo>0.5){ a=max(a,core); gl_FragColor=vec4(a,a,a,a); return; }" +                            // outline modes: the shape alone (steady, no flowing from the colour test)
+            "   if(geo>0.5){ a=max(a,core); gl_FragColor=vec4(a,a,a,a)*ha; return; }" +                            // outline modes: the shape alone (steady, no flowing from the colour test)
             "   float sk=skinAt(c0.rgb);" +
             "   vec2 o1=vec2(px.x*2.,0.), o2=vec2(0.,px.y*2.), o3=vec2(px.x*2.,px.y*2.), o4=vec2(px.x*2.,-px.y*2.);" +
             "   float sa=(sk*2.+skinAt(texture2D(tex,uv+o1).rgb)+skinAt(texture2D(tex,uv-o1).rgb)+skinAt(texture2D(tex,uv+o2).rgb)+skinAt(texture2D(tex,uv-o2).rgb)" +
             "    +skinAt(texture2D(tex,uv+o3).rgb)+skinAt(texture2D(tex,uv-o3).rgb)+skinAt(texture2D(tex,uv+o4).rgb)+skinAt(texture2D(tex,uv-o4).rgb))*0.1;" +        // averaged over 9 taps: no speckles, smooth edge
             "   sk=sa;" +
-            "   a=max(a*smoothstep(0.30,0.62,sk),core); gl_FragColor=vec4(a,a,a,a); return; }" +
+            "   a=max(a*smoothstep(0.30,0.62,sk),core); gl_FragColor=vec4(a,a,a,a)*ha; return; }" +
             "  float m=texture2D(mk,mu).r*0.25+(texture2D(mk,mu+vec2(mpx.x,0.)).r+texture2D(mk,mu-vec2(mpx.x,0.)).r+texture2D(mk,mu+vec2(0.,mpx.y)).r+texture2D(mk,mu-vec2(0.,mpx.y)).r)*0.125" +
             "   +(texture2D(mk,mu+mpx).r+texture2D(mk,mu-mpx).r+texture2D(mk,mu+vec2(mpx.x,-mpx.y)).r+texture2D(mk,mu+vec2(-mpx.x,mpx.y)).r)*0.0625;" +
             "  float a=smoothstep(0.35,0.65,m); gl_FragColor=vec4(c.rgb*a,a); } else gl_FragColor=c; }");
@@ -941,14 +942,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         for (Win w : wins) { w.tex = 0; w.texW = 0; w.texH = 0; }      // a new graphics context: every window picture must be uploaded again in full
         progRing = prog(
             "attribute vec2 p; varying vec2 uv; void main(){ gl_Position=vec4(p,0.,1.); uv=p*0.5+0.5; }",
-            "precision mediump float; uniform sampler2D tex; uniform vec2 px; uniform float rad; uniform vec4 h0; uniform vec4 h1; uniform vec3 hs; uniform float gl; varying vec2 uv;" +
+            "precision mediump float; uniform sampler2D tex; uniform vec2 px; uniform float rad; uniform vec4 h0; uniform vec4 h1; uniform vec3 hs; uniform float gl; uniform float ha; varying vec2 uv;" +
             "float s(float x, float y){ return texture2D(tex,uv+vec2(x,y)*px*rad).r; }" +
             // how much of this spot belongs to the hand and not to the forearm: full over the palm and fingers, melting away from the wrist down the arm
             "float hf(vec4 h, vec2 q){ vec2 d=q-h.xy; float t=dot(d,h.zw); float L=hs.x; return smoothstep(-0.30*L,0.40*L,t)*(1.0-smoothstep(2.2*L,3.4*L,length(d))); }" +
             "void main(){" +
             " float m = s(0.,0.)*0.25 + (s(1.,0.)+s(-1.,0.)+s(0.,1.)+s(0.,-1.))*0.125 + (s(1.,1.)+s(-1.,1.)+s(1.,-1.)+s(-1.,-1.))*0.0625;" +
             " float w = (s(3.,0.)+s(-3.,0.)+s(0.,3.)+s(0.,-3.))*0.25;" +
-            " float line = 1.0 - smoothstep(0.10, 0.30, abs(m-0.5));" +
+            " float line = 1.0 - smoothstep(0.07, 0.34, abs(m-0.5));" +
             " float glow = 0.45*smoothstep(0.0,0.6,w)*(1.0-smoothstep(0.30,0.50,m));" +
             " float e = max(line, glow);" +
             " float dk = 0.40*(1.0 - smoothstep(0.0, 0.16, abs(m-0.28)));" +
@@ -961,7 +962,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "  e *= 0.35 + 0.65*f; dk *= f;" +
             " }" +
             " float a = max(max(e, dk), fl);" +
-            " gl_FragColor = vec4(vec3(0.92,0.97,1.0)*max(e, fl), a); }");
+            " gl_FragColor = vec4(vec3(0.92,0.97,1.0)*max(e, fl), a)*ha; }");
         progAA = prog(
             "attribute vec2 p; attribute vec4 q; varying vec4 vq; void main(){ gl_Position=vec4(p,0.,1.); vq=q; }",
             "precision mediump float; uniform vec3 col; uniform float sf; uniform float fade; varying vec4 vq;" +
@@ -1083,6 +1084,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private float[] dispDraw = new float[]{0}, corr = new float[1];
     private float[] drawRes = null;
     private long lastPredT = 0;
+    private static final float HC_LO = 0.45f, HC_HI = 0.72f;
+    private float handAlpha = 1f, handConfNow = 1f;
     /** speed with a dead zone: noise of the model while the hand rests must not become a guessed movement */
     private static float dz(float v) { float a = Math.abs(v) - 0.08f; return a <= 0f ? 0f : (v < 0f ? -a : a); }
     private void predictNow(long now) {
@@ -1156,6 +1159,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         drawRes = r;
         long fdt = lastPredT == 0 ? 16 : Math.max(1, Math.min(60, now - lastPredT));
         lastPredT = now;
+        {   // a hand the model only half believes in (a ghost hand on the floor) fades out; a sure hand stays solid. The fade is quick, the return is quicker
+            float[] cf = cam.handConf(); float mx = 0f;
+            for (int hi = 0; hi < nh; hi++) mx = Math.max(mx, cf != null && hi < cf.length ? cf[hi] : 1f);
+            float tg = nh == 0 ? 1f : Math.min(1f, Math.max(0f, (mx - HC_LO) / (HC_HI - HC_LO))); tg = tg * tg * (3f - 2f * tg);
+            handConfNow = mx;
+            handAlpha += (tg - handAlpha) * Math.min(1f, fdt / (tg < handAlpha ? 160f : 70f));
+        }
         float decay = (float) Math.exp(-fdt / 60f);
         for (int i = 0; i < r.length; i++) {
             float v = r[i], vt = r[i];
@@ -1281,6 +1291,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glUniform1f(ul(progCam, "so"), (mode == 2 && segDraw) ? (segLutUse != 0 ? 2f : 1f) : 0f);
             GLES20.glUniform1i(ul(progCam, "cl"), 3);
             GLES20.glUniform1f(ul(progCam, "tr"), segTr);
+            GLES20.glUniform1f(ul(progCam, "ha"), handAlpha);
             if (mode == 2 && segDraw && segLutUse != 0) { GLES20.glActiveTexture(GLES20.GL_TEXTURE3); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, segLutUse); GLES20.glActiveTexture(GLES20.GL_TEXTURE0); }
             GLES20.glUniform1f(ul(progCam, "lutOn"), lo ? 1f : 0f);
             if (lo) {
@@ -2156,7 +2167,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         cam.segArm = skel == 4;
         NvCam.SegOut[] ss = cam.segs;
         if (ss == null || progSeg == 0) { segDbg = "seg: ไม่มีข้อมูล (" + (progSeg == 0 ? "shader" : "null") + ") ผิดพลาด=" + cam.segErr; return; }
-        String dbg = "seg: รอบ " + cam.segCount + " " + Math.round(cam.segMs) + "ms" + (cam.segErr.isEmpty() ? "" : " ผิดพลาด=" + cam.segErr);
+        String dbg = "seg: รอบ " + cam.segCount + " " + Math.round(cam.segMs) + "ms | มั่นใจมือ " + String.format("%.2f", handConfNow) + (handAlpha < 0.98f ? " (จาง " + String.format("%.2f", handAlpha) + ")" : "") + (cam.segErr.isEmpty() ? "" : " ผิดพลาด=" + cam.segErr);
         long now = System.currentTimeMillis();
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         for (int i = 0; i < n && i < 2; i++) {
@@ -2165,29 +2176,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (now - s.t > 700) { dbg += " | มือ" + i + ": เก่า " + (now - s.t) + "ms"; continue; }
             if (s.arm != (skel == 4) || r.length < 1 + (i + 1) * 63) { dbg += " | มือ" + i + ": โหมดแขนไม่ตรง"; continue; }
             float W = s.W, H = s.H;
-            // similarity (turn + scale + move) that carries the palm points of the cut to the palm points now
-            float cx = 0, cy = 0, nx = 0, ny = 0;
-            for (int k : SG_PAL) { cx += s.lm[k * 2]; cy += s.lm[k * 2 + 1]; nx += r[1 + i * 63 + k * 3] * W; ny += r[1 + i * 63 + k * 3 + 1] * H; }
-            cx /= 5f; cy /= 5f; nx /= 5f; ny /= 5f;
-            float sr = 0, si = 0, den = 0;
-            for (int k : SG_PAL) {
-                float a = s.lm[k * 2] - cx, b = s.lm[k * 2 + 1] - cy, a2 = r[1 + i * 63 + k * 3] * W - nx, b2 = r[1 + i * 63 + k * 3 + 1] * H - ny;
-                sr += a2 * a + b2 * b; si += b2 * a - a2 * b; den += a * a + b * b;
-            }
-            if (den < 1e-3f) continue;
-            sr /= den; si /= den;
-            float sc = (float) Math.hypot(sr, si);
-            if (sc < 0.5f || sc > 2f) continue;
-            // how well the moved cut still fits the hand: the fingers may have bent since (then the cut is trusted less and the plain shape takes over)
-            float dev = 0, szc = (float) Math.hypot((r[1 + i * 63 + 27] - r[1 + i * 63]) * W, (r[1 + i * 63 + 28] - r[1 + i * 63 + 1]) * H);
-            for (int k = 0; k < 21; k++) {
-                float a = s.lm[k * 2] - cx, b = s.lm[k * 2 + 1] - cy;
-                float tx = nx + sr * a - si * b, ty = ny + si * a + sr * b;
-                dev += (float) Math.hypot(tx - r[1 + i * 63 + k * 3] * W, ty - r[1 + i * 63 + k * 3 + 1] * H);
-            }
-            dev = dev / 21f / Math.max(4f, szc);
+            // the cut is carried to where the hand is now finger by finger (NvWarp): the palm and every finger get their own turn, so a finger that moved on its own does not leave a second outline
+            for (int k = 0; k < 21; k++) { sgNow[k * 2] = r[1 + i * 63 + k * 3] * W; sgNow[k * 2 + 1] = r[1 + i * 63 + k * 3 + 1] * H; }
+            if (!sgWarp.warp(s.lm, sgNow, s.x0, s.y0, s.side, sgPos)) continue;
+            float dev = sgWarp.resid, szc = (float) Math.hypot((r[1 + i * 63 + 27] - r[1 + i * 63]) * W, (r[1 + i * 63 + 28] - r[1 + i * 63 + 1]) * H);
             segTr = Math.min(6f, Math.max(3f, 0.012f * szc / Math.max(1f, W) * Math.max(1, imgW)));
-            float t0 = Math.min(1f, Math.max(0f, (dev - 0.10f) / 0.14f));
+            float t0 = Math.min(1f, Math.max(0f, (dev - 0.09f) / 0.14f));
             float w = 1f - t0 * t0 * (3f - 2f * t0);
             float ag = (now - s.t - 350f) / 350f; if (ag > 0f) w *= 1f - Math.min(1f, ag);
             dbg += String.format(" | มือ%d: เบี่ยง %.2f น้ำหนัก %.2f อายุ %dms", i, dev, w, now - s.t);
@@ -2222,17 +2216,23 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 segLutUse = segLutTex;
             }
             GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, segTex[i]);
-            // the four corners of the square area, carried to now, then into the scene (same mapping as the 21 points)
-            float[] v4 = sgV;
-            for (int c = 0; c < 4; c++) {
-                float u = (c & 1), vv = (c >> 1);
-                float bx = s.x0 + u * s.side, by = s.y0 + vv * s.side;
-                float a = bx - cx, b = by - cy;
-                float qx = (nx + sr * a - si * b) / W, qy = (ny + si * a + sr * b) / H;
-                if (rot180) { qx = 1f - qx; qy = 1f - qy; }
-                v4[c * 4] = (qx * 2f - 1f) * camScale; v4[c * 4 + 1] = (1f - qy * 2f) * camScale; v4[c * 4 + 2] = u; v4[c * 4 + 3] = vv;
+            // the grid of the square area, every corner carried to now, then into the scene (same mapping as the 21 points)
+            int G = NvWarp.G, nvt = 0;
+            for (int v = 0; v < G; v++) {
+                for (int u = 0; u < G; u++) {
+                    int i00 = (v * (G + 1) + u) * 2, i10 = i00 + 2, i01 = ((v + 1) * (G + 1) + u) * 2, i11 = i01 + 2;
+                    int[] ids = {i00, i10, i01, i10, i11, i01};
+                    int[] us = {u, u + 1, u, u + 1, u + 1, u}, vs = {v, v, v + 1, v, v + 1, v + 1};
+                    for (int c = 0; c < 6; c++) {
+                        float qx = sgPos[ids[c]] / W, qy = sgPos[ids[c] + 1] / H;
+                        if (rot180) { qx = 1f - qx; qy = 1f - qy; }
+                        int o = nvt * 4;
+                        sgMesh[o] = (qx * 2f - 1f) * camScale; sgMesh[o + 1] = (1f - qy * 2f) * camScale; sgMesh[o + 2] = us[c] / (float) G; sgMesh[o + 3] = vs[c] / (float) G;
+                        nvt++;
+                    }
+                }
             }
-            sgBuf.position(0); sgBuf.put(v4, 0, 16); sgBuf.position(0);
+            sgBuf.position(0); sgBuf.put(sgMesh, 0, nvt * 4); sgBuf.position(0);
             GLES20.glUseProgram(progSeg);
             GLES20.glColorMask(true, false, true, false);
             GLES20.glEnable(GLES20.GL_BLEND);
@@ -2245,7 +2245,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glEnableVertexAttribArray(ap); GLES20.glEnableVertexAttribArray(at);
             sgBuf.position(0); GLES20.glVertexAttribPointer(ap, 2, GLES20.GL_FLOAT, false, 16, sgBuf);
             sgBuf.position(2); GLES20.glVertexAttribPointer(at, 2, GLES20.GL_FLOAT, false, 16, sgBuf);
-            GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+            GLES20.glDrawArrays(GLES20.GL_TRIANGLES, 0, nvt);
             GLES20.glDisableVertexAttribArray(ap); GLES20.glDisableVertexAttribArray(at);
             GLES20.glDisable(GLES20.GL_BLEND);
             GLES20.glColorMask(true, true, true, true);
@@ -2283,7 +2283,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, refTex[0]);
         GLES20.glUniform1i(ul(progRing, "tex"), 0);
         GLES20.glUniform2f(ul(progRing, "px"), 1f / maskW, 1f / maskH);
-        GLES20.glUniform1f(ul(progRing, "rad"), 2.4f);
+        GLES20.glUniform1f(ul(progRing, "rad"), 3.0f);
+        GLES20.glUniform1f(ul(progRing, "ha"), handAlpha);
         // for the glass look: where each wrist is and which way the hand points (in picture-height units), so the film and the line melt away down the forearm
         float asp = (float) sceneW / Math.max(1, sceneH);
         float[] hu = ringH;
