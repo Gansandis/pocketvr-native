@@ -189,7 +189,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.200 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.201 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -248,10 +248,23 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         } catch (Throwable ignored) { }
         return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)", dbgYaw, dbgAdj);
     }
-    private String memStr() {
-        Runtime rt = Runtime.getRuntime();
-        return String.format(java.util.Locale.US, "แรม java %d/%d MB native %d MB", (rt.totalMemory() - rt.freeMemory()) >> 20, rt.maxMemory() >> 20, android.os.Debug.getNativeHeapAllocatedSize() >> 20);
+    private long memT = 0; private String memTxt = ""; private int memBase = -1; private long memBaseT = 0;
+    private String memStr() {                                      // every 10 s: how much memory the app really holds, split by kind, and how much it grew since the first minute
+        long now = System.currentTimeMillis();
+        if (now - memT < 10000 && !memTxt.isEmpty()) return memTxt;
+        memT = now;
+        try {
+            android.os.Debug.MemoryInfo mi = new android.os.Debug.MemoryInfo();
+            android.os.Debug.getMemoryInfo(mi);
+            int tot = mi.getTotalPss() >> 10;
+            int jv = parseKb(mi.getMemoryStat("summary.java-heap")) >> 10, nt = parseKb(mi.getMemoryStat("summary.native-heap")) >> 10, gr = parseKb(mi.getMemoryStat("summary.graphics")) >> 10;
+            if (memBase < 0 && now - t0 > 60000) { memBase = tot; memBaseT = now; }
+            String d = memBase < 0 ? " (วัดฐานที่ 1 นาที)" : String.format(java.util.Locale.US, " (%+d MB ใน %d นาที)", tot - memBase, (now - memBaseT) / 60000);
+            memTxt = String.format(java.util.Locale.US, "แรมรวม %d MB | java %d native %d กราฟิก %d%s", tot, jv, nt, gr, d);
+        } catch (Throwable e) { memTxt = "แรม: อ่านไม่ได้"; }
+        return memTxt;
     }
+    private static int parseKb(String v) { try { return v == null ? 0 : Integer.parseInt(v.trim()); } catch (Throwable e) { return 0; } }
 
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
