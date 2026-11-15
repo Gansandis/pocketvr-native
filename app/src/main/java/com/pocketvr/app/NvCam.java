@@ -223,13 +223,14 @@ public class NvCam {
     // ---- the hand cut out of the real pixels (see NvSeg) ----
     /** what the cutting made for one hand: a small probability picture of a square area (x0, y0, side in pixels of a W x H picture), and the 21 points it was made from */
     public static final class SegOut { public byte[] p, cl, la;   // p = the cut (log-odds), cl = the colour table, la = cut + widened cut, two bytes per pixel, as the renderer takes it
-         public float x0, y0, side; public int W, H; public float[] lm; public long t; public boolean arm; }
+         public float x0, y0, side; public int W, H; public float[] lm; public long t, born; public boolean arm; }
     public volatile SegOut[] segs = new SegOut[2];
     public volatile boolean segArm = false;                       // the forearm counts as hand too (set by the renderer)
     public volatile boolean segOn = true;
     public volatile String segErr = "";
     public volatile int segCount = 0;
     public volatile float segMs = 0f;
+    public volatile int segSkips = 0;                             // how many looks did not need a new cut because the hand had not moved
     private final java.util.concurrent.atomic.AtomicBoolean segBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
     private volatile ExecutorService segEx = null;
     private int[] segSrc = null;
@@ -237,36 +238,60 @@ public class NvCam {
         if (!segOn) { segs = new SegOut[2]; return; }
         int w = bmp.getWidth(), h = bmp.getHeight(), nh = Math.min(2, (int) res[0]);
         if (nh < 1 || res.length < 1 + nh * 63 || segBusy.get()) return;
-        if (segSrc == null || segSrc.length != w * h) segSrc = new int[w * h];
-        bmp.getPixels(segSrc, 0, w, 0, 0, w, h);
         final boolean arm = segArm;
         final int S = NvSeg.S;
-        final int[][] crops = new int[nh][S * S];
         final float[][] lms = new float[nh][42], rois = new float[nh][];
         final float[] szs = new float[nh];
+        final boolean[] need = new boolean[nh];
+        final long t = System.currentTimeMillis();
+        boolean any = false;
         for (int i = 0; i < nh; i++) {
             float[] lm = lms[i];
             for (int k = 0; k < 21; k++) { lm[k * 2] = res[1 + i * 63 + k * 3] * w; lm[k * 2 + 1] = res[1 + i * 63 + k * 3 + 1] * h; }
             szs[i] = Math.max(8f, (float) Math.hypot(lm[18] - lm[0], lm[19] - lm[1]));
-            rois[i] = NvSeg.roi(lm, szs[i], arm);
+            // a hand that has hardly moved since the last cut does not need a new cut (that is most of the time when a hand just hovers): the old one is kept, and the renderer
+            // still checks it against the colours of every new camera picture. A new cut is made at least every 0.6 s, and at once when the hand moves.
+            SegOut po = segPrev[i];
+            boolean still = false;
+            if (po != null && po.lm != null && po.arm == arm && po.W == w && po.H == h && t - po.born < SEG_REFRESH_MS && t - po.t < 400) {
+                float d = 0, dmx = 0; for (int k = 0; k < 21; k++) { float dk = (float) Math.hypot(lm[k * 2] - po.lm[k * 2], lm[k * 2 + 1] - po.lm[k * 2 + 1]); d += dk; dmx = Math.max(dmx, dk); }
+                still = d / 21f / szs[i] < SEG_STILL && dmx / szs[i] < SEG_STILL_MAX;      // (a pinch moves only two points, so the biggest move counts too)
+            }
+            need[i] = !still;
+            any |= need[i];
+        }
+        if (!any) {                                                   // nothing moved: only say the old cuts are still good
+            SegOut[] same = new SegOut[2];
+            for (int i = 0; i < nh; i++) { segPrev[i].t = t; same[i] = segPrev[i]; }
+            segs = same; segSkips++;
+            return;
+        }
+        if (segSrc == null || segSrc.length != w * h) segSrc = new int[w * h];
+        bmp.getPixels(segSrc, 0, w, 0, 0, w, h);
+        final int[][] crops = new int[nh][];
+        for (int i = 0; i < nh; i++) {
+            if (!need[i]) continue;
+            crops[i] = new int[S * S];
+            rois[i] = NvSeg.roi(lms[i], szs[i], arm);
             NvSeg.crop(segSrc, w, h, rois[i][0], rois[i][1], rois[i][2], crops[i]);
         }
         if (!segBusy.compareAndSet(false, true)) return;
         ExecutorService ex = segEx;
         if (ex == null) { synchronized (this) { if (segEx == null) segEx = Executors.newSingleThreadExecutor(); ex = segEx; } }
-        final int W = w, H = h; final long t = System.currentTimeMillis();
+        final int W = w, H = h;
         ex.execute(() -> {
             try {
                 long m0 = System.nanoTime();
                 SegOut[] out = new SegOut[2];
                 for (int i = 0; i < nh; i++) {
+                    if (!need[i]) { SegOut keepO = segPrev[i]; keepO.t = t; out[i] = keepO; segSkips++; continue; }
                     float sc = S / rois[i][2];
                     float[] q = new float[42];
                     for (int k = 0; k < 21; k++) { q[k * 2] = (lms[i][k * 2] - rois[i][0]) * sc; q[k * 2 + 1] = (lms[i][k * 2 + 1] - rois[i][1]) * sc; }
                     SegOut o = new SegOut();
                     o.p = segWorker.run(crops[i], q, szs[i] * sc, arm);
                     o.cl = segWorker.lut.clone();
-                    o.x0 = rois[i][0]; o.y0 = rois[i][1]; o.side = rois[i][2]; o.W = W; o.H = H; o.lm = lms[i]; o.t = t; o.arm = arm;
+                    o.x0 = rois[i][0]; o.y0 = rois[i][1]; o.side = rois[i][2]; o.W = W; o.H = H; o.lm = lms[i]; o.t = t; o.born = t; o.arm = arm;
                     segBlend(o, segPrev[i]);
                     {   // widened cut: where the hand may be by now (the cut is ~100 ms old, the hand has moved on); the renderer decides inside it with the colours of the CURRENT picture
                         // how far the hand may have gone since the cut was made: small when the hand is slow (fewer wrong pixels beside it), larger when it is quick
@@ -285,6 +310,9 @@ public class NvCam {
             } finally { segBusy.set(false); }
         });
     }
+    static final long SEG_REFRESH_MS = 600;
+    static final float SEG_STILL_MAX = 0.07f;
+    static final float SEG_STILL = 0.020f;                            // mean move of the 21 points (in hand sizes) below which the old cut is kept
 
     private final SegOut[] segPrev = new SegOut[2];
     private static final int[] SG_PAL = {0, 5, 9, 13, 17};
@@ -413,7 +441,28 @@ public class NvCam {
     public volatile float camFps = 0, detHz = 0, convMs = 0;
     public volatile float hFov = 1.15f;           // horizontal field of view of the camera, radians
     public volatile NvMotion motion;
-    public volatile long detPaceMs = 0;           // shortest time between two looks for hands
+    public volatile long detPaceMs = 0;
+    public volatile int ecoMode = 0;              // 0 cool, 1 warm, 2 hot (set by the activity): when warm, the hand is looked for less often WHILE IT IS STILL (it is tracked by the picture's motion in between)
+    public volatile long stillPaceMs = 0;         // 0 = the hand moves; else how long the model may rest between two looks because the hand has been still for a while
+    private float[] stillPrev = null; private int stillN = 0;
+    private void trackStill(float[] r) {
+        if (r == null || r[0] < 1 || r.length < 64) { stillN = 0; stillPrev = null; stillPaceMs = 0; return; }
+        int nh = Math.min(2, (int) r[0]);
+        float[] pv = stillPrev;
+        if (pv != null && pv.length >= 1 + nh * 63 && (int) pv[0] == (int) r[0]) {
+            float sum = 0, mx = 0;
+            for (int i = 0; i < nh; i++) {
+                float sz = Math.max(0.02f, (float) Math.hypot(r[1 + i * 63 + 27] - r[1 + i * 63], r[1 + i * 63 + 28] - r[1 + i * 63 + 1]));
+                for (int k = 0; k < 21; k++) {
+                    float d = (float) Math.hypot(r[1 + i * 63 + k * 3] - pv[1 + i * 63 + k * 3], r[1 + i * 63 + k * 3 + 1] - pv[1 + i * 63 + k * 3 + 1]) / sz;
+                    sum += d; mx = Math.max(mx, d);
+                }
+            }
+            stillN = (sum / (21f * nh) < 0.02f && mx < 0.06f) ? stillN + 1 : 0;
+        } else stillN = 0;
+        stillPrev = r.clone();
+        stillPaceMs = stillN >= 12 ? 140 : (stillN >= 4 ? 80 : 0);
+    }           // shortest time between two looks for hands
     private volatile boolean autoDown = false;       // two hands were asked for but only one is in use: look for one (faster) until the hands are lowered
     private volatile long lastTwoT = 0, sessionT = 0;
     public volatile boolean handsGpu = true;      // the hand model runs on the graphics chip (true) or on the processor (false)
@@ -617,6 +666,7 @@ public class NvCam {
             float[] rr = result;
             if (rr != null && rr.length > 0 && rr[0] >= 1) lastSeenHand = now;
             long pace = detPaceMs;
+            { int em = ecoMode; long sp = stillPaceMs; if (em == 1) pace = Math.max(pace, sp); else if (em >= 2) pace = Math.max(pace, Math.max(40L, sp * 3 / 2)); }
             float im = hands.inferMs;                                      // the phone slows the processor down as it heats up (the model then takes 130 -> 190 ms), and a model that never rests heats it more:
             if (im > 110f) pace = Math.max(pace, (long) (im * 0.4f));       // so once it is slow, give it a rest between two looks (about 60 % of the time busy). The hand is followed by the picture's motion in between.
             if (now - lastSeenHand > 3000) pace = Math.max(pace, 80);     // no hand in sight for a while: look less often (saves heat), wake up fast when one appears
@@ -642,6 +692,7 @@ public class NvCam {
                     Bitmap keep = null;
                     try { keep = bmp.copy(Bitmap.Config.ARGB_8888, false); } catch (Throwable e) { segErr = "copy:" + e; }
                     float[] res = hands.detect(bmp, ts);
+                    trackStill(res);
                     if (keep != null) {
                         try {
                             if (res != null && res[0] >= 1 && res.length >= 64) {

@@ -176,16 +176,18 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             if (cam != null && rend != null) {
                 float f = rend.fps;
                 long p = cam.detPaceMs;
-                if (f >= 40) p = Math.max(0, p - 20); else if (f > 0 && f < 28) p = Math.min(100, p + 15);
                 updateEco(System.currentTimeMillis());
                 updateStatus();
-                if (ecoLevel == 1) p = Math.max(p, 25); else if (ecoLevel == 2) p = Math.max(p, 60);
+                float fcap = rend.fpsCap;                                  // judge the drawing speed against what is asked of it (a 30 fps cap is not "too slow")
+                float fLo = fcap > 0 ? fcap * 0.8f : 28f, fHi = fcap > 0 ? fcap * 0.95f : 40f;
+                if (f >= fHi) p = Math.max(0, p - 20); else if (f > 0 && f < fLo) p = Math.min(100, p + 15);
                 cam.detPaceMs = p;
+                cam.ecoMode = ecoLevel;                                    // when warm the model rests only while the hand is still (see NvCam.stillPaceMs), not all the time
                 for (NvBrowser b : brs) if (b != null) b.poll();
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.196 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.197 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }

@@ -24,6 +24,10 @@ final class NvSeg {
     private final int[] idx = new int[S * S];
     private final float[][] E = new float[4][S * S];
     private final float[] hf = new float[4096], hb = new float[4096];
+    private final int[] act = new int[S * S]; private int nAct = 0;
+    private final float[] prl = new float[S * S], sq = new float[S * S], lr = new float[4096];
+    private final float[] bX0 = new float[24], bY0 = new float[24], bBX = new float[24], bBY = new float[24], bIL = new float[24];
+    private final float[] E0 = E[0], E1 = E[1], E2 = E[2], E3 = E[3];
     private static final int[] DY = {0, 1, 1, 1}, DX = {1, 0, 1, -1};
     private static final float[] DL = {1f, 1f, 0.70710678f, 0.70710678f};
 
@@ -42,17 +46,24 @@ final class NvSeg {
         float ax = lm[0] - lm[18], ay = lm[1] - lm[19];
         float al = (float) Math.hypot(ax, ay); if (al < 1e-3f) al = 1f; ax /= al; ay /= al;
         float fx0 = lm[0] + ax * size * 0.10f, fy0 = lm[1] + ay * size * 0.10f, fx1 = lm[0] + ax * size * 2.2f, fy1 = lm[1] + ay * size * 2.2f;
+        final int nb = BONES.length;
+        for (int j = 0; j < nb; j++) {
+            float x0 = lm[BONES[j][0] * 2], y0 = lm[BONES[j][0] * 2 + 1];
+            bX0[j] = x0; bY0[j] = y0; bBX[j] = lm[BONES[j][1] * 2] - x0; bBY[j] = lm[BONES[j][1] * 2 + 1] - y0;
+            float l2 = bBX[j] * bBX[j] + bBY[j] * bBY[j]; bIL[j] = l2 < 1e-4f ? 0f : 1f / l2;
+        }
+        float pMinX = 1e9f, pMaxX = -1e9f, pMinY = 1e9f, pMaxY = -1e9f;
+        for (int i = 0; i < POLY.length; i++) { pMinX = Math.min(pMinX, px[i * 2]); pMaxX = Math.max(pMaxX, px[i * 2]); pMinY = Math.min(pMinY, px[i * 2 + 1]); pMaxY = Math.max(pMaxY, px[i * 2 + 1]); }
         for (int y = 0; y < S; y++) for (int x = 0; x < S; x++) {
             float cx = x + 0.5f, cy = y + 0.5f, best = 1e9f;
-            for (int[] b : BONES) {
-                float x0 = lm[b[0] * 2], y0 = lm[b[0] * 2 + 1], bx = lm[b[1] * 2] - x0, by = lm[b[1] * 2 + 1] - y0;
-                float l2 = bx * bx + by * by, t = l2 < 1e-4f ? 0f : ((cx - x0) * bx + (cy - y0) * by) / l2;
+            for (int j = 0; j < nb; j++) {
+                float t = bIL[j] == 0f ? 0f : ((cx - bX0[j]) * bBX[j] + (cy - bY0[j]) * bBY[j]) * bIL[j];
                 t = t < 0f ? 0f : (t > 1f ? 1f : t);
-                float dx = cx - (x0 + bx * t), dy = cy - (y0 + by * t), d2 = dx * dx + dy * dy;
+                float dx = cx - (bX0[j] + bBX[j] * t), dy = cy - (bY0[j] + bBY[j] * t), d2 = dx * dx + dy * dy;
                 if (d2 < best) best = d2;
             }
             float d = (float) Math.sqrt(best);
-            if (d > 0f && inPoly(px, cx, cy)) d = 0f;
+            if (d > 0f && cx >= pMinX && cx <= pMaxX && cy >= pMinY && cy <= pMaxY && inPoly(px, cx, cy)) d = 0f;
             dB[y * S + x] = d;
             if (arm) {
                 float bx = fx1 - fx0, by = fy1 - fy0, l2 = bx * bx + by * by, t = ((cx - fx0) * bx + (cy - fy0) * by) / l2;
@@ -64,6 +75,7 @@ final class NvSeg {
         // 2) seeds and the prior
         float sureH = Math.max(1.2f, size * 0.02f), probH = size * 0.075f, nearH = size * 0.18f, hardH = size * HARD;
         float sureA = size * 0.12f, probA = size * 0.28f, nearA = size * 0.40f, hardA = size * 0.50f;
+        nAct = 0;
         for (int i = 0; i < n; i++) {
             float d = dB[i], da = dA[i];
             byte k;
@@ -73,11 +85,13 @@ final class NvSeg {
             else if (d <= hardH || da <= hardA) k = 1;
             else k = 0;
             kind[i] = k;
+            if (k == 1 || k == 2) act[nAct++] = i;
             {   // how likely "hand" is from the distance to the skeleton alone: a finger is about 0.09 of the hand size from its bone to its edge, so beyond that it gets quickly unlikely
                 float ph = sigf((size * 0.100f - d) / (size * 0.035f)), pa = arm ? sigf((size * 0.34f - da) / (size * 0.08f)) : 0f;
                 float pp = Math.max(ph, pa);
                 pF[i] = k == 3 ? 0.97f : (pp < 0.04f ? 0.04f : (pp > 0.95f ? 0.95f : pp));
             }
+            prl[i] = (float) Math.log(pF[i] / (1f - pF[i]));
             p[i] = pF[i];
             int c = rgb[i];
             int r = (c >> 20) & 15, g = (c >> 12) & 15, b = (c >> 4) & 15;
@@ -103,55 +117,70 @@ final class NvSeg {
                 e[y * S + x] = (float) Math.exp(-e[y * S + x] * inv) / DL[d];
             }
         }
+        // the colours of the hand this person has had in the last seconds (light and shade): they help where this picture alone cannot tell, e.g. a hand half in shade
+        final float memMass = memOn ? (float) memConf() : 0f;
         // 4) a few rounds: learn the two colour histograms from the current guess, then smooth with the MRF
         for (int round = 0; round < 2; round++) {
             java.util.Arrays.fill(hf, 0.15f); java.util.Arrays.fill(hb, 0.15f);
+            float massF = 0f;
             for (int i = 0; i < n; i++) {
                 // the hand colours come from where the hand surely is (and, in later rounds, from what the last round called hand); the room colours from far away and from what was called room.
                 // The unsure ring round the hand teaches nothing at first: it holds both.
                 float wf = kind[i] >= 2 ? (round == 0 ? (kind[i] == 3 ? 1f : 0.35f) : p[i]) : (round == 0 ? 0f : (kind[i] == 1 ? p[i] * 0.6f : 0f));
                 float wb = kind[i] == 0 ? 1f : (kind[i] == 1 ? (round == 0 ? 0.25f : 1f - p[i]) : (round == 0 ? 0f : 1f - p[i]));
-                hf[idx[i]] += wf; hb[idx[i]] += wb;
+                hf[idx[i]] += wf; hb[idx[i]] += wb; massF += wf;
             }
+            if (memMass > 0f) addMem(hf, massF * memMass);
             float sf = 0, sb = 0;
             for (int i = 0; i < 4096; i++) { sf += hf[i]; sb += hb[i]; }
-            for (int i = 0; i < n; i++) U[i] = (float) Math.log((hf[idx[i]] / sf) / (hb[idx[i]] / sb));
+            for (int b = 0; b < 4096; b++) lr[b] = (float) Math.log((hf[b] / sf) / (hb[b] / sb));
+            for (int i = 0; i < n; i++) U[i] = lr[idx[i]];
             blur(U);
             for (int i = 0; i < n; i++) {
-                float pr = (float) Math.log(pF[i] / (1f - pF[i]));
-                float v = U[i] + 1.2f * pr;
-                if (kind[i] == 3 && (dB[i] <= sureH || dA[i] <= sureA)) v = 6f;
+                float v = U[i] + 1.2f * prl[i];
+                if (kind[i] == 3) v = 6f;
                 if (kind[i] == 0) v = -6f;
                 L0[i] = v; q[i] = sig(v);
+                sq[i] = 2f * q[i] - 1f;
             }
+            // only the pixels that are not decided by the seeds are smoothed (the sure hand and the hard room stay as they are: that is most of the area)
             for (int it = 0; it < 10; it++) {
-                for (int y = 0; y < S; y++) for (int x = 0; x < S; x++) {
-                    int i = y * S + x;
-                    float msg = 0f;
-                    for (int d = 0; d < 4; d++) {
-                        int y2 = y + DY[d], x2 = x + DX[d];
-                        if (y2 < S && x2 >= 0 && x2 < S) msg += E[d][i] * (2f * q[y2 * S + x2] - 1f);
-                        int y3 = y - DY[d], x3 = x - DX[d];
-                        if (y3 >= 0 && x3 >= 0 && x3 < S) msg += E[d][y3 * S + x3] * (2f * q[y3 * S + x3] - 1f);
+                for (int a = 0; a < nAct; a++) {
+                    int i = act[a], y = i / S, x = i - y * S;
+                    float msg;
+                    if (x > 0 && x < S - 1 && y > 0 && y < S - 1) {
+                        msg = E0[i] * sq[i + 1] + E0[i - 1] * sq[i - 1] + E1[i] * sq[i + S] + E1[i - S] * sq[i - S]
+                            + E2[i] * sq[i + S + 1] + E2[i - S - 1] * sq[i - S - 1] + E3[i] * sq[i + S - 1] + E3[i - S + 1] * sq[i - S + 1];
+                    } else {
+                        msg = 0f;
+                        for (int d = 0; d < 4; d++) {
+                            int y2 = y + DY[d], x2 = x + DX[d];
+                            if (y2 < S && x2 >= 0 && x2 < S) msg += E[d][i] * sq[y2 * S + x2];
+                            int y3 = y - DY[d], x3 = x - DX[d];
+                            if (y3 >= 0 && x3 >= 0 && x3 < S) msg += E[d][y3 * S + x3] * sq[y3 * S + x3];
+                        }
                     }
                     tmp[i] = sig(L0[i] + LAM * msg);
                 }
-                System.arraycopy(tmp, 0, q, 0, n);
+                for (int a = 0; a < nAct; a++) { int i = act[a]; q[i] = tmp[i]; sq[i] = 2f * tmp[i] - 1f; }
             }
             for (int i = 0; i < n; i++) {
                 float v = q[i]; v = v < 0.02f ? 0.02f : (v > 0.98f ? 0.98f : v);
-                if (kind[i] == 3 && (dB[i] <= sureH || dA[i] <= sureA)) v = 0.98f;
+                if (kind[i] == 3) v = 0.98f;
                 if (kind[i] == 0) v = 0.02f;
                 p[i] = v;
             }
         }
         {   // the colour table from the final answer: the renderer judges every pixel of the CURRENT camera picture with it
             java.util.Arrays.fill(hf, 0.15f); java.util.Arrays.fill(hb, 0.15f);
+            float massF = 0f;
             for (int i = 0; i < n; i++) {
                 float wf = kind[i] >= 2 ? p[i] : (kind[i] == 1 ? p[i] * 0.6f : 0f);
                 float wb = kind[i] == 0 ? 1f : 1f - p[i];
-                hf[idx[i]] += wf; hb[idx[i]] += wb;
+                hf[idx[i]] += wf; hb[idx[i]] += wb; massF += wf;
             }
+            learnMem(hf, hb, massF);                                  // what is surely hand in this picture is added to the memory (before the memory is mixed in)
+            if (memMass > 0f) addMem(hf, massF * memMass);
             float sf = 0, sb = 0;
             for (int i = 0; i < 4096; i++) { sf += hf[i]; sb += hb[i]; }
             for (int r = 0; r < 16; r++) for (int g = 0; g < 16; g++) for (int b = 0; b < 16; b++) {
@@ -164,12 +193,46 @@ final class NvSeg {
         // the answer is given as a smooth field of log-odds (not as saturated 0 / 1 probabilities): the renderer stretches it with linear filtering, and the
         // line where it crosses zero then runs smoothly between the pixels instead of in steps of a whole pixel
         float[] f = U;
-        for (int i = 0; i < n; i++) { float qq = q[i]; qq = qq < 1e-3f ? 1e-3f : (qq > 0.999f ? 0.999f : qq); f[i] = (float) Math.log(qq / (1f - qq)); }
+        for (int i = 0; i < n; i++) {
+            if (kind[i] == 3) { f[i] = 6.9f; continue; }
+            if (kind[i] == 0) { f[i] = -6.9f; continue; }
+            float qq = q[i]; qq = qq < 1e-3f ? 1e-3f : (qq > 0.999f ? 0.999f : qq); f[i] = (float) Math.log(qq / (1f - qq));
+        }
         blur(f);
         byte[] out = new byte[n];
         for (int i = 0; i < n; i++) { float v = (f[i] / 12f + 0.5f) * 255f; out[i] = (byte) Math.round(v < 0f ? 0f : (v > 255f ? 255f : v)); }
         return out;
     }
+
+    // ---- the memory of this person's skin colours ----
+    boolean memOn = true;
+    private final float[] mem = new float[4096];               // average of the colour distributions (sum 1) of the hand in the last seconds
+    private double memLearned = 0;                              // how much has been learnt (0 = nothing): the memory is trusted more and more as it fills
+    private long memT = 0;
+    static final double MEM_TAU = 8.0;                          // seconds: how long a colour stays in the memory without being seen again
+    static final float MEM_W = 0.35f;                           // the memory counts as this part of the weight of the colours seen in the picture itself
+    private double memConf() { return MEM_W * (1.0 - Math.exp(-memLearned / 2.0)); }
+    private void addMem(float[] h, float mass) { for (int b = 0; b < 4096; b++) h[b] += mass * mem[b]; }
+    /** adds the colours that are surely hand now (and clearly different from the room) to the memory; skipped when the hand and the room look alike (a ghost hand on the floor teaches nothing) */
+    private void learnMem(float[] hF, float[] hB, float massF) {
+        long now = System.nanoTime();
+        double dt = memT == 0 ? 0 : Math.min(3.0, (now - memT) / 1e9); memT = now;
+        double keep = Math.exp(-dt / MEM_TAU);
+        float sf = 0, sb = 0;
+        for (int b = 0; b < 4096; b++) { sf += hF[b]; sb += hB[b]; }
+        float bc = 0f;                                          // how much the two colour distributions overlap (1 = the same, 0 = nothing in common)
+        for (int b = 0; b < 4096; b++) bc += (float) Math.sqrt((hF[b] / sf) * (hB[b] / sb));
+        if (massF < 150f || bc > MEM_BC) { for (int b = 0; b < 4096; b++) mem[b] *= (float) keep; memLearned *= keep; return; }
+        float tot = 0f;
+        for (int b = 0; b < 4096; b++) tot += Math.max(0f, hF[b] - 0.15f);
+        if (tot < 1f) return;
+        double a = (1.0 - keep) * 0.6 + 0.04;                  // part of the memory replaced by what is seen now
+        if (memLearned < 0.5) a = 1.0;                          // the first picture fills the memory at once
+        for (int b = 0; b < 4096; b++) mem[b] = (float) (mem[b] * (1.0 - a) + a * Math.max(0f, hF[b] - 0.15f) / tot);
+        memLearned = memLearned * keep + 1.0;
+    }
+    static final float MEM_BC = 0.70f;
+    void memReset() { java.util.Arrays.fill(mem, 0f); memLearned = 0; memT = 0; }
 
     static final float HARD = 0.22f, VF = 0.5f, LAM = 2.2f;
     private static float sigf(float x) { return 1f / (1f + (float) Math.exp(-x)); }

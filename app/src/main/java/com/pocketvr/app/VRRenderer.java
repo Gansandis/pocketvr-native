@@ -894,7 +894,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "void main(){ vec2 q=pp; if(wp>0.5){ vec3 d=dm*vec3(pp.x*tn.x,pp.y*tn.y,-1.); if(d.z>-0.02){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; } q=vec2(d.x/(-d.z)/tn.x, d.y/(-d.z)/tn.y); }" +
             " if(abs(q.x)>1.||abs(q.y)>1.){ gl_FragColor=vec4(0.,0.,0.,1.-mkOn); return; }" +
             " vec2 t=q*0.5+0.5; t=mix(t,1.-t,rf); vec2 uv=vec2(t.x,1.-t.y); vec4 c=texture2D(tex,uv); vec4 c0=c;" +
-            " if(amt>0.){ vec4 b=(texture2D(tex,uv+vec2(px.x,0.))+texture2D(tex,uv-vec2(px.x,0.))+texture2D(tex,uv+vec2(0.,px.y))+texture2D(tex,uv-vec2(0.,px.y)))*0.25; c=clamp(c+(c-b)*amt,0.,1.); }" +
+            " if(amt>0.&&mkOn<1.5){ vec4 b=(texture2D(tex,uv+vec2(px.x,0.))+texture2D(tex,uv-vec2(px.x,0.))+texture2D(tex,uv+vec2(0.,px.y))+texture2D(tex,uv-vec2(0.,px.y)))*0.25; c=clamp(c+(c-b)*amt,0.,1.); }" +
             " if(lift>0.){ c.rgb=min(pow(c.rgb,vec3(1./(1.+lift*0.8)))*(1.+lift*0.5),vec3(1.)); }" +
             // masked pass ("see the real hand through the windows"): the camera picture is drawn again, only where the hand is
             " if(mkOn>0.5){ vec2 mu=pp*mz*0.5+0.5;" +
@@ -2167,7 +2167,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         cam.segArm = skel == 4;
         NvCam.SegOut[] ss = cam.segs;
         if (ss == null || progSeg == 0) { segDbg = "seg: ไม่มีข้อมูล (" + (progSeg == 0 ? "shader" : "null") + ") ผิดพลาด=" + cam.segErr; return; }
-        String dbg = "seg: รอบ " + cam.segCount + " " + Math.round(cam.segMs) + "ms | มั่นใจมือ " + String.format("%.2f", handConfNow) + (handAlpha < 0.98f ? " (จาง " + String.format("%.2f", handAlpha) + ")" : "") + (cam.segErr.isEmpty() ? "" : " ผิดพลาด=" + cam.segErr);
+        String dbg = "seg: รอบ " + cam.segCount + " ข้าม " + cam.segSkips + " " + Math.round(cam.segMs) + "ms | มั่นใจมือ " + String.format("%.2f", handConfNow) + (handAlpha < 0.98f ? " (จาง " + String.format("%.2f", handAlpha) + ")" : "") + (cam.segErr.isEmpty() ? "" : " ผิดพลาด=" + cam.segErr);
         long now = System.currentTimeMillis();
         GLES20.glActiveTexture(GLES20.GL_TEXTURE0);
         for (int i = 0; i < n && i < 2; i++) {
@@ -2252,6 +2252,34 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             segDraw = true;
         }
         segDbg = dbg;
+    }
+
+    private final int[] scBox = new int[4];
+    /** a rectangle (x, y, w, h in pixels of a w x h picture that covers the screen) round the hands with room for the cut and its widening (and the forearm when asked); false when there is no hand */
+    private boolean handBox(float[] r, boolean arm, int w, int h) {
+        int n = (int) r[0];
+        if (n <= 0 || w <= 0 || h <= 0) return false;
+        float hwS = w / 2f, hhS = h / 2f;
+        float bx0 = 1e9f, by0 = 1e9f, bx1 = -1e9f, by1 = -1e9f, mg = 0f;
+        for (int i = 0; i < n && i < 2; i++) {
+            for (int k = 0; k < (arm ? 22 : 21); k++) {
+                float hx, hy;
+                if (k < 21) { hx = r[1 + i * 63 + k * 3]; hy = r[1 + i * 63 + k * 3 + 1]; }
+                else {   // the end of the forearm: from the wrist away from the middle finger, 2.4 hand sizes
+                    float x0 = r[1 + i * 63], y0 = r[1 + i * 63 + 1], x9 = r[1 + i * 63 + 27], y9 = r[1 + i * 63 + 28];
+                    hx = x0 + (x0 - x9) * 2.4f; hy = y0 + (y0 - y9) * 2.4f;
+                }
+                if (rot180) { hx = 1f - hx; hy = 1f - hy; }
+                float px = (hx * 2f - 1f) * hwS * camScale + hwS, py = (1f - hy * 2f) * hhS * camScale + hhS;
+                bx0 = Math.min(bx0, px); bx1 = Math.max(bx1, px); by0 = Math.min(by0, py); by1 = Math.max(by1, py);
+            }
+            mg = Math.max(mg, Math.max(bx1 - bx0, by1 - by0) * 0.35f + 40f * w / Math.max(1, sceneW));
+        }
+        int x0 = Math.max(0, (int) (bx0 - mg)), y0 = Math.max(0, (int) (by0 - mg));
+        int x1 = Math.min(w, (int) (bx1 + mg) + 1), y1 = Math.min(h, (int) (by1 + mg) + 1);
+        if (x1 <= x0 || y1 <= y0) return false;
+        scBox[0] = x0; scBox[1] = y0; scBox[2] = x1 - x0; scBox[3] = y1 - y0;
+        return true;
     }
 
     // step 2 of the outline: a thin line along the middle of the blurred mask, drawn on the scene picture
@@ -2476,7 +2504,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 GLES20.glViewport(0, 0, maskW, maskH);
                 GLES20.glClearColor(0, 0, 0, 0);
                 GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
-                drawCamera(2);
+                if (handBox(dispDraw, skel == 4, maskW, maskH)) {         // the hand check is only worked out round the hands (on a weak GPU the whole picture used to be worked out each frame)
+                    GLES20.glEnable(GLES20.GL_SCISSOR_TEST);
+                    GLES20.glScissor(scBox[0], scBox[1], scBox[2], scBox[3]);
+                    drawCamera(2);
+                    GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
+                }
             }
         } else maskReady = false;
         // 1) scene picture: camera (or the 360 picture) + hand skeleton
