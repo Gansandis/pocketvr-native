@@ -880,7 +880,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         progCam = prog(
             "attribute vec2 p; uniform float zs; varying vec2 pp; void main(){ gl_Position=vec4(p*zs,0.,1.); pp=p; }",
             "#extension GL_OES_EGL_image_external : require\n#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
-            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform float ha; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; uniform sampler2D lut; uniform float lutOn; uniform float geo; uniform float so; uniform float tr; uniform sampler2D cl; varying vec2 pp;" +
+            "uniform samplerExternalOES tex; uniform vec2 px; uniform float amt; uniform float lift; uniform float rf; uniform float wp; uniform mat3 dm; uniform vec2 tn; uniform sampler2D mk; uniform float ha; uniform float dpt; uniform vec2 mpx; uniform float mz; uniform float mkOn; uniform vec4 sm; uniform float smOn; uniform float sy; uniform vec4 sb; uniform float sbOn; uniform sampler2D lut; uniform float lutOn; uniform float geo; uniform float so; uniform float tr; uniform sampler2D cl; varying vec2 pp;" +
             "float clog(vec3 c){ vec3 u=clamp(c*16.-0.5,0.,15.); float b0=floor(u.b), fb=u.b-b0, b1=min(b0+1.,15.);" +
             " vec2 x0=vec2(mod(b0,4.)*16.+u.r+0.5, floor(b0/4.)*16.+u.g+0.5)*(1./64.), x1=vec2(mod(b1,4.)*16.+u.r+0.5, floor(b1/4.)*16.+u.g+0.5)*(1./64.);" +
             " return (mix(texture2D(cl,x0).r,texture2D(cl,x1).r,fb)-0.5)*10.; }" +
@@ -899,6 +899,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             // masked pass ("see the real hand through the windows"): the camera picture is drawn again, only where the hand is
             " if(mkOn>0.5){ vec2 mu=pp*mz*0.5+0.5;" +
             "  if(mkOn>1.5){" +                                               // refine: the model's hand shape (R = band, G = sure core) checked against the skin colour of THIS camera picture
+            "   float gt=1.; if(so>0.5){ gt=texture2D(mk,mu).a; if(gt<0.04){ gl_FragColor=vec4(0.); return; } }" +                // outside the wide area round the current skeleton nothing can be hand (and nothing more is worked out there)
             "   float m=texture2D(mk,mu).r*0.25+(texture2D(mk,mu+vec2(mpx.x,0.)).r+texture2D(mk,mu-vec2(mpx.x,0.)).r+texture2D(mk,mu+vec2(0.,mpx.y)).r+texture2D(mk,mu-vec2(0.,mpx.y)).r)*0.125" +
             "    +(texture2D(mk,mu+mpx).r+texture2D(mk,mu-mpx).r+texture2D(mk,mu+vec2(mpx.x,-mpx.y)).r+texture2D(mk,mu+vec2(-mpx.x,mpx.y)).r)*0.0625;" +
             "   float gc=texture2D(mk,mu).g*0.4+(texture2D(mk,mu+vec2(mpx.x,0.)).g+texture2D(mk,mu-vec2(mpx.x,0.)).g+texture2D(mk,mu+vec2(0.,mpx.y)).g+texture2D(mk,mu-vec2(0.,mpx.y)).g)*0.15;" +
@@ -907,8 +908,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "    if(so>1.5){ if(m<0.03&&g<0.05&&core<0.05){ gl_FragColor=vec4(0.); return; } vec2 o1=vec2(px.x*tr,0.), o2=vec2(0.,px.y*tr), o3=o1+o2, o4=o1-o2;" +                                        // the colours of THIS camera picture (not of the picture the cut was made from) decide inside the widened cut
             "     float lg=(clog(c0.rgb)*4.+(clog(texture2D(tex,uv+o1).rgb)+clog(texture2D(tex,uv-o1).rgb)+clog(texture2D(tex,uv+o2).rgb)+clog(texture2D(tex,uv-o2).rgb))*2.+clog(texture2D(tex,uv+o3).rgb)+clog(texture2D(tex,uv-o3).rgb)+clog(texture2D(tex,uv+o4).rgb)+clog(texture2D(tex,uv-o4).rgb))/16.;" +
             "     float cp=1./(1.+exp(-lg)); float dilA=smoothstep(0.30,0.55,m);" +                                  // m = the widened cut (R)
-            "     a2=max(max(smoothstep(0.62,0.85,cp)*dilA, segA*smoothstep(0.15,0.45,cp)), core*smoothstep(0.05,0.20,cp)); }" +
-            "    gl_FragColor=vec4(a2,a2,a2,a2)*ha; return; }" +   // the hand cut out of the real pixels (NvSeg), carried to where the hand is now
+            "     a2=max(max(smoothstep(0.62,0.85,cp)*dilA, segA*smoothstep(0.15,0.45,cp)), core*smoothstep(0.05,0.20,cp)); a2=max(a2,smoothstep(0.78,0.90,g)*dpt); }" +
+            "    a2*=smoothstep(0.10,0.45,gt); gl_FragColor=vec4(a2,a2,a2,a2)*ha; return; }" +   // the hand cut out of the real pixels (NvSeg), carried to where the hand is now
             "   float a=smoothstep(0.30,0.60,m); if(a<0.01&&core<0.01){ gl_FragColor=vec4(0.); return; }" +
             "   if(geo>0.5){ a=max(a,core); gl_FragColor=vec4(a,a,a,a)*ha; return; }" +                            // outline modes: the shape alone (steady, no flowing from the colour test)
             "   float sk=skinAt(c0.rgb);" +
@@ -1292,6 +1293,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glUniform1i(ul(progCam, "cl"), 3);
             GLES20.glUniform1f(ul(progCam, "tr"), segTr);
             GLES20.glUniform1f(ul(progCam, "ha"), handAlpha);
+            {   float st = Math.min(1f, Math.max(0f, (handSpd - 0.10f) / 0.35f));   // a slow hand: deep inside the cut no colour check is needed (no holes); a fast one: every pixel is checked against the current colours
+                GLES20.glUniform1f(ul(progCam, "dpt"), (mode == 2 && segDraw) ? 1f - st * st * (3f - 2f * st) : 0f); }
             if (mode == 2 && segDraw && segLutUse != 0) { GLES20.glActiveTexture(GLES20.GL_TEXTURE3); GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, segLutUse); GLES20.glActiveTexture(GLES20.GL_TEXTURE0); }
             GLES20.glUniform1f(ul(progCam, "lutOn"), lo ? 1f : 0f);
             if (lo) {
@@ -2107,8 +2110,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         float hwS = sceneW / 2f, hhS = sceneH / 2f;
         final boolean thr = true, arm = skel == 4;
-        for (int pass = 0; pass < 2; pass++) {              // pass 0 (thr only): R = the skin-checked band around the hand; pass 1: G (thr) or the whole thing (other modes) = the sure core
-            if (thr) GLES20.glColorMask(pass == 0, pass == 1, pass == 0, true);
+        for (int pass = 0; pass < 3; pass++) {              // pass 0: R = the skin-checked band around the hand; pass 1: G = the sure core; pass 2: A = a wide area round the CURRENT skeleton (nothing is accepted as hand outside it)
+            if (thr) GLES20.glColorMask(pass == 0, pass == 1, pass == 0, pass == 2);
             for (int i = 0; i < n; i++) {
                 float[] X = ohX, Y = ohY;
                 for (int k = 0; k < 21; k++) {
@@ -2117,7 +2120,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     X[k] = (hx * 2f - 1f) * hwS * camScale; Y[k] = (1f - hy * 2f) * hhS * camScale;
                 }
                 float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
-                boolean core = thr && pass == 1;
+                boolean core = thr && pass == 1, gate = thr && pass == 2;
                 float hw = Math.max(3f, size * (thr ? (core ? 0.034f : (arm ? 0.15f : 0.125f) + Math.min(0.10f, handSpd * 0.10f)) : 0.115f));
                 aaBegin();
                 for (int b2 = 0; b2 < BONES.length; b2 += 2) {
@@ -2126,14 +2129,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     if (p1 == 4 || p1 == 8 || p1 == 12 || p1 == 16 || p1 == 20) {
                         float dx = x1 - X[p0], dy = y1 - Y[p0], l = (float) Math.hypot(dx, dy);
                         if (l > 1e-3f) {
-                            float ext = thr ? (core ? -0.0f : (arm ? 0.05f : 0.015f) * size) : -hw * 0.8f;   // see-through: the stroke reaches to the nail (the end cap adds the rest); the other modes keep the cap inside the fingertip
+                            float ext = thr ? (core ? -0.0f : (gate ? 0.10f : (arm ? 0.05f : 0.015f)) * size) : -hw * 0.8f;   // see-through: the stroke reaches to the nail (the end cap adds the rest); the other modes keep the cap inside the fingertip
                             x1 += dx / l * ext; y1 += dy / l * ext;
                         }
                     }
                     // the width follows the real finger (so the gaps between the fingers stay open): the sure core a little inside of it, the colour-checked band a little outside of it
                     boolean palmLine = p1 == 1 || p1 == 5 || p1 == 9 || p1 == 13 || p1 == 17;
                     float wf = BONE_W[p1 < 21 ? p1 : 0];
-                    float bwid = core ? (palmLine ? 0.10f : Math.max(0.028f, wf - 0.045f)) : (arm ? wf + 0.06f + Math.min(0.06f, handSpd * 0.06f) : wf + 0.012f + Math.min(0.02f, handSpd * 0.02f));
+                    float bwid = core ? (palmLine ? 0.10f : Math.max(0.028f, wf - 0.045f)) : gate ? wf + (arm ? 0.22f : 0.16f) + Math.min(0.12f, handSpd * 0.12f) : (arm ? wf + 0.06f + Math.min(0.06f, handSpd * 0.06f) : wf + 0.012f + Math.min(0.02f, handSpd * 0.02f));
                     aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * bwid));
                 }
                 if (thr) {
@@ -2141,15 +2144,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                         float cw = size * 0.06f; aaSeg(X[0], Y[0], X[2], Y[2], cw); aaSeg(X[1], Y[1], X[5], Y[5], cw); aaSeg(X[2], Y[2], X[5], Y[5], cw);
                     } else {
                         // the thumb root and the web between thumb and index: the triangle (wrist side of the thumb, thumb joint, root of the index) is filled, but nothing reaches out to the index's middle joint
-                        float wh = size * (arm ? 0.10f : 0.085f);
+                        float wh = size * (gate ? 0.22f : (arm ? 0.10f : 0.085f));
                         aaSeg(X[0], Y[0], X[2], Y[2], wh); aaSeg(X[1], Y[1], X[5], Y[5], wh); aaSeg(X[2], Y[2], X[5], Y[5], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh * 0.8f);
                         aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, X[5], Y[5], wh);
                     }
                 }
-                aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.25f : 0.44f) : 0.38f));
+                aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * (thr ? (core ? 0.25f : (gate ? 0.60f : 0.44f)) : 0.38f));
                 if (arm && size > 1e-3f) {
                     float ax = (X[0] - X[9]) / size, ay = (Y[0] - Y[9]) / size;
-                    aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * (core ? 0.12f : 0.36f));
+                    aaSeg(X[0] + ax * size * 0.10f, Y[0] + ay * size * 0.10f, X[0] + ax * size * 5.0f, Y[0] + ay * size * 5.0f, size * (core ? 0.12f : (gate ? 0.50f : 0.36f)));
                 }
                 aaFlush(1f, 1f, 1f);
             }
