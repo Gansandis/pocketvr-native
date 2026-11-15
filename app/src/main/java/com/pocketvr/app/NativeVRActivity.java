@@ -30,6 +30,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     private android.hardware.Sensor rotSensor;
     private android.hardware.Sensor magSensor;
     public volatile boolean compass = true;                  // the compass sensor slowly corrects the turn sensor's sideways drift
+    private volatile float dbgYaw = 0f, dbgAdj = 0f;          // (shown in the HUD) the sideways turn put on the sensor's picture, and the part of it from the holding of the facing
     private final android.hardware.SensorEventListener sl = new android.hardware.SensorEventListener() {
         private final float[] r = new float[16], o = new float[16], gm = new float[16], out = new float[16];
         private boolean haveG = false, haveD = false;
@@ -115,6 +116,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                     } else lock = false;
                 }
                 double yawT = (compass && haveD ? delta : 0.0) + adj;
+                dbgYaw = (float) Math.toDegrees(yawT); dbgAdj = (float) Math.toDegrees(adj);
                 if (yawT != 0.0) {
                     float c = (float) Math.cos(yawT), s = (float) Math.sin(yawT);
                     System.arraycopy(m, 0, out, 0, 16);
@@ -187,17 +189,74 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.198 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
-                            f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.200 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                            f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
             ui.postDelayed(this, 500);
         }
     };
 
+    // ---- why did the app close last time? (no computer to read logcat: it is kept here and shown on the screen for a while after the next start)
+    private volatile String lastExit = "";
+    private void installCrashLog() {
+        try {
+            final android.content.SharedPreferences sp = getSharedPreferences("pvr_crash", MODE_PRIVATE);
+            StringBuilder sb = new StringBuilder();
+            String j = sp.getString("java", "");
+            if (!j.isEmpty()) { sb.append("เด้งรอบก่อน (java): ").append(j); sp.edit().remove("java").apply(); }
+            try {
+                if (android.os.Build.VERSION.SDK_INT >= 30) {
+                    android.app.ActivityManager am = (android.app.ActivityManager) getSystemService(ACTIVITY_SERVICE);
+                    java.util.List<android.app.ApplicationExitInfo> l = am.getHistoricalProcessExitReasons(getPackageName(), 0, 1);
+                    if (l != null && !l.isEmpty()) {
+                        android.app.ApplicationExitInfo x = l.get(0);
+                        long seen = sp.getLong("exitSeen", 0L);
+                        if (x.getTimestamp() != seen) {
+                            sp.edit().putLong("exitSeen", x.getTimestamp()).apply();
+                            int r = x.getReason();
+                            String nm = r == 1 ? "EXIT_SELF" : r == 2 ? "ระบบสั่งปิด(SIGNAL)" : r == 3 ? "ANR(ค้าง)" : r == 4 ? "native crash" : r == 5 ? "java crash" : r == 6 ? "initial" : r == 7 ? "ระบบปิด(ขาดแรม/LOW_MEMORY)" : r == 8 ? "ระบบปิด(ขาดแรม/OOM)" : r == 9 ? "permission" : r == 10 ? "ถูกปิดโดยผู้ใช้" : r == 11 ? "ถูกปิดโดยระบบ" : r == 12 ? "dependency" : "reason " + r;
+                            if (sb.length() > 0) sb.append("\n");
+                            sb.append("ปิดรอบก่อน: ").append(nm).append(" | ").append(x.getDescription()).append(" | แรมที่ใช้ ").append(x.getRss() / 1048576L).append(" MB");
+                        }
+                    }
+                }
+            } catch (Throwable ignored) { }
+            lastExit = sb.toString();
+            final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
+            Thread.setDefaultUncaughtExceptionHandler((th, e) -> {
+                try {
+                    java.io.StringWriter sw = new java.io.StringWriter();
+                    e.printStackTrace(new java.io.PrintWriter(sw));
+                    String st = sw.toString();
+                    if (st.length() > 700) st = st.substring(0, 700);
+                    sp.edit().putString("java", "thread " + th.getName() + " | " + st).commit();
+                } catch (Throwable ignored) { }
+                if (prev != null) prev.uncaughtException(th, e);
+            });
+        } catch (Throwable ignored) { }
+    }
+    private String winStr() {                                  // where every window's middle is, seen from the middle of the screen (+ right, + up): to find out why a window is off to a side
+        StringBuilder sb = new StringBuilder();
+        try {
+            for (VRRenderer.Win w : rend.wins) {
+                if (!w.visible || w.rot == null) continue;
+                if (sb.length() > 0) sb.append(" | ");
+                String t = w.title == null || w.title.isEmpty() ? "?" : w.title;
+                sb.append(t).append(String.format(java.util.Locale.US, " x%+.0f y%+.0f", w.yawA, w.pitchA));
+            }
+        } catch (Throwable ignored) { }
+        return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)", dbgYaw, dbgAdj);
+    }
+    private String memStr() {
+        Runtime rt = Runtime.getRuntime();
+        return String.format(java.util.Locale.US, "แรม java %d/%d MB native %d MB", (rt.totalMemory() - rt.freeMemory()) >> 20, rt.maxMemory() >> 20, android.os.Debug.getNativeHeapAllocatedSize() >> 20);
+    }
+
     @Override protected void onCreate(Bundle b) {
         super.onCreate(b);
         getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
+        installCrashLog();
         hands = new NvHands();
         cam = new NvCam(this, hands, this);
         cam.detPaceMs = 0;
