@@ -181,6 +181,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         android.opengl.Matrix.multiplyMM(tF, 0, tE, 0, m, 0);
         System.arraycopy(tF, 0, m, 0, 16);
     }
+    public volatile boolean flatWins = true;              // every window faces the screen square on: edges level with the screen, no slant or sideways tilt whatever the head does (it keeps its place in the room)
     public volatile boolean floaty = false;               // windows stay perfectly still unless this is switched on
     public volatile int cursorSz = 0;                     // 0 small and faint, 1 medium, 2 large
     public volatile int sel = 2;              // how things are pressed: 0 pinch, 1 air touch (push the index finger forward), 2 both
@@ -746,6 +747,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (tilt != 0f) android.opengl.Matrix.rotateM(mM, 0, tilt, 0f, 1f, 0f);
         shiftBy(w, mM, ux, uy, uz);
         android.opengl.Matrix.multiplyMM(w.mv, 0, rn, 0, mM, 0);
+        if (flatWins) {                                                // the place stays, the turn goes: square to the view axis, top edge level with the screen
+            float fx = w.mv[12], fy = w.mv[13], fz = w.mv[14];
+            java.util.Arrays.fill(w.mv, 0f);
+            w.mv[0] = 1f; w.mv[5] = 1f; w.mv[10] = 1f; w.mv[15] = 1f;
+            w.mv[12] = fx; w.mv[13] = fy; w.mv[14] = fz;
+        }
         android.opengl.Matrix.multiplyMM(w.mvp, 0, mP, 0, w.mv, 0);
         android.opengl.Matrix.invertM(w.inv, 0, w.mv, 0);
     }
