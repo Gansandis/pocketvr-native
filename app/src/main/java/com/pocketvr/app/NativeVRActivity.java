@@ -39,10 +39,22 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         private long lastMagT = 0, prevT = 0;
         private double tgtF = 0, turnRate = 0, slow = 0, adj = 0, hRef = 0;
         private boolean lock = false, havePrev2 = false;
+        private static final int HN = 96;                    // the last ~0.5 s of readings
+        private final float[][] hm = new float[HN][16];
+        private final long[] ht = new long[HN];
+        private final double[] hAdj = new double[HN];
+        private int hw = 0, hc = 0;
+        private double catchUp = 0.0;                        // (rad) given back after a swallowed turn, fading out
         private long prevT2 = 0;
         private final float[] prev2 = new float[16];
         private final float[] prev = new float[16];
         private boolean havePrev = false;
+        /** the angle between two turns (rad) from the DIFFERENCE of the matrices: ||A-B||^2 = 8 sin^2(angle/2); acos of the trace cannot see below ~0.03 deg in a float */
+        private double angBetween(float[] a, float[] b) {
+            double d = 0;
+            for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) { double x = (double) a[j * 4 + i] - (double) b[j * 4 + i]; d += x * x; }
+            return 2.0 * Math.asin(Math.min(1.0, Math.sqrt(d / 8.0)));
+        }
         private float[] mapped(float[] values) {
             android.hardware.SensorManager.getRotationMatrixFromVector(r, values);
             int rot = getWindowManager().getDefaultDisplay().getRotation();
@@ -84,9 +96,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                     return;
                 }
                 if (havePrev) {                                                 // how fast the head turns now (rad/s), smoothed
-                    float tr = 0f;
-                    for (int a = 0; a < 3; a++) for (int j = 0; j < 3; j++) tr += m[j * 4 + a] * prev[j * 4 + a];
-                    double ang = Math.acos(Math.max(-1f, Math.min(1f, (tr - 1f) * 0.5f)));
+                    double ang = angBetween(m, prev);
                     double dts = (e.timestamp - prevT) / 1e9;
                     if (dts > 0 && dts < 0.1) turnRate = turnRate * 0.9 + (ang / dts) * 0.1;
                 }
@@ -96,27 +106,41 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 // when the head is still (under ~1 degree a second for a while) the picture must not creep: whatever slow turn the sensor still reports is its drift,
                 // so the facing is held where it was and the creep is taken out (it is the same sideways drift for every window, whatever its cause)
                 {
-                    double dts2 = prevT2 == 0 ? 0 : Math.min(0.2, (e.timestamp - prevT2) / 1e9);
-                    prevT2 = e.timestamp;
-                    if (havePrev2 && dts2 > 0) {
-                        float tr2 = 0f;
-                        for (int a = 0; a < 3; a++) for (int j = 0; j < 3; j++) tr2 += m[j * 4 + a] * prev2[j * 4 + a];
-                        double ang2 = Math.acos(Math.max(-1f, Math.min(1f, (tr2 - 1f) * 0.5f)));
-                        double al = 1.0 - Math.exp(-dts2 / 0.5);
-                        slow += (ang2 / dts2 - slow) * al;
+                    // The sensor is read 200 times a second and every reading has a little noise: measured from one reading to the next that noise looks like a turn of 3-4 degrees
+                    // a second even when the head is quite still, so the "still" test never passed and the facing was never held (the pictures slid on slowly). The turn is
+                    // now taken over about 0.15 s (the noise shrinks to a fraction of a degree a second), and when the head starts to turn again the little that was swallowed
+                    // while that was being noticed is given back smoothly.
+                    System.arraycopy(m, 0, hm[hw], 0, 16); ht[hw] = e.timestamp; hAdj[hw] = adj; hw = (hw + 1) % HN; if (hc < HN) hc++;
+                    int oi = -1;
+                    for (int k = 2; k <= hc; k++) {
+                        int ix = (hw - k + HN) % HN;
+                        if ((e.timestamp - ht[ix]) / 1e9 >= 0.15) { oi = ix; break; }
                     }
-                    System.arraycopy(m, 0, prev2, 0, 16); havePrev2 = true;
-                    boolean flat = Math.abs(m[10]) <= 0.8f;                               // the turn angle is undefined looking straight up or down
-                    if (slow < (lock ? 0.035 : 0.02) && flat) {
-                        double hh = heading(m);
-                        double base = compass && haveD ? delta : 0.0;
-                        if (!lock) { lock = true; hRef = hh + base + adj; }
-                        adj = hRef - hh - base;
-                        while (adj > Math.PI) adj -= 2 * Math.PI;
-                        while (adj < -Math.PI) adj += 2 * Math.PI;
-                    } else lock = false;
+                    double dtC = prevT2 == 0 ? 0 : Math.min(0.2, (e.timestamp - prevT2) / 1e9);
+                    prevT2 = e.timestamp;
+                    if (catchUp != 0.0) { catchUp *= Math.exp(-dtC / 0.10); if (Math.abs(catchUp) < 1e-5) catchUp = 0.0; }
+                    if (oi >= 0) {
+                        double ang2 = angBetween(m, hm[oi]);
+                        slow = ang2 / Math.max(0.05, (e.timestamp - ht[oi]) / 1e9);
+                        boolean flat = Math.abs(m[10]) <= 0.8f;                           // the turn angle is undefined looking straight up or down
+                        if (slow < (lock ? 0.035 : 0.02) && flat) {
+                            double hh = heading(m);
+                            double base = compass && haveD ? delta : 0.0;
+                            if (!lock) { lock = true; adj += catchUp; catchUp = 0.0; hRef = hh + base + adj; }
+                            adj = hRef - hh - base;
+                            while (adj > Math.PI) adj -= 2 * Math.PI;
+                            while (adj < -Math.PI) adj += 2 * Math.PI;
+                        } else if (lock) {
+                            lock = false;                                                 // the head turns: what was swallowed in the last 0.15 s is given back over a moment
+                            double back = hAdj[oi];
+                            double diff = adj - back;
+                            while (diff > Math.PI) diff -= 2 * Math.PI;
+                            while (diff < -Math.PI) diff += 2 * Math.PI;
+                            adj = back; catchUp = diff;
+                        }
+                    }
                 }
-                double yawT = (compass && haveD ? delta : 0.0) + adj;
+                double yawT = (compass && haveD ? delta : 0.0) + adj + catchUp;
                 dbgYaw = (float) Math.toDegrees(yawT); dbgAdj = (float) Math.toDegrees(adj);
                 dbgTurn = (float) Math.toDegrees(turnRate); dbgSlow = (float) Math.toDegrees(slow); dbgLock = lock; dbgAcc = e.accuracy; dbgType = e.sensor.getType();
                 if (yawT != 0.0) {
@@ -191,7 +215,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.208 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.209 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
