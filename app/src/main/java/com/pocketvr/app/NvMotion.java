@@ -16,6 +16,16 @@ public class NvMotion {
     public interface RotSource { float[] get(); }       // 4x4 world->view turn, as the renderer uses it
 
     public volatile boolean enabled = false;
+    /**
+     * Turn check by the picture (works even when walking-around is off): how far the picture of the room has moved sideways/up compared with what the gyro said.
+     * A phone's turn sensor drifts, and nothing in it can tell a drift from a very slow real turn; the camera can: if the room stands still in the picture, the phone did not turn.
+     * resX / resY: the mean left-over shift of the room's spots (picture units, -1..1 = the picture's half width / half height) over the last `resSpan` seconds;
+     * resSeq counts the results; they are only given when enough spots agree and the head was not turning fast (then the gyro and the picture are not in step).
+     */
+    public volatile boolean visOn = true;
+    public volatile float resX = 0f, resY = 0f, resSpan = 0f, resTanH = 0.8f;
+    public volatile int resSeq = 0, resUsed = 0;
+    public volatile long resMs = 0L;
     public volatile float depthM = 3.0f;                // assumed distance of what the camera sees
     public volatile float px = 0, py = 0, pz = 0;       // where the user is, metres, world axes
     public volatile float quality = 0;                  // share of spots that agree, 0..1
@@ -53,6 +63,7 @@ public class NvMotion {
     private static final int GW = 128, GH = 96, NX = 8, NY = 6, PR = 3, SR = 8, K = 3;      // K: compare with the picture K looks ago (3x the movement, same noise)
     private final byte[][] frames = new byte[K + 1][GW * GH];
     private final float[][] rots = new float[K + 1][];
+    private final long[] tss = new long[K + 1];
     private byte[] prev, cur;
     private int wr = 0, count = 0;
     private float[] rotPrev = null;
@@ -129,10 +140,12 @@ public class NvMotion {
             }
         }
         rots[wr] = rn;
+        tss[wr] = tsReal ? imgTs : nowEl;
         float tanH = (float) Math.tan(hFov / 2.0), tanV = tanH * h / w;
         if (count >= K) {
             int old = (wr + 1) % (K + 1);                // the picture K looks ago
             cur = dst; prev = frames[old]; rotPrev = rots[old];
+            spanNs = tss[wr] - tss[old];
             if (rotPrev != null) {
                 try { track(rn, tanH, tanV); } catch (Throwable t) { quality = 0; err = String.valueOf(t); }
             }
@@ -141,6 +154,8 @@ public class NvMotion {
         count++;
     }
 
+    private long spanNs = 0L;
+    private boolean calmTurn = false;
     private int g(byte[] im, int x, int y) { return im[y * GW + x] & 0xFF; }
 
     private void track(float[] rn, float tanH, float tanV) {
@@ -151,6 +166,7 @@ public class NvMotion {
         float tr = a[0] * b[0] + a[1] * b[1] + a[2] * b[2] + a[4] * b[4] + a[5] * b[5] + a[6] * b[6] + a[8] * b[8] + a[9] * b[9] + a[10] * b[10];
         float cosT = Math.max(-1f, Math.min(1f, (tr - 1f) * 0.5f));
         if (cosT < 0.985f) { quality = 0; lastA = lastB = lastC = 0; return; }       // more than ~10 degrees in these looks
+        calmTurn = cosT > 0.9993f;                                                   // under ~2 degrees in these looks: the gyro and the picture are in step
         for (int i = 0; i < 3; i++)
             for (int j = 0; j < 3; j++)
                 R[i * 3 + j] = b[0 * 4 + i] * a[0 * 4 + j] + b[1 * 4 + i] * a[1 * 4 + j] + b[2 * 4 + i] * a[2 * 4 + j];   // column-major 4x4
@@ -229,6 +245,9 @@ public class NvMotion {
         }
         if (!fit(ex, ey, rx, ry, use, n, sol)) { quality = 0; return; }
         usedN = used;
+        if (used >= 14 && calmTurn && spanNs > 30_000_000L && spanNs < 600_000_000L) {   // enough spots agree, no fast turn: a result for the turn check
+            resX = sol[0]; resY = sol[1]; resSpan = spanNs / 1e9f; resTanH = tanH; resUsed = used; resMs = System.nanoTime() / 1000000L; resSeq++;
+        }
         lastA = sol[0] * 0.9f; lastB = sol[1] * 0.9f; lastC = sol[2] * 0.9f;
         quality = used / (float) (NX * NY);
         if (used < 10) return;

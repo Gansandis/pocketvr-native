@@ -119,7 +119,14 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                     double dtC = prevT2 == 0 ? 0 : Math.min(0.2, (e.timestamp - prevT2) / 1e9);
                     prevT2 = e.timestamp;
                     if (catchUp != 0.0) { catchUp *= Math.exp(-dtC / 0.10); if (Math.abs(catchUp) < 1e-5) catchUp = 0.0; }
-                    if (oi >= 0) {
+                    boolean vg = vis.good;
+                    if (vg) {
+                        // the picture of the room tells a drift from a slow real turn, so the facing is not held any more: what the hold had swallowed is given back slowly
+                        if (lock) { lock = false; adj += catchUp; catchUp = 0.0; }
+                        adj *= Math.exp(-dtC / 3.0);
+                        if (Math.abs(adj) < 1e-5) adj = 0.0;
+                    }
+                    if (oi >= 0 && !vg) {
                         double ang2 = angBetween(m, hm[oi]);
                         slow = ang2 / Math.max(0.05, (e.timestamp - ht[oi]) / 1e9);
                         boolean flat = Math.abs(m[10]) <= 0.8f;                           // the turn angle is undefined looking straight up or down
@@ -140,7 +147,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                         }
                     }
                 }
-                double yawT = (compass && haveD ? delta : 0.0) + adj + catchUp;
+                double visA = vis.step(motion, System.nanoTime() / 1000000L);
+                double yawT = (compass && haveD ? delta : 0.0) + adj + catchUp + visA;
                 dbgYaw = (float) Math.toDegrees(yawT); dbgAdj = (float) Math.toDegrees(adj);
                 dbgTurn = (float) Math.toDegrees(turnRate); dbgSlow = (float) Math.toDegrees(slow); dbgLock = lock; dbgAcc = e.accuracy; dbgType = e.sensor.getType();
                 if (yawT != 0.0) {
@@ -149,7 +157,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                     for (int k = 0; k < 4; k++) { out[k] = c * m[k] - s * m[4 + k]; out[4 + k] = s * m[k] + c * m[4 + k]; }
                     rend.setRotation(out);
                 } else rend.setRotation(m);
-                if (motion != null && motion.enabled) motion.pushRot(e.timestamp, rend.rotCopy());
+                if (motion != null && (motion.enabled || motion.visOn)) motion.pushRot(e.timestamp, rend.rotCopy());
             } catch (Throwable ignored) { }
         }
         @Override public void onAccuracyChanged(android.hardware.Sensor s, int acc) { }
@@ -167,6 +175,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     private final VRRenderer.Win[] bws = new VRRenderer.Win[3];
     private static final float[] BYAW = {0f, 52f, -52f};
     private NvMotion motion;
+    private final NvVisYaw vis = new NvVisYaw();                // takes the slow sideways drift out of the turn sensor with the help of the camera picture
     private final long t0 = System.currentTimeMillis();
     private boolean swRunning = false;
     private long swStart = 0, swAcc = 0;
@@ -215,7 +224,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.209 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.210 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -264,6 +273,10 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             });
         } catch (Throwable ignored) { }
     }
+        private String visStr() {
+        if (!vis.on) return "\nภาพช่วยกันไหล: ปิด";
+        return String.format(java.util.Locale.US, "\nภาพช่วยกันไหล: %s | จุดที่ใช้ %d | เหลือคลาด %+.2f°/ว | เรียนรู้ไหลของเซนเซอร์ %+.2f°/ว | แก้รวม %+.2f° %s", vis.good ? "ทำงาน" : "รอภาพดีๆ", motion.resUsed, Math.toDegrees(vis.lastRate), Math.toDegrees(vis.biasRate), Math.toDegrees(vis.adj()), vis.note);
+    }
     private String winStr() {                                  // where every window's middle is, seen from the middle of the screen (+ right, + up): to find out why a window is off to a side
         StringBuilder sb = new StringBuilder();
         try {
@@ -274,7 +287,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 sb.append(t).append(String.format(java.util.Locale.US, " x%+.1f y%+.1f", w.yawA, w.pitchA)).append(w.settleUntil != 0L ? " [ตามหัว]" : " [ล็อก]");
             }
         } catch (Throwable ignored) { }
-        return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)\nเซนเซอร์ชนิด %d ความแม่น %d | หัวหมุน %.1f°/ว | ช้า %.2f°/ว | %s", dbgYaw, dbgAdj, dbgType, dbgAcc, dbgTurn, dbgSlow, dbgLock ? "กำลังล็อกทิศ" : "ไม่ล็อกทิศ");
+        return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)\nเซนเซอร์ชนิด %d ความแม่น %d | หัวหมุน %.1f°/ว | ช้า %.2f°/ว | %s", dbgYaw, dbgAdj, dbgType, dbgAcc, dbgTurn, dbgSlow, dbgLock ? "กำลังล็อกทิศ" : "ไม่ล็อกทิศ") + visStr();
     }
     private long memT = 0; private String memTxt = ""; private int memBase = -1; private long memBaseT = 0;
     private volatile boolean fgNow = true; private volatile int trimLvl = 0;
@@ -661,6 +674,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 () -> rend.eyeShift = Math.min(0.40f, Math.round((rend.eyeShift + 0.03f) * 100f) / 100f));
 
         s.cat("","Position");
+        s.toggle("👁", "กล้องช่วยกันจอไหลข้าง (ลองใช้)", () -> vis.on, () -> { vis.on = !vis.on; motion.visOn = vis.on; });
         s.toggle("🧭", "เข็มทิศช่วยแก้ทิศ (กันจอไหล)", () -> compass, () -> compass = !compass);
         s.action("📍", "จัดหน้าต่างมาตรงหน้า", "จัดกลางใหม่", () -> rend.recenter = true);
         s.cycle("🚶", "เดินรอบได้", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด %.1f,%.1f ม.", motion.px, motion.py) : "ผิดพลาด") : "ปิดอยู่", () -> {
