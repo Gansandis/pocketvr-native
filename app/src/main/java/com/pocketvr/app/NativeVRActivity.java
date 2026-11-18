@@ -224,7 +224,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.210 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.211 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -287,7 +287,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 sb.append(t).append(String.format(java.util.Locale.US, " x%+.1f y%+.1f", w.yawA, w.pitchA)).append(w.settleUntil != 0L ? " [ตามหัว]" : " [ล็อก]");
             }
         } catch (Throwable ignored) { }
-        return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)\nเซนเซอร์ชนิด %d ความแม่น %d | หัวหมุน %.1f°/ว | ช้า %.2f°/ว | %s", dbgYaw, dbgAdj, dbgType, dbgAcc, dbgTurn, dbgSlow, dbgLock ? "กำลังล็อกทิศ" : "ไม่ล็อกทิศ") + visStr();
+        return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)\nเซนเซอร์ชนิด %d ความแม่น %d | หัวหมุน %.1f°/ว | ช้า %.2f°/ว | %s", dbgYaw, dbgAdj, dbgType, dbgAcc, dbgTurn, dbgSlow, dbgLock ? "กำลังล็อกทิศ" : "ไม่ล็อกทิศ") + visStr() + h3Str();
     }
     private long memT = 0; private String memTxt = ""; private int memBase = -1; private long memBaseT = 0;
     private volatile boolean fgNow = true; private volatile int trimLvl = 0;
@@ -655,6 +655,32 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 () -> { rend.rollTrim = Math.min(15f, Math.round((rend.rollTrim + 0.5f) * 2f) / 2f); saveRoll(); });
         s.toggle("🎈", "หน้าต่างลอยเบาๆ", () -> rend.floaty, () -> rend.floaty = !rend.floaty);
 
+        s.cat("","3D");
+        final String[] m3n = {"ปิด", "มือ 3D อย่างเดียว", "ห้องจริง + วัตถุ 3D", "ฉาก 3D เต็มจอ (ไม่เห็นกล้อง)"};
+        final String[] st3n = {"แก้วเรืองแสง", "ทึบ", "โครงกระดูก"};
+        final String[] co3n = {"ฟ้าเรือง", "สีผิว", "ขาวมุก", "ชมพูนีออน", "เขียวนีออน", "ทอง"};
+        s.cycle("🧊", "โหมด 3D", () -> m3n[Math.max(0, Math.min(3, rend.h3.mode))], () -> {
+            Nv3DHands h = rend.h3;
+            h.mode = (h.mode + 1) % 4;
+            if (h.mode > 0) h.lastMode = h.mode;
+            save3d();
+        });
+        s.toggle("🤟", "ท่ามือซ้าย 🤟🏻 ค้าง 1 วินาที = เปิด/ปิดโหมด 3D", () -> rend.h3.gesture, () -> { rend.h3.gesture = !rend.h3.gesture; save3d(); });
+        s.toggle("🙌", "ท่า 🤟 ใช้ได้ทั้งสองมือ (ถ้ามือซ้ายไม่ติด)", () -> rend.h3.gestureBoth, () -> { rend.h3.gestureBoth = !rend.h3.gestureBoth; save3d(); });
+        s.cycle("🖐", "แบบมือ 3D", () -> st3n[Math.max(0, Math.min(2, rend.h3.style))], () -> { rend.h3.style = (rend.h3.style + 1) % 3; save3d(); });
+        s.cycle("🎨", "สีมือ 3D", () -> co3n[Math.max(0, Math.min(co3n.length - 1, rend.h3.color))], () -> { rend.h3.color = (rend.h3.color + 1) % co3n.length; save3d(); });
+        s.step("🔆", "ความทึบมือ 3D", () -> Math.round(rend.h3.opacity * 100f) + "%",
+                () -> { rend.h3.opacity = Math.max(0.3f, Math.round((rend.h3.opacity - 0.1f) * 10f) / 10f); save3d(); },
+                () -> { rend.h3.opacity = Math.min(1f, Math.round((rend.h3.opacity + 0.1f) * 10f) / 10f); save3d(); });
+        s.step("☝", "ความหนานิ้ว", () -> Math.round(rend.h3.thick * 100f) + "%",
+                () -> { rend.h3.thick = Math.max(0.7f, Math.round((rend.h3.thick - 0.1f) * 10f) / 10f); save3d(); },
+                () -> { rend.h3.thick = Math.min(1.4f, Math.round((rend.h3.thick + 0.1f) * 10f) / 10f); save3d(); });
+        s.toggle("🙈", "ซ่อนเส้นรอบมือจากกล้องตอนเปิด 3D", () -> rend.h3.hideCam, () -> { rend.h3.hideCam = !rend.h3.hideCam; save3d(); });
+        s.step("🎯", "จำนวนวัตถุ 3D (โหมดห้อง/ฉากเต็ม)", () -> rend.h3.nObj + " ชิ้น",
+                () -> { rend.h3.nObj = Math.max(0, rend.h3.nObj - 1); save3d(); },
+                () -> { rend.h3.nObj = Math.min(12, rend.h3.nObj + 1); save3d(); });
+        s.action("🔄", "วางวัตถุ 3D ใหม่ตรงหน้า", "วาง", () -> rend.h3.respawn = true);
+
         s.cat("","VR");
         s.toggle("🥽", "แยกจอซ้าย-ขวา", () -> rend.stereo, () -> rend.stereo = !rend.stereo);
         s.cycle("👓", "เลนส์ (ชดเชยความโค้ง)", () -> rend.lens == 0 ? "ปิด" : rend.lens == 1 ? "เบา" : rend.lens == 2 ? "กลาง" : "แรง", () -> rend.lens = (rend.lens + 1) % 4);
@@ -714,6 +740,24 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
 
     // ================= saved settings (kept when the app is closed) =================
     private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck4", "flow", "eco", "autoRes", "tips", "pmenu", "lang", "lock", "range", "night", "scene"};
+    private void save3d() {
+        try {
+            Nv3DHands h = rend.h3;
+            getSharedPreferences("pvr_3d", MODE_PRIVATE).edit().putInt("style", h.style).putInt("color", h.color).putFloat("op", h.opacity).putFloat("th", h.thick)
+                    .putBoolean("ges", h.gesture).putBoolean("both", h.gestureBoth).putBoolean("hide", h.hideCam).putInt("n", h.nObj).putInt("last", h.lastMode).apply();
+        } catch (Throwable ignored) { }
+    }
+    private void load3d() {
+        try {
+            android.content.SharedPreferences sp = getSharedPreferences("pvr_3d", MODE_PRIVATE);
+            Nv3DHands h = rend.h3;
+            h.style = Math.max(0, Math.min(2, sp.getInt("style", 0))); h.color = Math.max(0, Math.min(Nv3DHands.COLORS.length - 1, sp.getInt("color", 0)));
+            h.opacity = Math.max(0.3f, Math.min(1f, sp.getFloat("op", 0.9f))); h.thick = Math.max(0.7f, Math.min(1.4f, sp.getFloat("th", 1f)));
+            h.gesture = sp.getBoolean("ges", true); h.gestureBoth = sp.getBoolean("both", false); h.hideCam = sp.getBoolean("hide", true);
+            h.nObj = Math.max(0, Math.min(12, sp.getInt("n", 7))); h.lastMode = Math.max(1, Math.min(3, sp.getInt("last", 2)));
+        } catch (Throwable ignored) { }
+    }
+    private String h3Str() { return rend.h3.mode > 0 ? "\n" + rend.h3.dbg : ""; }
     private void saveRoll() { try { getSharedPreferences("pvr_view", MODE_PRIVATE).edit().putFloat("roll", rend.rollTrim).apply(); } catch (Throwable ignored) { } }
     private double[] defaults;
     private double[] lastSaved;
@@ -725,6 +769,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
 
     private void applyPrefs(double[] v) {
         try { rend.rollTrim = getSharedPreferences("pvr_view", MODE_PRIVATE).getFloat("roll", 0f); } catch (Throwable ignored) { }
+        load3d();
         rend.sel = (int) v[0]; rend.pokeS = (int) v[1]; rend.predict = v[2] > 0.5; cam.detW = (int) v[3]; rend.floaty = v[4] > 0.5;
         NvUi.glass = (int) v[5]; rend.cursorSz = (int) v[6]; rend.skel = (int) v[7]; hudOn = v[8] > 0.5;
         rend.sharpen = (float) v[9]; rend.stereo = v[10] > 0.5; rend.lens = (int) v[11]; rend.eyeShift = (float) v[12]; compass = v[13] > 0.5;

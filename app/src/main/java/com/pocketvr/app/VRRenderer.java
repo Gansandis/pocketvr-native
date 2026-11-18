@@ -24,6 +24,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile boolean stereo = true;
     public volatile NvSword3D world3 = null;             // a 3D game in the room (monsters), drawn while its score window is shown
     public volatile Win world3Win = null;
+    public final Nv3DHands h3 = new Nv3DHands();         // 3D mode: hands as 3D models, 3D things in the room, the left-hand 🤟 sign that switches it
+    private float ilyProg = 0f, ilyNx = 0f, ilyNy = 0f;
     private final int[] depthRb = new int[1];
     public volatile int lens = 1;
     public volatile float chroma = 0f;                    // lens colour fringes (red / blue edges): the three colours are drawn a hair apart at the edges, the other way round
@@ -916,6 +918,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         java.util.Arrays.fill(alc, 0);
         depthRb[0] = 0;
         { NvSword3D w3 = world3; if (w3 != null) w3.glLost(); }
+        h3.lost();
         GLES20.glDisable(GLES20.GL_DITHER);                // no dithering: a little less work for every pixel
         panoTex = 0; panoOn = false;
         for (Win w : wins) if (w.c instanceof NvVideo) ((NvVideo) w.c).glLost();
@@ -1647,6 +1650,27 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private float spx(float[] d, int base, int k) { float hx = d[base + k * 3]; if (rot180) hx = 1f - hx; return (hx * 2f - 1f) * sceneW / 2f * camScale; }
     private float spy(float[] d, int base, int k) { float hy = d[base + k * 3 + 1]; if (rot180) hy = 1f - hy; return (1f - hy * 2f) * sceneH / 2f * camScale; }
 
+    /** the 🤟 sign of the left hand (thumb, index and little finger out) held for a second switches 3D mode on / off; the ring over the hand shows the hold */
+    private void ilyUpdate(long nowMs) {
+        float[] d = dispDraw;
+        int n = d != null && d.length >= 64 ? Math.min(2, (int) d[0]) : 0;
+        int mask = 0;
+        if (n >= 2 && d.length >= 127) mask = h3.gestureBoth ? 3 : (rot180 ? 2 : 1);      // two hands: the left one in the picture is the left hand (the other way round when the picture is turned)
+        else if (n == 1) {
+            float lf = cam.leftness(0);
+            if (lf >= 0f && pmCal < 0f) lf = 1f - lf;
+            mask = h3.gestureBoth || !(lf >= 0f && lf < 0.5f) ? 1 : 0;                      // a lone hand has to be a left one (the model's own guess)
+        }
+        float ar = (float) Math.max(1, imgW) / Math.max(1, imgH);
+        ilyProg = h3.gestureStep(n > 0 ? d : null, mask, ar, nowMs);
+        int ih = h3.ilyHand;
+        if (ilyProg > 0f && ih >= 0 && d != null && d.length >= 1 + (ih + 1) * 63) {
+            int b = 1 + ih * 63; float hx = d[b], hy = d[b + 1];
+            if (rot180) { hx = 1f - hx; hy = 1f - hy; }
+            ilyNx = hx * 2f - 1f; ilyNy = 1f - hy * 2f;
+        }
+    }
+
     private float pmCal = 0f;                                    // >0: the model's "left" label = the user's left hand (as assumed), <0: the other way round (learned whenever two hands are in view)
     private void palmMenu(long nowMs) {
         float[] d = dispDraw;                                    // what is drawn on the picture: the icon and the fingertip are lined up with what you see
@@ -1990,6 +2014,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         drawPalmMenu();
         if (mpProg > 0f) drawHold(mpNx, mpNy, mpProg, false, 1f, 1f);
         if (okProg > 0f && curOk) drawHold(cnx, cny, okProg, true, 1f, 1f);
+        if (ilyProg > 0f && ilyProg < 1f) drawHold(ilyNx, ilyNy, ilyProg, false, 1f, 1f);
         long pa0 = System.currentTimeMillis() - popT;
         if (popT != 0 && pa0 >= 0 && pa0 < 380) {
             float k = pa0 / 380f;
@@ -2542,7 +2567,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
         }
         predictNow(now);                                    // where the hand is on screen right now (needed first: the outline mask is made before the scene picture)
-        if (skel >= 2) {
+        try { ilyUpdate(now); } catch (Throwable ignored) { ilyProg = 0f; }
+        final boolean hide3 = h3.mode > 0 && h3.hideCam;     // 3D mode: the camera's own outline / skeleton of the hand is not shown, the 3D hand is
+        if (skel >= 2 && !hide3) {
             renderMask(dispDraw);
             if (maskReady) {                                          // the same for every hand mode: the shape is checked against the skin colour of the camera picture, so it sticks to the real hand
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, refFbo[0]);
@@ -2575,7 +2602,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glUniformMatrix3fv(ul(progPano, "rm"), 1, false, rm3, 0);
             GLES20.glUniform1f(ul(progPano, "lon0"), panoLon0);
             drawQuad(progPano);
-        } else if (envScene == 1 && !cinema) {
+        } else if ((envScene == 1 || h3.mode == 3) && !cinema) {
             float[] m = rotView;
             rm3[0] = m[0]; rm3[1] = m[1]; rm3[2] = m[2]; rm3[3] = m[4]; rm3[4] = m[5]; rm3[5] = m[6]; rm3[6] = m[8]; rm3[7] = m[9]; rm3[8] = m[10];
             GLES20.glUseProgram(progCity);
@@ -2594,8 +2621,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         cursor();
         drawWins();
         drawBars();
-        if (skel == 4 && maskReady) drawCamera(true);
-        if (skel == 1) drawSkeleton(dispDraw); else if (skel == 2 || skel == 3) drawOutline(dispDraw);
+        if (h3.mode > 0 && !cinema) {
+            try { h3.frame(mP, rotView, dispDraw, handAlpha, rot180, tanH, tanV, sux, suy, suz, now); } catch (Throwable ignored) { }
+        }
+        if (!hide3) {
+            if (skel == 4 && maskReady) drawCamera(true);
+            if (skel == 1) drawSkeleton(dispDraw); else if (skel == 2 || skel == 3) drawOutline(dispDraw);
+        }
         drawCursor();
 
         // 2) screen: mono or split, with lens warp
