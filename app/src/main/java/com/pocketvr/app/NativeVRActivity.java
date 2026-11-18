@@ -31,6 +31,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     private android.hardware.Sensor magSensor;
     public volatile boolean compass = true;                  // the compass sensor slowly corrects the turn sensor's sideways drift
     private volatile float dbgYaw = 0f, dbgAdj = 0f;          // (shown in the HUD) the sideways turn put on the sensor's picture, and the part of it from the holding of the facing
+    private volatile float dbgTurn = 0f, dbgSlow = 0f; private volatile boolean dbgLock = false; private volatile int dbgAcc = 0, dbgType = 0;   // (HUD) how fast the sensor says the head turns, whether the facing is being held
     private final android.hardware.SensorEventListener sl = new android.hardware.SensorEventListener() {
         private final float[] r = new float[16], o = new float[16], gm = new float[16], out = new float[16];
         private boolean haveG = false, haveD = false;
@@ -117,6 +118,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 }
                 double yawT = (compass && haveD ? delta : 0.0) + adj;
                 dbgYaw = (float) Math.toDegrees(yawT); dbgAdj = (float) Math.toDegrees(adj);
+                dbgTurn = (float) Math.toDegrees(turnRate); dbgSlow = (float) Math.toDegrees(slow); dbgLock = lock; dbgAcc = e.accuracy; dbgType = e.sensor.getType();
                 if (yawT != 0.0) {
                     float c = (float) Math.cos(yawT), s = (float) Math.sin(yawT);
                     System.arraycopy(m, 0, out, 0, 16);
@@ -189,7 +191,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.207 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.208 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -248,7 +250,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 sb.append(t).append(String.format(java.util.Locale.US, " x%+.1f y%+.1f", w.yawA, w.pitchA)).append(w.settleUntil != 0L ? " [ตามหัว]" : " [ล็อก]");
             }
         } catch (Throwable ignored) { }
-        return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)", dbgYaw, dbgAdj);
+        return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)\nเซนเซอร์ชนิด %d ความแม่น %d | หัวหมุน %.1f°/ว | ช้า %.2f°/ว | %s", dbgYaw, dbgAdj, dbgType, dbgAcc, dbgTurn, dbgSlow, dbgLock ? "กำลังล็อกทิศ" : "ไม่ล็อกทิศ");
     }
     private long memT = 0; private String memTxt = ""; private int memBase = -1; private long memBaseT = 0;
     private volatile boolean fgNow = true; private volatile int trimLvl = 0;
