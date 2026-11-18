@@ -181,6 +181,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         android.opengl.Matrix.multiplyMM(tF, 0, tE, 0, m, 0);
         System.arraycopy(tF, 0, m, 0, 16);
     }
+    public volatile float rollTrim = 0f;                  // (deg, clockwise on the screen) the user's own correction when the windows are not level with the room
     public volatile boolean levelWorld = true;            // with flatWins: the level of the windows follows the room (they do not turn with the phone when it is rolled); off = level with the screen
     public volatile boolean flatWins = true;              // every window faces the screen square on: edges level with the screen, no slant or sideways tilt whatever the head does (it keeps its place in the room)
     public volatile boolean floaty = false;               // windows stay perfectly still unless this is switched on
@@ -203,7 +204,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         public final NvContent c;
         public final float widthM;
         public volatile boolean visible = false, placeReq = false, showInCinema = false;
-        long settleUntil = 0;                                  // (ms) just put up or re-centred: for a moment it keeps being put exactly in front of the eyes, then it stays
+        long settleUntil = 0, sStart = 0, sCalm = 0, sLast = 0; float[] sFwd = new float[3];   // settling: until the head has been still for a moment (or a limit), the window keeps being put in front of the eyes
         public volatile boolean hasSaved = false;            // the user moved / resized it once: remember where, and put it back there next time
         public volatile float defYaw = 0, defPitch = 0;      // where it appears by default (before the user moved it)
         public volatile float svYaw = 0, svPitch = 0, svScale = 1f, svDist = 1.5f, placeDist = 0f;
@@ -671,7 +672,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         placeDbg = "place: in the middle, " + moved + " window(s) slide aside (" + right.size() + " right, " + left.size() + " left)";
     }
 
-    private static final long SETTLE_MS = 1600L;                    // how long a window just put up keeps being put in front of the eyes
+    private static final long SETTLE_MAX_MS = 9000L, SETTLE_MIN_MS = 500L, SETTLE_CALM_MS = 600L;   // longest follow, shortest follow, how long the head must be still
+    private static final float SETTLE_CALM_DEG = 9f;                // (deg per second) slower than this counts as still
     private static final float ANIM_MS = 520f;                     // how long a window takes to slide in
 
     private void updateWin(Win w, float[] rn, float t) {
@@ -690,11 +692,19 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             w.wx = ux; w.wy = uy; w.wz = uz;
             uprightAboutCentre(w);                                     // a wall standing straight up in the room, wherever the head was pitched when it was put up
             w.placeReq = false;
-            w.settleUntil = System.nanoTime() / 1000000L + SETTLE_MS;
+            { long nowS = System.nanoTime() / 1000000L; w.settleUntil = nowS + SETTLE_MAX_MS; w.sStart = nowS; w.sCalm = 0L; w.sLast = nowS; w.sFwd[0] = -rn[2]; w.sFwd[1] = -rn[6]; w.sFwd[2] = -rn[10]; }
         } else if (w.settleUntil != 0L) {
             // for a short while after it came up it is put in front of the eyes again every picture, so it is in the middle of the screen when the head has settled
             // (the phone's turn is still being corrected for a moment after a start / re-centre, and a head moves a little after the press)
-            if (System.nanoTime() / 1000000L >= w.settleUntil || dragWin == w || w.pendYaw != 0f || w.placeReq) w.settleUntil = 0L;
+            long nowS = System.nanoTime() / 1000000L;
+            float fx = -rn[2], fy = -rn[6], fz = -rn[10];                // where the phone looks now (room), and how fast that turns
+            float dotF = Math.max(-1f, Math.min(1f, fx * w.sFwd[0] + fy * w.sFwd[1] + fz * w.sFwd[2]));
+            float dtS = Math.max(1f, nowS - w.sLast) / 1000f;
+            float degPerS = (float) Math.toDegrees(Math.acos(dotF)) / dtS;
+            w.sFwd[0] = fx; w.sFwd[1] = fy; w.sFwd[2] = fz; w.sLast = nowS;
+            if (degPerS < SETTLE_CALM_DEG) w.sCalm += (long) (dtS * 1000f); else w.sCalm = 0L;
+            boolean settled = w.sCalm >= SETTLE_CALM_MS && nowS - w.sStart >= SETTLE_MIN_MS;     // the head has been still for a moment: this is its place now
+            if (settled || nowS >= w.settleUntil || dragWin == w || w.pendYaw != 0f || w.placeReq) w.settleUntil = 0L;
             else {
                 android.opengl.Matrix.transposeM(tA, 0, rn, 0);
                 w.rot = tA.clone();
@@ -773,7 +783,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 float lx = rn[8], ly = rn[9], ul = (float) Math.sqrt(lx * lx + ly * ly);
                 if (ul > 0.08f) {
                     float f = Math.min(1f, (ul - 0.08f) / 0.27f);      // looking nearly straight up or down: no side to level against, fades out
-                    float phi = (float) Math.atan2(-lx, ly) * f, c = (float) Math.cos(phi), sn = (float) Math.sin(phi);
+                    float phi = (float) Math.atan2(-lx, ly) * f - (float) Math.toRadians(rollTrim), c = (float) Math.cos(phi), sn = (float) Math.sin(phi);   // rollTrim: clockwise degrees added by the user
                     w.mv[0] = c; w.mv[1] = sn; w.mv[4] = -sn; w.mv[5] = c;
                 }
             }
