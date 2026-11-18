@@ -181,6 +181,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         android.opengl.Matrix.multiplyMM(tF, 0, tE, 0, m, 0);
         System.arraycopy(tF, 0, m, 0, 16);
     }
+    public volatile boolean levelWorld = true;            // with flatWins: the level of the windows follows the room (they do not turn with the phone when it is rolled); off = level with the screen
     public volatile boolean flatWins = true;              // every window faces the screen square on: edges level with the screen, no slant or sideways tilt whatever the head does (it keeps its place in the room)
     public volatile boolean floaty = false;               // windows stay perfectly still unless this is switched on
     public volatile int cursorSz = 0;                     // 0 small and faint, 1 medium, 2 large
@@ -752,6 +753,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             java.util.Arrays.fill(w.mv, 0f);
             w.mv[0] = 1f; w.mv[5] = 1f; w.mv[10] = 1f; w.mv[15] = 1f;
             w.mv[12] = fx; w.mv[13] = fy; w.mv[14] = fz;
+            if (levelWorld) {                                          // roll about the view axis so that the window's top points to the room's up (up = (0,0,1) in the room)
+                float lx = rn[8], ly = rn[9], ul = (float) Math.sqrt(lx * lx + ly * ly);
+                if (ul > 0.08f) {
+                    float f = Math.min(1f, (ul - 0.08f) / 0.27f);      // looking nearly straight up or down: no side to level against, fades out
+                    float phi = (float) Math.atan2(-lx, ly) * f, c = (float) Math.cos(phi), sn = (float) Math.sin(phi);
+                    w.mv[0] = c; w.mv[1] = sn; w.mv[4] = -sn; w.mv[5] = c;
+                }
+            }
         }
         android.opengl.Matrix.multiplyMM(w.mvp, 0, mP, 0, w.mv, 0);
         android.opengl.Matrix.invertM(w.inv, 0, w.mv, 0);

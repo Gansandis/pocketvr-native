@@ -189,7 +189,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.202 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.204 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -215,13 +215,15 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                         if (x.getTimestamp() != seen) {
                             sp.edit().putLong("exitSeen", x.getTimestamp()).apply();
                             int r = x.getReason();
-                            String nm = r == 1 ? "EXIT_SELF" : r == 2 ? "ระบบสั่งปิด(SIGNAL)" : r == 3 ? "ANR(ค้าง)" : r == 4 ? "native crash" : r == 5 ? "java crash" : r == 6 ? "initial" : r == 7 ? "ระบบปิด(ขาดแรม/LOW_MEMORY)" : r == 8 ? "ระบบปิด(ขาดแรม/OOM)" : r == 9 ? "permission" : r == 10 ? "ถูกปิดโดยผู้ใช้" : r == 11 ? "ถูกปิดโดยระบบ" : r == 12 ? "dependency" : "reason " + r;
+                            String nm = r == 1 ? "ปิดเอง" : r == 2 ? "ระบบสั่งปิด (SIGNAL)" : r == 3 ? "ระบบปิดเพราะแรมต่ำ (LOW_MEMORY)" : r == 4 ? "java crash" : r == 5 ? "native crash" : r == 6 ? "ANR (ค้าง)" : r == 7 ? "เริ่มแอปไม่สำเร็จ" : r == 8 ? "เปลี่ยนสิทธิ์" : r == 9 ? "ใช้ทรัพยากรเกิน" : r == 10 ? "ผู้ใช้สั่งปิด" : r == 11 ? "ผู้ใช้บังคับหยุด" : r == 12 ? "dependency ตาย" : r == 13 ? "ระบบปิดด้วยเหตุอื่น (OTHER: มักเป็นตัวจัดการแรมของเครื่อง)" : r == 14 ? "ถูกแช่แข็ง (FREEZER)" : "reason " + r;
                             if (sb.length() > 0) sb.append("\n");
                             sb.append("ปิดรอบก่อน: ").append(nm).append(" | ").append(x.getDescription()).append(" | แรมที่ใช้ ").append(x.getRss() / 1048576L).append(" MB");
                         }
                     }
                 }
             } catch (Throwable ignored) { }
+            String stS = sp.getString("state", ""); sp.edit().remove("state").putInt("trim", 0).apply();
+            if (!stS.isEmpty() && sb.length() > 0) sb.append("\nก่อนปิดรอบนั้น: ").append(stS);
             lastExit = sb.toString();
             final Thread.UncaughtExceptionHandler prev = Thread.getDefaultUncaughtExceptionHandler();
             Thread.setDefaultUncaughtExceptionHandler((th, e) -> {
@@ -249,6 +251,15 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)", dbgYaw, dbgAdj);
     }
     private long memT = 0; private String memTxt = ""; private int memBase = -1; private long memBaseT = 0;
+    private volatile boolean fgNow = true; private volatile int trimLvl = 0;
+    @Override public void onTrimMemory(int level) {                // the system asks the app to use less memory: noted, so the next start can show it
+        super.onTrimMemory(level);
+        if (level > trimLvl) trimLvl = level;
+        try { getSharedPreferences("pvr_crash", MODE_PRIVATE).edit().putInt("trim", trimLvl).apply(); } catch (Throwable ignored) { }
+    }
+    private void saveState(String mem) {                           // the state a little before the app closes (read at the next start)
+        try { getSharedPreferences("pvr_crash", MODE_PRIVATE).edit().putString("state", mem + " | " + (fgNow ? "อยู่หน้าจอ" : "อยู่พื้นหลัง") + " | trim " + trimLvl).apply(); } catch (Throwable ignored) { }
+    }
     private String memStr() {                                      // every 10 s: how much memory the app really holds, split by kind, and how much it grew since the first minute
         long now = System.currentTimeMillis();
         if (now - memT < 10000 && !memTxt.isEmpty()) return memTxt;
@@ -261,6 +272,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             if (memBase < 0 && now - t0 > 60000) { memBase = tot; memBaseT = now; }
             String d = memBase < 0 ? " (วัดฐานที่ 1 นาที)" : String.format(java.util.Locale.US, " (%+d MB ใน %d นาที)", tot - memBase, (now - memBaseT) / 60000);
             memTxt = String.format(java.util.Locale.US, "แรมรวม %d MB | java %d native %d กราฟิก %d%s", tot, jv, nt, gr, d);
+            saveState("แรมรวม " + tot + " MB");
         } catch (Throwable e) { memTxt = "แรม: อ่านไม่ได้"; }
         return memTxt;
     }
@@ -597,7 +609,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.step("✨", "ความคมภาพกล้อง", () -> rend.sharpen <= 0.01f ? "ปิด (เร็วสุด)" : Math.round(rend.sharpen * 100f) + " %",
                 () -> rend.sharpen = Math.max(0f, Math.round((rend.sharpen - 0.1f) * 10f) / 10f),
                 () -> rend.sharpen = Math.min(1f, Math.round((rend.sharpen + 0.1f) * 10f) / 10f));
-        s.toggle("📐", "หน้าต่างตั้งตรงเสมอ", () -> rend.flatWins, () -> rend.flatWins = !rend.flatWins);
+        s.toggle("📐", "หน้าต่างหันตรงเข้าจอ (ไม่เฉียง)", () -> rend.flatWins, () -> rend.flatWins = !rend.flatWins);
+        s.toggle("🧭", "หน้าต่างไม่หมุนตามมือถือ (ตามระดับโลก)", () -> rend.levelWorld, () -> rend.levelWorld = !rend.levelWorld);
         s.toggle("🎈", "หน้าต่างลอยเบาๆ", () -> rend.floaty, () -> rend.floaty = !rend.floaty);
 
         s.cat("","VR");
@@ -1137,6 +1150,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     public static volatile boolean resumed = false;
 
     @Override protected void onResume() {
+        fgNow = true;
         super.onResume();
         resumed = true;
         immersive();
@@ -1160,6 +1174,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     @Override protected void onPause() {
+        fgNow = false;
         resumed = false;
         savePrefsNow();
         ui.removeCallbacks(tick);
