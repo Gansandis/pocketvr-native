@@ -203,6 +203,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         public final NvContent c;
         public final float widthM;
         public volatile boolean visible = false, placeReq = false, showInCinema = false;
+        long settleUntil = 0;                                  // (ms) just put up or re-centred: for a moment it keeps being put exactly in front of the eyes, then it stays
         public volatile boolean hasSaved = false;            // the user moved / resized it once: remember where, and put it back there next time
         public volatile float defYaw = 0, defPitch = 0;      // where it appears by default (before the user moved it)
         public volatile float svYaw = 0, svPitch = 0, svScale = 1f, svDist = 1.5f, placeDist = 0f;
@@ -670,6 +671,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         placeDbg = "place: in the middle, " + moved + " window(s) slide aside (" + right.size() + " right, " + left.size() + " left)";
     }
 
+    private static final long SETTLE_MS = 1600L;                    // how long a window just put up keeps being put in front of the eyes
     private static final float ANIM_MS = 520f;                     // how long a window takes to slide in
 
     private void updateWin(Win w, float[] rn, float t) {
@@ -688,6 +690,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             w.wx = ux; w.wy = uy; w.wz = uz;
             uprightAboutCentre(w);                                     // a wall standing straight up in the room, wherever the head was pitched when it was put up
             w.placeReq = false;
+            w.settleUntil = System.nanoTime() / 1000000L + SETTLE_MS;
+        } else if (w.settleUntil != 0L) {
+            // for a short while after it came up it is put in front of the eyes again every picture, so it is in the middle of the screen when the head has settled
+            // (the phone's turn is still being corrected for a moment after a start / re-centre, and a head moves a little after the press)
+            if (System.nanoTime() / 1000000L >= w.settleUntil || dragWin == w || w.pendYaw != 0f || w.placeReq) w.settleUntil = 0L;
+            else {
+                android.opengl.Matrix.transposeM(tA, 0, rn, 0);
+                w.rot = tA.clone();
+                w.rollKeep = 0f;
+                if (w.aimV != null) aimDir(w, w.aimV);
+                else if (w.offYaw != 0f || w.offPitch != 0f) aimWin(w, w.offYaw, w.offPitch);
+                w.wx = ux; w.wy = uy; w.wz = uz;
+                uprightAboutCentre(w);
+            }
         }
         if (w.pendYaw != 0f && dragWin != w) {                        // sliding sideways to make room for a window that was just opened
             float st = Math.abs(w.pendYaw) < 0.1f ? w.pendYaw : w.pendYaw * 0.12f;
