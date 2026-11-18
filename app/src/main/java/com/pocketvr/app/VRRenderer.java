@@ -672,8 +672,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         placeDbg = "place: in the middle, " + moved + " window(s) slide aside (" + right.size() + " right, " + left.size() + " left)";
     }
 
-    private static final long SETTLE_MAX_MS = 9000L, SETTLE_MIN_MS = 500L, SETTLE_CALM_MS = 600L;   // longest follow, shortest follow, how long the head must be still
-    private static final float SETTLE_CALM_DEG = 9f;                // (deg per second) slower than this counts as still
+    private static final long SETTLE_MAX_MS = 3500L, SETTLE_MIN_MS = 300L, SETTLE_CALM_MS = 400L;   // longest follow, shortest follow, how long the head must be still
+    private static final float SETTLE_CALM_DEG = 14f;                // (deg per second) slower than this counts as still
     private static final float ANIM_MS = 520f;                     // how long a window takes to slide in
 
     private void updateWin(Win w, float[] rn, float t) {
