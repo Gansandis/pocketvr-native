@@ -224,7 +224,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.212 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.213 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -657,11 +657,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.step("✨", "ความคมภาพกล้อง", () -> rend.sharpen <= 0.01f ? "ปิด (เร็วสุด)" : Math.round(rend.sharpen * 100f) + " %",
                 () -> rend.sharpen = Math.max(0f, Math.round((rend.sharpen - 0.1f) * 10f) / 10f),
                 () -> rend.sharpen = Math.min(1f, Math.round((rend.sharpen + 0.1f) * 10f) / 10f));
-        s.toggle("📐", "หน้าต่างหันตรงเข้าจอ (ไม่เฉียง)", () -> rend.flatWins, () -> rend.flatWins = !rend.flatWins);
-        s.toggle("🧭", "หน้าต่างไม่หมุนตามมือถือ (ตามระดับโลก)", () -> rend.levelWorld, () -> rend.levelWorld = !rend.levelWorld);
-        s.step("↻", "ปรับหน้าต่างให้ตรงกับห้อง", () -> Math.abs(rend.rollTrim) < 0.05f ? "ตรงกลาง (0°)" : (rend.rollTrim > 0 ? "ตามเข็ม " : "ทวนเข็ม ") + String.format(java.util.Locale.US, "%.1f°", Math.abs(rend.rollTrim)),
-                () -> { rend.rollTrim = Math.max(-15f, Math.round((rend.rollTrim - 0.5f) * 2f) / 2f); saveRoll(); },
-                () -> { rend.rollTrim = Math.min(15f, Math.round((rend.rollTrim + 0.5f) * 2f) / 2f); saveRoll(); });
+        s.toggle("📐", "หน้าต่างหันตรงเข้าจอ (ปิด = เหมือนอยู่ในห้องจริง)", () -> rend.flatWins, () -> rend.flatWins = !rend.flatWins);
         s.toggle("🎈", "หน้าต่างลอยเบาๆ", () -> rend.floaty, () -> rend.floaty = !rend.floaty);
 
         s.cat("","VR");
@@ -741,7 +737,6 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         } catch (Throwable ignored) { }
     }
     private String h3Str() { return rend.h3.mode > 0 ? "\n" + rend.h3.dbg : ""; }
-    private void saveRoll() { try { getSharedPreferences("pvr_view", MODE_PRIVATE).edit().putFloat("roll", rend.rollTrim).apply(); } catch (Throwable ignored) { } }
     private double[] defaults;
     private double[] lastSaved;
 
@@ -751,7 +746,6 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     private void applyPrefs(double[] v) {
-        try { rend.rollTrim = getSharedPreferences("pvr_view", MODE_PRIVATE).getFloat("roll", 0f); } catch (Throwable ignored) { }
         load3d();
         rend.sel = (int) v[0]; rend.pokeS = (int) v[1]; rend.predict = v[2] > 0.5; cam.detW = (int) v[3]; rend.floaty = v[4] > 0.5;
         NvUi.glass = (int) v[5]; rend.cursorSz = (int) v[6]; rend.skel = (int) v[7]; hudOn = v[8] > 0.5;

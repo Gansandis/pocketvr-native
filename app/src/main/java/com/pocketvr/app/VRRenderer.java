@@ -183,9 +183,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         android.opengl.Matrix.multiplyMM(tF, 0, tE, 0, m, 0);
         System.arraycopy(tF, 0, m, 0, 16);
     }
-    public volatile float rollTrim = 0f;                  // (deg, clockwise on the screen) the user's own correction when the windows are not level with the room
-    public volatile boolean levelWorld = true;            // with flatWins: the level of the windows follows the room (they do not turn with the phone when it is rolled); off = level with the screen
-    public volatile boolean flatWins = true;              // every window faces the screen square on: edges level with the screen, no slant or sideways tilt whatever the head does (it keeps its place in the room)
+    public volatile boolean flatWins = false;             // off (default): every window is a real flat thing in the room, seen in true perspective (no roll correction of any kind). On: it is turned square to the screen instead (top edge level with the screen, no perspective)
     public volatile boolean floaty = false;               // windows stay perfectly still unless this is switched on
     public volatile int cursorSz = 0;                     // 0 small and faint, 1 medium, 2 large
     public volatile int sel = 2;              // how things are pressed: 0 pinch, 1 air touch (push the index finger forward), 2 both
@@ -236,7 +234,6 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         final float[] mv = new float[16], mvp = new float[16], inv = new float[16];
         float[] aimV = null;                               // where (a direction in the phone's view) it is to be put when it is placed next to others
         boolean shrunk = false;                            // it was made smaller to fit beside the others (back to the usual size next time it opens)
-        float rollKeep = 0f;                               // degrees of the phone's own tilt it keeps (so it looks straight to the eyes when the head is a little tilted)
         float wx, wy, wz;                                  // where the user stood when this window was put up (walk-around)
         float yawA, pitchA, dragYawOff, dragPitchOff, dragS0 = 1f, dragSize0 = 1f, dist = 1.5f, dragD0 = 1.5f;
         final float phase = (float) (Math.random() * 6.28);
@@ -359,27 +356,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.wx += w.dist * (mx - bx); w.wy += w.dist * (my - by); w.wz += w.dist * (mz - bz);                    // the middle stays where it is: the origin moves with the turn
         float rx = -ny, ry = nx;                                                                              // right (level)
         float ux = -st * nx, uy = -st * ny, uz = ct;                                                          // up (level)
-        float ca = (float) Math.cos(Math.toRadians(w.rollKeep)), sa = (float) Math.sin(Math.toRadians(w.rollKeep));
-        r[0] = rx * ca + ux * sa; r[1] = ry * ca + uy * sa; r[2] = uz * sa;                                  // turned about its back axis by the kept tilt
-        r[4] = -rx * sa + ux * ca; r[5] = -ry * sa + uy * ca; r[6] = uz * ca;
+        r[0] = rx; r[1] = ry; r[2] = 0f;                                                                      // top edge level with the floor: no sideways tilt at all
+        r[4] = ux; r[5] = uy; r[6] = uz;
         r[8] = mx; r[9] = my; r[10] = mz;
-    }
-
-    // how much of the phone's own sideways tilt a new window keeps: a small head tilt is kept (the window looks straight in the view),
-    // a big one (phone held upright, 90 degrees) is not: the window then stands level in the room
-    private static float keepOf(float rollDeg) {
-        float a = Math.abs(rollDeg);
-        float k = a <= 25f ? 1f : (a >= 50f ? 0f : (50f - a) / 25f);
-        return rollDeg * k;
-    }
-    private static float headRoll(float[] r) {                           // r: the window turn right after it was made from the phone's turn
-        float bx = r[8], by = r[9], bz = r[10];
-        if (Math.abs(bz) > 0.97f) return 0f;
-        float rl = (float) Math.sqrt(bx * bx + by * by);
-        float rx = -by / rl, ry = bx / rl;                              // level right
-        float ux = -bz * ry, uy = bz * rx, uz = bx * ry - by * rx;       // level up = back x right
-        float dr = r[0] * rx + r[1] * ry, du = r[0] * ux + r[1] * uy + r[2] * uz;
-        return (float) Math.toDegrees(Math.atan2(du, dr));
     }
 
     // remove the sideways tilt (roll) from a window turn: keep where it faces, make its top edge point up (world up = +Z of the rotation sensor)
@@ -686,7 +665,6 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             else w.animOn = false;
             android.opengl.Matrix.transposeM(tA, 0, rn, 0);
             w.rot = tA.clone();
-            w.rollKeep = 0f;                                           // like a real thing in the room: level with the floor, whatever the head's tilt was when it came up (it used to keep up to 25 deg of it, which left windows rolled once the head was straight again)
             if (w.aimV != null) aimDir(w, w.aimV);
             else if (w.offYaw != 0f || w.offPitch != 0f) aimWin(w, w.offYaw, w.offPitch);
             w.scale = w.wantScale > 0 ? w.wantScale : openScale(w);
@@ -710,7 +688,6 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             else {
                 android.opengl.Matrix.transposeM(tA, 0, rn, 0);
                 w.rot = tA.clone();
-                w.rollKeep = 0f;
                 if (w.aimV != null) aimDir(w, w.aimV);
                 else if (w.offYaw != 0f || w.offPitch != 0f) aimWin(w, w.offYaw, w.offPitch);
                 w.wx = ux; w.wy = uy; w.wz = uz;
@@ -766,29 +743,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float cx = (System.nanoTime() - w.confT0) / 1e6f / 420f;
             if (cx >= 1f) w.confT0 = 0; else { float cr = 1f - cx; w.animA *= 0.38f + 0.62f * (1f - cr * cr * cr); }
         }
-        // no sideways lean in the picture: the window turns about its own centre (about the line to your eyes) until its top edge points up on the screen. This is worked out
-        // straight from the geometry of where the window is seen, so a window off to the side or below eye level does not show the slanted top and bottom edges of a wall
-        // (and it does not depend on a roll angle that gets noisy when you look up or down). A big difference (the phone held upright) fades out: then the window stays level in the room.
         // a window is a thing in the room: its top edge is made level with the floor here every picture (whatever tilt its stored turn may still carry)
         float[] rl = lvl; System.arraycopy(w.rot, 0, rl, 0, 16); levelRoll(rl);
-        // (the extra roll that was tried here to take out the slant of a window seen from the side turned the windows far too much: taken out again)
         android.opengl.Matrix.translateM(mM, 0, rl, 0, bx + sx, by + sy, -w.dist + bz + sz);
         if (tilt != 0f) android.opengl.Matrix.rotateM(mM, 0, tilt, 0f, 1f, 0f);
         shiftBy(w, mM, ux, uy, uz);
         android.opengl.Matrix.multiplyMM(w.mv, 0, rn, 0, mM, 0);
-        if (flatWins) {                                                // the place stays, the turn goes: square to the view axis, top edge level with the screen
+        if (flatWins) {                                                // optional: the place stays, the turn goes: square to the view axis, top edge level with the screen
             float fx = w.mv[12], fy = w.mv[13], fz = w.mv[14];
             java.util.Arrays.fill(w.mv, 0f);
             w.mv[0] = 1f; w.mv[5] = 1f; w.mv[10] = 1f; w.mv[15] = 1f;
             w.mv[12] = fx; w.mv[13] = fy; w.mv[14] = fz;
-            if (levelWorld) {                                          // roll about the view axis so that the window's top points to the room's up (up = (0,0,1) in the room)
-                float lx = rn[8], ly = rn[9], ul = (float) Math.sqrt(lx * lx + ly * ly);
-                if (ul > 0.08f) {
-                    float f = Math.min(1f, (ul - 0.08f) / 0.27f);      // looking nearly straight up or down: no side to level against, fades out
-                    float phi = (float) Math.atan2(-lx, ly) * f - (float) Math.toRadians(rollTrim), c = (float) Math.cos(phi), sn = (float) Math.sin(phi);   // rollTrim: clockwise degrees added by the user
-                    w.mv[0] = c; w.mv[1] = sn; w.mv[4] = -sn; w.mv[5] = c;
-                }
-            }
         }
         android.opengl.Matrix.multiplyMM(w.mvp, 0, mP, 0, w.mv, 0);
         android.opengl.Matrix.invertM(w.inv, 0, w.mv, 0);
