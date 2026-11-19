@@ -20,7 +20,7 @@ import java.util.ArrayList;
 final class Nv3DHands {
     // ---- settings (the settings screen changes them, the render thread reads them) ----
     volatile int mode = 0;               // 0 off, 1 hands only, 2 the room + 3D things, 3 the whole scene (sky, floor and towers instead of the camera picture)
-    volatile int lastMode = 2;           // what the gesture switches on
+    volatile int lastMode = 1;           // what the gesture switches on
     volatile int style = 0;              // hand look: 0 glass, 1 solid, 2 bones
     volatile int color = 0;              // index into COLORS
     volatile float opacity = 0.9f;       // 0.3 .. 1
@@ -28,12 +28,14 @@ final class Nv3DHands {
     volatile boolean gesture = true;     // the sign switches the mode
     volatile boolean gestureBoth = false;// the sign counts with either hand (otherwise: the left hand only)
     volatile boolean hideCam = true;     // while on: no outline / skeleton of the hand from the camera picture
-    volatile int nObj = 7;               // how many 3D things in the room (modes 2 and 3)
+    static final boolean OBJECTS = false;   // the floating 3D things are switched off for good (they were in the way); the code stays for the game that comes later
+    volatile int nObj = 0;               // how many 3D things in the room (only when OBJECTS is on)
+    private int objN() { return OBJECTS ? Math.max(0, Math.min(12, nObj)) : 0; }
     volatile boolean respawn = false;    // put the things in front of you again
     volatile String dbg = "";
     volatile int ilyHand = -1;           // which hand makes the sign right now
 
-    static final String[] MODE_N = {"ปิด", "มือ 3D อย่างเดียว", "ห้องจริง + วัตถุ 3D", "ฉาก 3D เต็มจอ (ไม่เห็นกล้อง)"};
+    static final String[] MODE_N = {"ปิด", "มือ 3D อย่างเดียว", "(ไม่ใช้แล้ว)", "ฉาก 3D เต็มจอ (ไม่เห็นกล้อง)"};
     static final String[] STYLE_N = {"แก้วเรืองแสง", "ทึบ (สวยสุด)", "โครงกระดูก"};
     static final String[] COLOR_N = {"ฟ้าเรือง", "สีผิว", "ขาวมุก", "ชมพูนีออน", "เขียวนีออน", "ทอง"};
     static final int[] COLORS = {0x58D6FF, 0xE9B692, 0xEFEFF5, 0xFF6BB0, 0x62FF9F, 0xF2C14E};
@@ -331,7 +333,7 @@ final class Nv3DHands {
         float fx = -rn[2], fy = -rn[6];
         if (Math.hypot(fx, fy) < 0.3) { fx = -rn[1]; fy = -rn[5]; }
         float yaw = (float) Math.atan2(fy, fx);
-        int n = Math.max(0, Math.min(12, nObj));
+        int n = objN();
         int cols = Math.max(1, (n + 1) / 2);                              // two rows, side by side inside what the screen shows (about +-35 degrees)
         float step = cols > 1 ? Math.min(0.34f, 1.2f / (cols - 1)) : 0f;
         for (int i = 0; i < n; i++) {
@@ -734,7 +736,7 @@ final class Nv3DHands {
     }
 
     void toggle() {
-        if (mode == 0) mode = (lastMode >= 1 && lastMode <= 3) ? lastMode : 2;
+        if (mode == 0) mode = (lastMode == 1 || lastMode == 3) ? lastMode : 1;
         else { lastMode = mode; mode = 0; }
     }
 
@@ -753,7 +755,7 @@ final class Nv3DHands {
             fade[i] = target > fade[i] ? Math.min(target, fade[i] + dt * 10f) : Math.max(target, fade[i] - dt * 6f);
         }
         if (md >= 2) {
-            if (prevMode < 2 || respawn || objs.size() != Math.max(0, Math.min(12, nObj))) { respawn = false; spawn(rn, ex, ey, ez); }
+            if (prevMode < 2 || respawn || objs.size() != objN()) { respawn = false; spawn(rn, ex, ey, ez); }
             stepObjects(dt, rn, ex, ey, ez, nowMs / 1000f);
             buildObjects(rn, ex, ey, ez);
         } else { if (!objs.isEmpty()) { objs.clear(); held[0] = held[1] = null; } on = 0; }

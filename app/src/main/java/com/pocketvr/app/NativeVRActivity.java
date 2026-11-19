@@ -224,7 +224,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.214 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.215 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -723,7 +723,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         try {
             Nv3DHands h = rend.h3;
             getSharedPreferences("pvr_3d", MODE_PRIVATE).edit().putInt("style", h.style).putInt("color", h.color).putFloat("op", h.opacity).putFloat("th", h.thick)
-                    .putBoolean("ges", h.gesture).putBoolean("both", h.gestureBoth).putBoolean("hide", h.hideCam).putInt("n", h.nObj).putInt("last", h.lastMode).apply();
+                    .putBoolean("ges", h.gesture).putBoolean("both", h.gestureBoth).putBoolean("hide", h.hideCam).putInt("last", h.lastMode).apply();
         } catch (Throwable ignored) { }
     }
     private void load3d() {
@@ -733,7 +733,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             h.style = Math.max(0, Math.min(2, sp.getInt("style", 0))); h.color = Math.max(0, Math.min(Nv3DHands.COLORS.length - 1, sp.getInt("color", 0)));
             h.opacity = Math.max(0.3f, Math.min(1f, sp.getFloat("op", 0.9f))); h.thick = Math.max(0.7f, Math.min(1.4f, sp.getFloat("th", 1f)));
             h.gesture = sp.getBoolean("ges", true); h.gestureBoth = sp.getBoolean("both", false); h.hideCam = sp.getBoolean("hide", true);
-            h.nObj = Math.max(0, Math.min(12, sp.getInt("n", 7))); h.lastMode = Math.max(1, Math.min(3, sp.getInt("last", 2)));
+            h.lastMode = sp.getInt("last", 1) == 3 ? 3 : 1;
         } catch (Throwable ignored) { }
     }
     private String h3Str() { return rend.h3.mode > 0 ? "\n" + rend.h3.dbg : ""; }
@@ -1085,18 +1085,12 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         tools.add(new NvUi.Btn("🌆", () -> "ฉากเมืองเสมือน", () -> rend.envScene == 1 ? "เปิดอยู่ (แทนภาพกล้อง)" : "ปิดอยู่ (เห็นห้องจริง)", () -> rend.envScene == 1, 0xFF8A5AE0, 0xFF5A32A8, () -> rend.envScene = rend.envScene == 1 ? 0 : 1));
         tools.add(new NvUi.Btn("🧊", () -> "โหมด 3D", () -> Nv3DHands.MODE_N[Math.max(0, Math.min(3, rend.h3.mode))] + " — กดเพื่อเปลี่ยน", () -> rend.h3.mode > 0, 0xFF3FA7D6, 0xFF2A6C99, () -> {
             Nv3DHands h = rend.h3;
-            h.mode = (h.mode + 1) % 4;
+            h.mode = h.mode == 0 ? 1 : h.mode == 1 ? 3 : 0;               // off -> hands only -> full 3D scene -> off
             if (h.mode > 0) h.lastMode = h.mode;
             save3d();
         }));
         tools.add(new NvUi.Btn("🤟", () -> "ท่ามือซ้าย 🤟🏻 สลับโหมด 3D", () -> rend.h3.gesture ? "เปิดอยู่ (ค้างท่า 1 วินาที)" : "ปิดอยู่", () -> rend.h3.gesture, GA, GB, () -> { rend.h3.gesture = !rend.h3.gesture; save3d(); }));
         tools.add(new NvUi.Btn("🙌", () -> "ท่า 🤟 ใช้ได้ทั้งสองมือ", () -> rend.h3.gestureBoth ? "เปิดอยู่ (เผื่อมือซ้ายไม่ติด)" : "ปิดอยู่ (เฉพาะมือซ้าย)", () -> rend.h3.gestureBoth, GA, GB, () -> { rend.h3.gestureBoth = !rend.h3.gestureBoth; save3d(); }));
-        tools.add(new NvUi.Btn("🎯", () -> "วัตถุ 3D: " + rend.h3.nObj + " ชิ้น", () -> "กดเพื่อเปลี่ยนจำนวน (โหมดห้อง/ฉากเต็ม)", null, GA, GB, () -> {
-            int n = rend.h3.nObj;
-            rend.h3.nObj = n < 3 ? 3 : n < 5 ? 5 : n < 7 ? 7 : n < 9 ? 9 : n < 12 ? 12 : 0;
-            save3d();
-        }));
-        tools.add(new NvUi.Btn("🔄", () -> "วางวัตถุ 3D ใหม่", () -> "วางตรงหน้าในระยะเอื้อมถึง", null, GA, GB, () -> rend.h3.respawn = true));
         tools.add(new NvUi.Btn("🦍", () -> "Gorilla World", () -> "เปิดเกมกอริลลา (ต้องติดตั้งแยก)", null, GA, GB, () -> runOnUiThread(() -> {
             try {
                 android.content.Intent gi = getPackageManager().getLaunchIntentForPackage("com.htmltoapk.gorillaworld");
