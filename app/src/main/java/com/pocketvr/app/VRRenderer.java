@@ -338,9 +338,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.rot = tF.clone();
     }
 
-    // The window stands like a wall (top edge up, no sideways tilt) and leans a little towards the eyes: below eye level it tilts its face up, above eye level it tilts down,
-    // by half the angle it sits above / below (at most TILT_MAX), so it is easy to read without ever lying flat. It turns about its own centre, so it does not move.
-    private static final float TILT_K = 0.75f, TILT_MAX = 40f;   // below eye level the face tilts up, above it tilts down (towards the eyes)
+    // Like the windows of a Quest: the window stands like a wall (top edge level with the floor, no sideways tilt) and its face looks at the eyes:
+    // below eye level it tilts its face up, above eye level it tilts down, by the angle it sits below / above (TILT_K = 1: looking exactly at the eyes; at most TILT_MAX).
+    // It turns about its own centre, so it does not move.
+    private static final float TILT_K = 1.0f, TILT_MAX = 55f;   // below eye level the face tilts up, above it tilts down (towards the eyes)
     private void uprightAboutCentre(Win w) {
         float[] r = w.rot;
         if (r == null) return;
@@ -813,6 +814,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (dw.rot != null && !Float.isNaN(dw.yawA) && !Float.isNaN(dw.pitchA)) {
                 dw.svYaw = dw.yawA; dw.svPitch = dw.pitchA; dw.svScale = dw.scale; dw.svDist = dw.dist;      // (no longer remembered for next time: a window that is opened always slides in next to the others)
             }
+            if (dw.rot != null) { rebase(dw, sux, suy, suz); uprightAboutCentre(dw); }      // let go: it turns to look at where the eyes are now (same place in the room), and stays exactly like that
             dw.c.setDragging(false);
         }
         dragWin = null;
