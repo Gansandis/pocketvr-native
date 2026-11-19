@@ -224,7 +224,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.211 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.212 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -631,6 +631,15 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.toggle("", "ล็อกมือผู้ใช้ (ตามมือที่อยู่ในภาพต่อเนื่อง 1 วินาที มือใหม่จากที่อื่นไม่รับ)", () -> hands.lockMine, () -> hands.lockMine = !hands.lockMine);
         s.toggle("🖐", "เมนูบนฝ่ามือซ้าย (แบมือซ้าย จิ้มไอคอนด้วยนิ้วมือขวา)", () -> rend.palmMenu, () -> rend.palmMenu = !rend.palmMenu);
         s.cycle("🫱", "มือหลัก (ตอนยกสองมือ)", () -> rend.mainHand == 0 ? "มือซ้าย" : "มือขวา", () -> rend.mainHand = rend.mainHand == 0 ? 1 : 0);
+        s.cycle("🖐", "โมเดลมือ 3D: แบบ", () -> Nv3DHands.STYLE_N[Math.max(0, Math.min(Nv3DHands.STYLE_N.length - 1, rend.h3.style))], () -> { rend.h3.style = (rend.h3.style + 1) % Nv3DHands.STYLE_N.length; save3d(); });
+        s.cycle("🎨", "โมเดลมือ 3D: สี", () -> Nv3DHands.COLOR_N[Math.max(0, Math.min(Nv3DHands.COLOR_N.length - 1, rend.h3.color))], () -> { rend.h3.color = (rend.h3.color + 1) % Nv3DHands.COLOR_N.length; save3d(); });
+        s.step("🔆", "โมเดลมือ 3D: ความทึบ", () -> Math.round(rend.h3.opacity * 100f) + "%",
+                () -> { rend.h3.opacity = Math.max(0.3f, Math.round((rend.h3.opacity - 0.1f) * 10f) / 10f); save3d(); },
+                () -> { rend.h3.opacity = Math.min(1f, Math.round((rend.h3.opacity + 0.1f) * 10f) / 10f); save3d(); });
+        s.step("☝", "โมเดลมือ 3D: ความหนานิ้ว", () -> Math.round(rend.h3.thick * 100f) + "%",
+                () -> { rend.h3.thick = Math.max(0.7f, Math.round((rend.h3.thick - 0.1f) * 10f) / 10f); save3d(); },
+                () -> { rend.h3.thick = Math.min(1.4f, Math.round((rend.h3.thick + 0.1f) * 10f) / 10f); save3d(); });
+        s.toggle("🙈", "โมเดลมือ 3D: ซ่อนเส้นรอบมือจากกล้องตอนเปิดโหมด 3D", () -> rend.h3.hideCam, () -> { rend.h3.hideCam = !rend.h3.hideCam; save3d(); });
 
         s.cat("","Performance");
         s.cycle("🌡", "ความร้อน / ประหยัดพลังงาน", () -> (eco == 0 ? "ปิด" : eco == 1 ? "อัตโนมัติ" : eco == 2 ? "ประหยัด 45 fps" : "ประหยัดมาก 30 fps") + " • " + Math.round(tempC) + "°C" + (ecoLevel > 0 ? " (กำลังลดความเร็ว)" : ""), () -> eco = (eco + 1) % 4);
@@ -654,32 +663,6 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 () -> { rend.rollTrim = Math.max(-15f, Math.round((rend.rollTrim - 0.5f) * 2f) / 2f); saveRoll(); },
                 () -> { rend.rollTrim = Math.min(15f, Math.round((rend.rollTrim + 0.5f) * 2f) / 2f); saveRoll(); });
         s.toggle("🎈", "หน้าต่างลอยเบาๆ", () -> rend.floaty, () -> rend.floaty = !rend.floaty);
-
-        s.cat("","3D");
-        final String[] m3n = {"ปิด", "มือ 3D อย่างเดียว", "ห้องจริง + วัตถุ 3D", "ฉาก 3D เต็มจอ (ไม่เห็นกล้อง)"};
-        final String[] st3n = {"แก้วเรืองแสง", "ทึบ", "โครงกระดูก"};
-        final String[] co3n = {"ฟ้าเรือง", "สีผิว", "ขาวมุก", "ชมพูนีออน", "เขียวนีออน", "ทอง"};
-        s.cycle("🧊", "โหมด 3D", () -> m3n[Math.max(0, Math.min(3, rend.h3.mode))], () -> {
-            Nv3DHands h = rend.h3;
-            h.mode = (h.mode + 1) % 4;
-            if (h.mode > 0) h.lastMode = h.mode;
-            save3d();
-        });
-        s.toggle("🤟", "ท่ามือซ้าย 🤟🏻 ค้าง 1 วินาที = เปิด/ปิดโหมด 3D", () -> rend.h3.gesture, () -> { rend.h3.gesture = !rend.h3.gesture; save3d(); });
-        s.toggle("🙌", "ท่า 🤟 ใช้ได้ทั้งสองมือ (ถ้ามือซ้ายไม่ติด)", () -> rend.h3.gestureBoth, () -> { rend.h3.gestureBoth = !rend.h3.gestureBoth; save3d(); });
-        s.cycle("🖐", "แบบมือ 3D", () -> st3n[Math.max(0, Math.min(2, rend.h3.style))], () -> { rend.h3.style = (rend.h3.style + 1) % 3; save3d(); });
-        s.cycle("🎨", "สีมือ 3D", () -> co3n[Math.max(0, Math.min(co3n.length - 1, rend.h3.color))], () -> { rend.h3.color = (rend.h3.color + 1) % co3n.length; save3d(); });
-        s.step("🔆", "ความทึบมือ 3D", () -> Math.round(rend.h3.opacity * 100f) + "%",
-                () -> { rend.h3.opacity = Math.max(0.3f, Math.round((rend.h3.opacity - 0.1f) * 10f) / 10f); save3d(); },
-                () -> { rend.h3.opacity = Math.min(1f, Math.round((rend.h3.opacity + 0.1f) * 10f) / 10f); save3d(); });
-        s.step("☝", "ความหนานิ้ว", () -> Math.round(rend.h3.thick * 100f) + "%",
-                () -> { rend.h3.thick = Math.max(0.7f, Math.round((rend.h3.thick - 0.1f) * 10f) / 10f); save3d(); },
-                () -> { rend.h3.thick = Math.min(1.4f, Math.round((rend.h3.thick + 0.1f) * 10f) / 10f); save3d(); });
-        s.toggle("🙈", "ซ่อนเส้นรอบมือจากกล้องตอนเปิด 3D", () -> rend.h3.hideCam, () -> { rend.h3.hideCam = !rend.h3.hideCam; save3d(); });
-        s.step("🎯", "จำนวนวัตถุ 3D (โหมดห้อง/ฉากเต็ม)", () -> rend.h3.nObj + " ชิ้น",
-                () -> { rend.h3.nObj = Math.max(0, rend.h3.nObj - 1); save3d(); },
-                () -> { rend.h3.nObj = Math.min(12, rend.h3.nObj + 1); save3d(); });
-        s.action("🔄", "วางวัตถุ 3D ใหม่ตรงหน้า", "วาง", () -> rend.h3.respawn = true);
 
         s.cat("","VR");
         s.toggle("🥽", "แยกจอซ้าย-ขวา", () -> rend.stereo, () -> rend.stereo = !rend.stereo);
@@ -1106,6 +1089,20 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         menu.home.add(new NvUi.Btn("🎬", () -> "โหมดโรงหนัง", () -> rend.cinema ? "ห้องมืด เห็นแค่จอ" : "ปิดอยู่ (เห็นห้องจริง)", () -> rend.cinema, GA, GB, () -> { rend.cinema = !rend.cinema; rend.recenter = true; }));
         menu.home.add(new NvUi.Btn("⚙", () -> "ตั้งค่า", () -> wSet.visible ? "เปิดอยู่" : "ควบคุม แสดงผล VR ทดลอง", () -> wSet.visible, GA, GB, () -> rend.toggle(wSet, 0f, 5f)));
         tools.add(new NvUi.Btn("🌆", () -> "ฉากเมืองเสมือน", () -> rend.envScene == 1 ? "เปิดอยู่ (แทนภาพกล้อง)" : "ปิดอยู่ (เห็นห้องจริง)", () -> rend.envScene == 1, 0xFF8A5AE0, 0xFF5A32A8, () -> rend.envScene = rend.envScene == 1 ? 0 : 1));
+        tools.add(new NvUi.Btn("🧊", () -> "โหมด 3D", () -> Nv3DHands.MODE_N[Math.max(0, Math.min(3, rend.h3.mode))] + " — กดเพื่อเปลี่ยน", () -> rend.h3.mode > 0, 0xFF3FA7D6, 0xFF2A6C99, () -> {
+            Nv3DHands h = rend.h3;
+            h.mode = (h.mode + 1) % 4;
+            if (h.mode > 0) h.lastMode = h.mode;
+            save3d();
+        }));
+        tools.add(new NvUi.Btn("🤟", () -> "ท่ามือซ้าย 🤟🏻 สลับโหมด 3D", () -> rend.h3.gesture ? "เปิดอยู่ (ค้างท่า 1 วินาที)" : "ปิดอยู่", () -> rend.h3.gesture, GA, GB, () -> { rend.h3.gesture = !rend.h3.gesture; save3d(); }));
+        tools.add(new NvUi.Btn("🙌", () -> "ท่า 🤟 ใช้ได้ทั้งสองมือ", () -> rend.h3.gestureBoth ? "เปิดอยู่ (เผื่อมือซ้ายไม่ติด)" : "ปิดอยู่ (เฉพาะมือซ้าย)", () -> rend.h3.gestureBoth, GA, GB, () -> { rend.h3.gestureBoth = !rend.h3.gestureBoth; save3d(); }));
+        tools.add(new NvUi.Btn("🎯", () -> "วัตถุ 3D: " + rend.h3.nObj + " ชิ้น", () -> "กดเพื่อเปลี่ยนจำนวน (โหมดห้อง/ฉากเต็ม)", null, GA, GB, () -> {
+            int n = rend.h3.nObj;
+            rend.h3.nObj = n < 3 ? 3 : n < 5 ? 5 : n < 7 ? 7 : n < 9 ? 9 : n < 12 ? 12 : 0;
+            save3d();
+        }));
+        tools.add(new NvUi.Btn("🔄", () -> "วางวัตถุ 3D ใหม่", () -> "วางตรงหน้าในระยะเอื้อมถึง", null, GA, GB, () -> rend.h3.respawn = true));
         tools.add(new NvUi.Btn("🦍", () -> "Gorilla World", () -> "เปิดเกมกอริลลา (ต้องติดตั้งแยก)", null, GA, GB, () -> runOnUiThread(() -> {
             try {
                 android.content.Intent gi = getPackageManager().getLaunchIntentForPackage("com.htmltoapk.gorillaworld");

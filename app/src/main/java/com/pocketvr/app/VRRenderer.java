@@ -2602,6 +2602,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             GLES20.glUniformMatrix3fv(ul(progPano, "rm"), 1, false, rm3, 0);
             GLES20.glUniform1f(ul(progPano, "lon0"), panoLon0);
             drawQuad(progPano);
+        } else if (h3.mode == 3 && !cinema && h3.drawScene(mP, rotView, sux, suy, suz)) {
+            // the 3D place (sky, floor, towers) is drawn by Nv3DHands, as real 3D: it turns and moves with the head
         } else if ((envScene == 1 || h3.mode == 3) && !cinema) {
             float[] m = rotView;
             rm3[0] = m[0]; rm3[1] = m[1]; rm3[2] = m[2]; rm3[3] = m[4]; rm3[4] = m[5]; rm3[5] = m[6]; rm3[6] = m[8]; rm3[7] = m[9]; rm3[8] = m[10];
