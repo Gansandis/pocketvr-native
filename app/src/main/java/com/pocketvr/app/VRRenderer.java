@@ -2497,10 +2497,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             try {
                 long age = android.os.SystemClock.elapsedRealtimeNanos() - st.getTimestamp();
                 if (age > 8_000_000L && age < 350_000_000L) {
-                    camLagMeasured = camLagMeasured <= 0f ? age / 1e6f : camLagMeasured + (age / 1e6f - camLagMeasured) * 0.15f;
-                    lagNs = (long) (camLagMeasured * 1e6f);
+                    camLagMeasured = camLagMeasured <= 0f ? age / 1e6f : camLagMeasured + (age / 1e6f - camLagMeasured) * 0.15f;     // (only shown in the settings)
+                    lagNs = age;                                   // this very picture's own age: smoothing it would only add the jitter of when the screen happened to pick it up
                 } else camLagMeasured = 0f;
             } catch (Throwable ignored) { camLagMeasured = 0f; }
+            NvMotion mo2 = motion;
+            if (mo2 != null) lagNs += (long) (mo2.offMs * 1e6f);           // how much older the picture really is than its time says (found by NvLagTune, the camera against the turn sensor)
             frameRot = reproj ? rotBefore(System.nanoTime() - lagNs) : null;
         }
         int pc = panoCmd;

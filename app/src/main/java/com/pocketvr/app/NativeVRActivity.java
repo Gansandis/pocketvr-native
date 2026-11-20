@@ -157,7 +157,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                     for (int k = 0; k < 4; k++) { out[k] = c * m[k] - s * m[4 + k]; out[4 + k] = s * m[k] + c * m[4 + k]; }
                     rend.setRotation(out);
                 } else rend.setRotation(m);
-                if (motion != null && (motion.enabled || motion.visOn)) motion.pushRot(e.timestamp, rend.rotCopy());
+                if (motion != null && (motion.enabled || motion.visOn)) motion.pushRot(android.os.SystemClock.elapsedRealtimeNanos(), rend.rotCopy());       // when it ARRIVED: the same time the renderer files the turn under
             } catch (Throwable ignored) { }
         }
         @Override public void onAccuracyChanged(android.hardware.Sensor s, int acc) { }
@@ -224,7 +224,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.215 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.216 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -277,6 +277,20 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         if (!vis.on) return "\nภาพช่วยกันไหล: ปิด";
         return String.format(java.util.Locale.US, "\nภาพช่วยกันไหล: %s | จุดที่ใช้ %d | เหลือคลาด %+.2f°/ว | เรียนรู้ไหลของเซนเซอร์ %+.2f°/ว | แก้รวม %+.2f° %s", vis.good ? "ทำงาน" : "รอภาพดีๆ", motion.resUsed, Math.toDegrees(vis.lastRate), Math.toDegrees(vis.biasRate), Math.toDegrees(vis.adj()), vis.note);
     }
+    private long lagSavedMs = 0L; private float lagSaved = 0f;
+    private String lagStr() {
+        NvLagTune t = motion.tune;
+        if (!t.on) return "\nจูนเวลากล้อง-ไจโร: ปิด";
+        long now = System.currentTimeMillis();
+        if (now - lagSavedMs > 10000 && Math.abs(t.offMs - lagSaved) >= 1.0 && !t.isDead()) {          // keep what it found for the next time
+            lagSavedMs = now; lagSaved = (float) t.offMs;
+            try { getSharedPreferences("pvr_3d", MODE_PRIVATE).edit().putFloat("camOff", lagSaved).apply(); } catch (Throwable ignored) { }
+        }
+        return String.format(java.util.Locale.US, "\nจูนเวลากล้อง-ไจโร: %s | ภาพเก่ากว่าเวลาที่บอก %+.0f ms | คลาดล่าสุด %+.0f ms | รอบ %d %s", t.isDead() ? "ปิดตัวเอง" : t.good ? "ทำงาน" : "รอให้หันหัว", t.offMs, t.lastE, t.batches, t.note);
+    }
+    private void loadLag() {
+        try { motion.tune.offMs = Math.max(-NvLagTune.MAX_OFF, Math.min(NvLagTune.MAX_OFF, getSharedPreferences("pvr_3d", MODE_PRIVATE).getFloat("camOff", 0f))); lagSaved = (float) motion.tune.offMs; } catch (Throwable ignored) { }
+    }
     private String winStr() {                                  // where every window's middle is, seen from the middle of the screen (+ right, + up): to find out why a window is off to a side
         StringBuilder sb = new StringBuilder();
         try {
@@ -287,7 +301,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 sb.append(t).append(String.format(java.util.Locale.US, " x%+.1f y%+.1f", w.yawA, w.pitchA)).append(w.settleUntil != 0L ? " [ตามหัว]" : " [ล็อก]");
             }
         } catch (Throwable ignored) { }
-        return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)\nเซนเซอร์ชนิด %d ความแม่น %d | หัวหมุน %.1f°/ว | ช้า %.2f°/ว | %s", dbgYaw, dbgAdj, dbgType, dbgAcc, dbgTurn, dbgSlow, dbgLock ? "กำลังล็อกทิศ" : "ไม่ล็อกทิศ") + visStr() + h3Str();
+        return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)\nเซนเซอร์ชนิด %d ความแม่น %d | หัวหมุน %.1f°/ว | ช้า %.2f°/ว | %s", dbgYaw, dbgAdj, dbgType, dbgAcc, dbgTurn, dbgSlow, dbgLock ? "กำลังล็อกทิศ" : "ไม่ล็อกทิศ") + visStr() + lagStr() + h3Str();
     }
     private long memT = 0; private String memTxt = ""; private int memBase = -1; private long memBaseT = 0;
     private volatile boolean fgNow = true; private volatile int trimLvl = 0;
@@ -674,6 +688,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.step("🕐", "ความหน่วงของภาพกล้อง (ปรับให้ภาพนิ่งตอนหันหัว)", () -> rend.camLagMeasured > 0f ? "อัตโนมัติ " + Math.round(rend.camLagMeasured) + " ms" : rend.camLagMs + " ms",
                 () -> rend.camLagMs = Math.max(0, rend.camLagMs - 10),
                 () -> rend.camLagMs = Math.min(250, rend.camLagMs + 10));
+        s.toggle("⏲", "จูนเวลากล้อง-ไจโรเอง (ให้ภาพกับหน้าต่างไม่ไหลสวนตอนหันหัว)", () -> motion.tune.on, () -> { motion.tune.on = !motion.tune.on; if (motion.tune.on) motion.tune.reset(); else motion.offMs = 0f; });
         s.step("👁", "แก้ภาพซ้อน (ขยับเข้าหาจมูก)", () -> String.format("%.2f", rend.eyeShift),
                 () -> rend.eyeShift = Math.max(-0.20f, Math.round((rend.eyeShift - 0.03f) * 100f) / 100f),
                 () -> rend.eyeShift = Math.min(0.40f, Math.round((rend.eyeShift + 0.03f) * 100f) / 100f));
@@ -746,7 +761,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     private void applyPrefs(double[] v) {
-        load3d();
+        load3d(); loadLag();
         rend.sel = (int) v[0]; rend.pokeS = (int) v[1]; rend.predict = v[2] > 0.5; cam.detW = (int) v[3]; rend.floaty = v[4] > 0.5;
         NvUi.glass = (int) v[5]; rend.cursorSz = (int) v[6]; rend.skel = (int) v[7]; hudOn = v[8] > 0.5;
         rend.sharpen = (float) v[9]; rend.stereo = v[10] > 0.5; rend.lens = (int) v[11]; rend.eyeShift = (float) v[12]; compass = v[13] > 0.5;

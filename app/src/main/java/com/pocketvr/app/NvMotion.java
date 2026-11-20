@@ -66,7 +66,7 @@ public class NvMotion {
     private final long[] tss = new long[K + 1];
     private byte[] prev, cur;
     private int wr = 0, count = 0;
-    private float[] rotPrev = null;
+    private float[] rotPrev = null, rotPrevAlt = null, rotNewAlt = null;
     public volatile int tracked = 0, usedN = 0, looks = 0;     // frames = how many pictures it has looked at
     public volatile String err = "";
     private long lastMs = 0;
@@ -79,6 +79,11 @@ public class NvMotion {
     private int rhead = 0;
     public volatile boolean tsReal = false;             // camera times are on the same clock as the sensors
     public volatile int lagMs = 70;                     // otherwise: assume the picture is this old when it arrives
+    /** finds by itself how much older the picture really is than its time says (see NvLagTune); offMs is added to the picture's age everywhere */
+    public final NvLagTune tune = new NvLagTune();
+    public volatile float offMs = 0f;
+    private static final long ALT_NS = 20_000_000L;      // the same pictures are also looked up this much earlier, to see how the answer changes with the lag
+    private final float[][] rotsAlt = new float[K + 1][];
     public volatile String how = "", size = "";
 
     public synchronized void pushRot(long tsNs, float[] m) {
@@ -86,13 +91,23 @@ public class NvMotion {
         rts[rhead] = tsNs; rms[rhead] = m.clone();
     }
     private synchronized float[] rotAt(long tsNs) {
-        float[] best = null; long bd = Long.MAX_VALUE;
+        // the turn at that moment, in between the two readings around it (the same as the renderer does), so a few ms more or less really changes the answer
+        float[] a = null, b = null; long ta = Long.MIN_VALUE, tb = Long.MAX_VALUE, newest = Long.MIN_VALUE;
         for (int i = 0; i < RN; i++) {
             if (rms[i] == null) continue;
-            long d = Math.abs(rts[i] - tsNs);
-            if (d < bd) { bd = d; best = rms[i]; }
+            if (rts[i] > newest) newest = rts[i];
+            if (rts[i] <= tsNs && rts[i] > ta) { ta = rts[i]; a = rms[i]; }
+            if (rts[i] > tsNs && rts[i] < tb) { tb = rts[i]; b = rms[i]; }
         }
-        return (best != null && bd < 150_000_000L) ? best : null;     // nothing close enough: do not guess
+        if (tsNs > newest + 15_000_000L) return null;                // a moment the sensor has not told us about yet: do not use the latest one for it
+        if (a == null && b == null) return null;
+        if (a == null) return (tb - tsNs) < 150_000_000L ? b : null;
+        if (b == null) return (tsNs - ta) < 150_000_000L ? a : null;
+        if (tb - ta > 100_000_000L) return (tsNs - ta <= tb - tsNs ? tsNs - ta : tb - tsNs) < 150_000_000L ? (tsNs - ta <= tb - tsNs ? a : b) : null;
+        float f = (float) (tsNs - ta) / (float) (tb - ta);
+        float[] o = new float[16];
+        for (int i = 0; i < 16; i++) o[i] = a[i] + (b[i] - a[i]) * f;
+        return o;
     }
 
     private float cx0, cy0;
@@ -117,9 +132,14 @@ public class NvMotion {
         float[] rn = null;
         long nowEl = SystemClock.elapsedRealtimeNanos();
         long imgTs = img.getTimestamp();
-        if (tsReal && Math.abs(nowEl - imgTs) < 1_000_000_000L) { rn = rotAt(imgTs); how = "เวลาภาพ"; }
-        if (rn == null) { rn = rotAt(nowEl - lagMs * 1_000_000L); how = "หน่วง" + lagMs; }
-        if (rn == null) { rn = rs.get(); how = "ล่าสุด"; }
+        long offNs = tune.on ? (long) (tune.offMs * 1e6) : 0L;
+        offMs = tune.on ? (float) tune.offMs : 0f;
+        long look = 0L;
+        long age = nowEl - imgTs;
+        if (age > 8_000_000L && age < 350_000_000L) { look = imgTs - offNs; rn = rotAt(look); how = "เวลาภาพ"; }       // the picture's own time makes sense (the same test the renderer uses)
+        if (rn == null) { look = nowEl - lagMs * 1_000_000L - offNs; rn = rotAt(look); how = "หน่วง" + lagMs; }
+        float[] rnAlt = look != 0L ? rotAt(look - ALT_NS) : null;
+        if (rn == null) { rn = rs.get(); how = "ล่าสุด"; rnAlt = null; }
         if (rn == null) return;
         lastMs = now;
         looks++;
@@ -139,12 +159,12 @@ public class NvMotion {
                 dst[y * GW + x] = (byte) (v >> 2);
             }
         }
-        rots[wr] = rn;
+        rots[wr] = rn; rotsAlt[wr] = rnAlt;
         tss[wr] = tsReal ? imgTs : nowEl;
         float tanH = (float) Math.tan(hFov / 2.0), tanV = tanH * h / w;
         if (count >= K) {
             int old = (wr + 1) % (K + 1);                // the picture K looks ago
-            cur = dst; prev = frames[old]; rotPrev = rots[old];
+            cur = dst; prev = frames[old]; rotPrev = rots[old]; rotPrevAlt = rotsAlt[old]; rotNewAlt = rnAlt;
             spanNs = tss[wr] - tss[old];
             if (rotPrev != null) {
                 try { track(rn, tanH, tanV); } catch (Throwable t) { quality = 0; err = String.valueOf(t); }
@@ -245,6 +265,7 @@ public class NvMotion {
         }
         if (!fit(ex, ey, rx, ry, use, n, sol)) { quality = 0; return; }
         usedN = used;
+        lagSample(rn, tanH, tanV, sol, used);
         if (used >= 14 && calmTurn && spanNs > 30_000_000L && spanNs < 600_000_000L) {   // enough spots agree, no fast turn: a result for the turn check
             resX = sol[0]; resY = sol[1]; resSpan = spanNs / 1e9f; resTanH = tanH; resUsed = used; resMs = System.nanoTime() / 1000000L; resSeq++;
         }
@@ -271,6 +292,27 @@ public class NvMotion {
         pz = Math.max(-0.30f, Math.min(0.30f, pz * 0.99f));
         px = Math.max(-12f, Math.min(12f, px)); py = Math.max(-12f, Math.min(12f, py));
         if (Float.isNaN(px + py + pz)) { px = py = pz = 0; }
+    }
+
+    /** where the middle of the picture goes between two pictures, if only the head turned (picture units): the same formula as the spots in track() */
+    private static boolean centreShift(float[] a, float[] b, float tanH, float tanV, float[] out) {
+        float r2 = 0f, r5 = 0f, r8 = 0f;
+        for (int k = 0; k < 3; k++) { r2 += b[k * 4 + 0] * a[k * 4 + 2]; r5 += b[k * 4 + 1] * a[k * 4 + 2]; r8 += b[k * 4 + 2] * a[k * 4 + 2]; }
+        if (!(r8 > 0.2f)) return false;                   // R[2], R[5], R[8] of the turn between the two pictures (the third column)
+        out[0] = -r2 / r8 / tanH; out[1] = -r5 / r8 / tanV;
+        return true;
+    }
+
+    /**
+     * Gives NvLagTune one pair of pictures: the left-over shift of the room's middle after the turn sensor's answer (sol), and how that answer would change if the pictures
+     * were taken ALT_NS earlier (the same turn looked up at an earlier time): g, per ms of extra lag.
+     */
+    private void lagSample(float[] rn, float tanH, float tanV, float[] sol, int used) {
+        if (!tune.on || rotPrev == null || rotPrevAlt == null || rotNewAlt == null || spanNs < 30_000_000L || spanNs > 600_000_000L) return;
+        float[] p0 = new float[2], p1 = new float[2];
+        if (!centreShift(rotPrev, rn, tanH, tanV, p0) || !centreShift(rotPrevAlt, rotNewAlt, tanH, tanV, p1)) return;
+        double k = 1.0 / (ALT_NS / 1e6);
+        tune.add(sol[0], sol[1], (p1[0] - p0[0]) * k, (p1[1] - p0[1]) * k, used, System.nanoTime() / 1000000L);
     }
 
     // least squares for  dx = a + c*x,  dy = b + c*y
