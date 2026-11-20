@@ -224,7 +224,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.216 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.218 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -278,6 +278,13 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         return String.format(java.util.Locale.US, "\nภาพช่วยกันไหล: %s | จุดที่ใช้ %d | เหลือคลาด %+.2f°/ว | เรียนรู้ไหลของเซนเซอร์ %+.2f°/ว | แก้รวม %+.2f° %s", vis.good ? "ทำงาน" : "รอภาพดีๆ", motion.resUsed, Math.toDegrees(vis.lastRate), Math.toDegrees(vis.biasRate), Math.toDegrees(vis.adj()), vis.note);
     }
     private long lagSavedMs = 0L; private float lagSaved = 0f;
+    private String rollStr() {                                 // how far the phone is tilted sideways from the true vertical (from gravity), to tell a real tilt from a wrong one
+        float[] m = rend.rotCopy();
+        if (m == null || m.length < 16) return "";
+        double hl = Math.hypot(m[8], m[9]);
+        if (hl < 0.25) return "\nเอียงเครื่อง: เงยหรือก้มเกือบสุด วัดไม่ได้";
+        return String.format(java.util.Locale.US, "\nเอียงเครื่องจากแนวดิ่งจริง %+.1f° (+ = โลกหมุนตามเข็ม, − = ทวนเข็ม) | เงย %+.0f°", Math.toDegrees(Math.atan2(m[8], m[9])), Math.toDegrees(Math.asin(Math.max(-1.0, Math.min(1.0, -m[10])))));
+    }
     private String lagStr() {
         NvLagTune t = motion.tune;
         if (!t.on) return "\nจูนเวลากล้อง-ไจโร: ปิด";
@@ -301,7 +308,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 sb.append(t).append(String.format(java.util.Locale.US, " x%+.1f y%+.1f", w.yawA, w.pitchA)).append(w.settleUntil != 0L ? " [ตามหัว]" : " [ล็อก]");
             }
         } catch (Throwable ignored) { }
-        return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)\nเซนเซอร์ชนิด %d ความแม่น %d | หัวหมุน %.1f°/ว | ช้า %.2f°/ว | %s", dbgYaw, dbgAdj, dbgType, dbgAcc, dbgTurn, dbgSlow, dbgLock ? "กำลังล็อกทิศ" : "ไม่ล็อกทิศ") + visStr() + lagStr() + h3Str();
+        return sb.length() == 0 ? "" : "\nหน้าต่าง(องศา): " + sb + String.format(java.util.Locale.US, " | หมุนเสริม %+.1f (ค้างทิศ %+.1f)\nเซนเซอร์ชนิด %d ความแม่น %d | หัวหมุน %.1f°/ว | ช้า %.2f°/ว | %s", dbgYaw, dbgAdj, dbgType, dbgAcc, dbgTurn, dbgSlow, dbgLock ? "กำลังล็อกทิศ" : "ไม่ล็อกทิศ") + visStr() + lagStr() + rollStr() + h3Str();
     }
     private long memT = 0; private String memTxt = ""; private int memBase = -1; private long memBaseT = 0;
     private volatile boolean fgNow = true; private volatile int trimLvl = 0;

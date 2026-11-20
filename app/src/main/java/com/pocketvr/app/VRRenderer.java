@@ -1556,6 +1556,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private long rippleT = 0;
     private long lastPinchT = 0, lostT = 0, mpSince = 0;
     private float sizeEma = 0, dnx = 0, dny = 0;
+    // where the hand pointed in the last moments of a drag: when the fingers open to let go, the hand moves a little with them, and that used to drag the window along
+    // (it slid on a little after it was put down). On let-go the window now goes to where the hand pointed just BEFORE the fingers started to open and stays there.
+    private static final int DG_N = 32;
+    private static final long DG_BACK_MS = 160L;
+    private final float[] dgX = new float[DG_N], dgY = new float[DG_N];
+    private final long[] dgT = new long[DG_N];
+    private int dgI = 0, dgN = 0;
+    private boolean dgFrozen = false;
+    private float dgFx = 0f, dgFy = 0f;
     private boolean resizing = false, gripHot = false;
     private float rsD0 = 1f;
     private long dragT0 = 0;
@@ -1870,13 +1879,27 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         curOk = true;
         if (dragWin != null) {
-            float ddx = tnx - dnx, ddy = tny - dny;
+            dgT[dgI] = nowMs; dgX[dgI] = tnx; dgY[dgI] = tny; dgI = (dgI + 1) % DG_N; if (dgN < DG_N) dgN++;
+            if (pinching && dgFrozen) dgFrozen = false;                            // pinched again before the window was let go: it follows the hand again
+            if (!pinching && prevPinch && !dgFrozen && dgN > 0) {                  // the pinch has just opened: take the pointer from before the fingers started to open
+                int pick = -1;
+                for (int k = 1; k <= dgN; k++) {
+                    int ix = ((dgI - k) % DG_N + DG_N) % DG_N;
+                    if (dgT[ix] < dragT0) break;                                   // not from before this drag began
+                    pick = ix;
+                    if (nowMs - dgT[ix] >= DG_BACK_MS) break;                      // old enough: this one
+                }
+                if (pick >= 0) { dgFx = dgX[pick]; dgFy = dgY[pick]; dgFrozen = true; }
+            }
+            float gxT = dgFrozen ? dgFx : tnx, gyT = dgFrozen ? dgFy : tny;
+            float ddx = gxT - dnx, ddy = gyT - dny;
             float dl = (float) Math.hypot(ddx, ddy);
             float stp = Math.min(dl * 0.55f, 0.10f);                     // smooth, and never a sudden big jump
             if (dl > 1e-5f) { dnx += ddx / dl * stp; dny += ddy / dl * stp; }
             rayYaw = (float) Math.toDegrees(Math.atan(dnx * tanHc));
             rayPitch = (float) Math.toDegrees(Math.atan(dny * tanVc));
         } else {
+            dgFrozen = false; dgN = 0;
             rayYaw = (float) Math.toDegrees(Math.atan(cnx * tanHc));
             rayPitch = (float) Math.toDegrees(Math.atan(cny * tanVc));
         }
