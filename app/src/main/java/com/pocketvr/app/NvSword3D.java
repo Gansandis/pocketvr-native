@@ -15,8 +15,13 @@ import java.util.Random;
  * This class is both the little score window (a NvContent) and the 3D world drawn by the renderer.
  * Monsters: slime (1 hit), skeleton (2 hits), ghost (1 hit, drifts side to side), a big boss every 5th wave. One that reaches you takes a heart.
  */
-public class NvSword3D implements NvContent {
+public class NvSword3D implements NvContent, NvGameWorld {
     public Runnable onClose;
+
+    // NvGameWorld: this game does its own stepping and drawing inside drawWorld() and does not use the hands, so these three stay empty
+    @Override public void update(float[] rn, float x, float y, float z, long t) { }
+    @Override public void draw(float[] p, float[] rn, float x, float y, float z) { }
+    @Override public void hands(float[] d, float ar, float tH, float tV, boolean r180, long t) { }
 
     // ================= the score window =================
     private static final int W = 640, H = 240;

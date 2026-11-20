@@ -22,7 +22,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private final Host host;
     private final NvCam cam;
     public volatile boolean stereo = true;
-    public volatile NvSword3D world3 = null;             // a 3D game in the room (monsters), drawn while its score window is shown
+    public volatile NvGameWorld world3 = null;              // the 3D game in the room (the sword monsters or the gun game, one at a time), drawn while its window is shown
     public volatile Win world3Win = null;
     public final Nv3DHands h3 = new Nv3DHands();         // 3D mode: hands as 3D models, 3D things in the room, the left-hand 🤟 sign that switches it
     private float ilyProg = 0f, ilyNx = 0f, ilyNy = 0f;
@@ -884,7 +884,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         ulc.clear();
         java.util.Arrays.fill(alc, 0);
         depthRb[0] = 0;
-        { NvSword3D w3 = world3; if (w3 != null) w3.glLost(); }
+        { NvGameWorld w3 = world3; if (w3 != null) w3.glLost(); }
         h3.lost();
         GLES20.glDisable(GLES20.GL_DITHER);                // no dithering: a little less work for every pixel
         panoTex = 0; panoOn = false;
@@ -1341,7 +1341,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     }
 
     private void draw3D() {
-        NvSword3D wd = world3; Win ww = world3Win;
+        NvGameWorld wd = world3; Win ww = world3Win;
         if (wd == null || ww == null || !shown(ww) || cinema) return;
         try {
             GLES20.glDisable(GLES20.GL_BLEND);
@@ -1755,6 +1755,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         palmMenu(System.currentTimeMillis());
         float[] r = pickHand(disp);
         long nowMs = System.currentTimeMillis();
+        {                                                                // all the hands (one or two) for the 3D game, every frame; null when none is seen
+            NvGameWorld wg = world3; Win wgw = world3Win;
+            if (wg != null && wgw != null && shown(wgw)) {
+                float[] dd = disp;
+                wg.hands(dd != null && dd.length >= 64 && dd[0] >= 1f ? dd : null, (float) Math.max(1, imgW) / Math.max(1, imgH), tanHc, tanVc, rot180, nowMs);
+            }
+        }
         boolean hand = r.length >= 64 && r[0] >= 1;
         if (!hand) {
             pinchAmt *= 0.6f;
@@ -1764,7 +1771,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             // a short loss of the hand (detection blink) must not drop a grabbed window
             if (!(dragWin != null && nowMs - lostT < 400)) { pinching = false; prevPinch = false; endDrag(); }
             for (Win w : wins) if (shown(w)) w.c.update(false, 0, 0, false);
-            { NvSword3D wd = world3; if (wd != null) wd.pointer(false, 0f, 0f, 0f, nowMs); }
+            { NvGameWorld wd = world3; if (wd != null) wd.pointer(false, 0f, 0f, 0f, nowMs); }
             return;
         }
         lostT = 0;
@@ -1904,7 +1911,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             rayPitch = (float) Math.toDegrees(Math.atan(cny * tanVc));
         }
         {                                                                // the fingertip's direction in the room, for the 3D game
-            NvSword3D wd = world3;
+            NvGameWorld wd = world3;
             if (wd != null) {
                 float vx = cnx * tanHc, vy = cny * tanVc, vz = -1f;
                 float[] rv3 = rotView;

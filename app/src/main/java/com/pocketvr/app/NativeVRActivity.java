@@ -163,7 +163,11 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         @Override public void onAccuracyChanged(android.hardware.Sensor s, int acc) { }
     };
     private final NvUi menu = new NvUi();
-    private VRRenderer.Win wMenu, wClock, wStats, wKeys, wFruit, wSword, wSword3;
+    private VRRenderer.Win wMenu, wClock, wStats, wKeys, wFruit, wSword, wSword3, wGun;
+    private NvSword3D sword3o;                 // the sword game (its 3D world)
+    private NvGunWorld gunWorld;                // the gun game
+    private NvGunWindow gunWin;
+    private int gunPrevHands = -1;              // how many hands were asked for before the gun game raised it to two
     private NvKeyboard kbd;
     private NvMedia media;
     private NvSettings settings;
@@ -224,7 +228,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.219 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.220 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -462,6 +466,14 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         sword3.onClose = () -> rend.setVisible(wSword3, false, 0f, 0f);
         wSword3.title = "เกมฟันดาบ 3D"; wSword3.onClose = sword3.onClose;
         rend.world3 = sword3; rend.world3Win = wSword3; wSword3.game = true;
+        sword3o = sword3;
+
+        gunWorld = new NvGunWorld();
+        gunWorld.handMode = true;                                     // the gun lives in your hands (two hands are looked for while this game is open)
+        gunWin = new NvGunWindow(gunWorld);
+        wGun = rend.addWindow(gunWin, 0.46f);
+        gunWin.onClose = () -> closeGun();
+        wGun.title = "เกมยิงปืน FPS"; wGun.onClose = gunWin.onClose; wGun.game = true;
 
         final NvKeyboard kb = new NvKeyboard();
         kb.copier = s -> runOnUiThread(() -> {
@@ -871,6 +883,25 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
 
     private int firstBrowser() { for (int k = 0; k < brs.length; k++) if (brs[k] != null && bws[k] != null && bws[k].visible) return k; return -1; }
 
+    /** the renderer draws one 3D game at a time (rend.world3): opening one closes the other */
+    private void openGame(boolean gun) {
+        if (gun) {
+            if (wSword3 != null && wSword3.visible) rend.setVisible(wSword3, false, 0f, 0f);
+            rend.world3 = gunWorld; rend.world3Win = wGun;
+            if (cam.handsN < 2) { gunPrevHands = cam.handsN; cam.handsN = 2; }           // the gun needs both hands: one holds it, the other pulls the trigger
+            showWin(wGun, 0f, 15f);
+        } else {
+            closeGun();
+            rend.world3 = sword3o; rend.world3Win = wSword3;
+            showWin(wSword3, 0f, 30f);
+        }
+    }
+    private void closeGun() {
+        if (gunWin != null) gunWin.stop();
+        hideWin(wGun);
+        if (gunPrevHands > 0) { cam.handsN = gunPrevHands; gunPrevHands = -1; }
+    }
+
     private void hideWin(VRRenderer.Win w) { if (w != null && w.visible) rend.setVisible(w, false, 0f, 0f); }
     private void showWin(VRRenderer.Win w, float yaw, float pitch) { if (w != null && !w.visible) rend.setVisible(w, true, yaw, pitch); }
 
@@ -895,7 +926,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
 
     private void closeAllWindows() {
         for (int k = 0; k < brs.length; k++) if (brs[k] != null && bws[k] != null && bws[k].visible) { brs[k].setActive(false); rend.setVisible(bws[k], false, 0f, 0f); }
-        hideWin(wKeys); hideWin(wSet); hideWin(wFruit); hideWin(wSword3); hideWin(wClock); hideWin(wStats); hideWin(wMedia);
+        hideWin(wKeys); hideWin(wSet); hideWin(wFruit); hideWin(wSword3); closeGun(); hideWin(wClock); hideWin(wStats); hideWin(wMedia);
         if (wVideo.visible) video.onClose.run();
     }
 
@@ -1002,7 +1033,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         if (has(n, "แป้นพิมพ์", "คีย์บอร์ด", "keyboard")) { if (close) hideWin(wKeys); else showWin(wKeys, 0f, -24f); say(close ? "ปิดคีย์บอร์ด" : "เปิดคีย์บอร์ด"); return; }
         if (has(n, "ตั้งค่า", "settings")) { if (close) hideWin(wSet); else showWin(wSet, 0f, 5f); say(close ? "ปิดตั้งค่า" : "เปิดตั้งค่า"); return; }
         if (has(n, "ฟันผลไม้", "เกมผลไม้", "ผลไม้", "fruit", "slicing")) { if (close) hideWin(wFruit); else showWin(wFruit, 0f, 2f); say(close ? "ปิดเกมผลไม้" : "เปิดเกมผลไม้"); return; }
-        if (has(n, "ฟันดาบ", "เกมดาบ", "ดาบ", "มอนสเตอร์", "sword", "monster")) { if (close) hideWin(wSword3); else showWin(wSword3, 0f, 30f); say(close ? "ปิดเกมดาบ" : "เปิดเกมดาบ"); return; }
+        if (has(n, "เกมปืน", "ยิงปืน", "ยิงมอนสเตอร์", "ปืน", "fps", "gun", "shooter")) { if (close) closeGun(); else openGame(true); say(close ? "ปิดเกมปืน" : "เปิดเกมปืน"); return; }
+        if (has(n, "ฟันดาบ", "เกมดาบ", "ดาบ", "มอนสเตอร์", "sword", "monster")) { if (close) hideWin(wSword3); else openGame(false); say(close ? "ปิดเกมดาบ" : "เปิดเกมดาบ"); return; }
         if (has(n, "นาฬิกา", "จับเวลา", "clock", "timer")) { if (close) hideWin(wClock); else showWin(wClock, 18f, 0f); say(close ? "ปิดนาฬิกา" : "เปิดนาฬิกา"); return; }
         if (has(n, "สถานะ", "status")) { if (close) hideWin(wStats); else showWin(wStats, -18f, 0f); say(close ? "ปิดสถานะ" : "เปิดสถานะ"); return; }
         if (has(n, "ฉากเมือง", "ฉากเสมือน", "โลกเสมือน", "virtualscene", "virtualworld", "citysc", "virtualroom")) { rend.envScene = close ? 0 : 1; say(close ? "กลับเป็นภาพกล้อง" : "เปิดฉากเมืองเสมือน"); return; }
@@ -1122,7 +1154,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         })));
         tools.add(new NvUi.Btn("🎙", () -> "สั่งด้วยเสียง", () -> voice.isOn() ? "ฟังอยู่ — \"เฮ้ พ็อกเก็ต\" แล้วสั่ง" : "ปิดอยู่ (กดเพื่อเปิด)", () -> voice.isOn(), 0xFFE0506A, 0xFFA02A42, () -> toggleVoice()));
         tools.add(new NvUi.Btn("🗣", () -> "พูดคำสั่งตอนนี้", () -> "ไม่ต้องมีคำปลุก พูดได้ 8 วินาที", null, GA, GB, () -> voiceAsk(true)));
-        tools.add(new NvUi.Btn("⚔", () -> "เกมฟันดาบ 3D", () -> wSword3.visible ? "เปิดอยู่" : "มอนสเตอร์ 3D ในห้อง", () -> wSword3.visible, GA, GB, () -> rend.toggle(wSword3, 0f, 30f)));
+        tools.add(new NvUi.Btn("⚔", () -> "เกมฟันดาบ 3D", () -> wSword3.visible ? "เปิดอยู่" : "มอนสเตอร์ 3D ในห้อง", () -> wSword3.visible, GA, GB, () -> { if (wSword3.visible) hideWin(wSword3); else openGame(false); }));
+        tools.add(new NvUi.Btn("🔫", () -> "เกมยิงปืน FPS", () -> wGun.visible ? "เปิดอยู่" : "ยิงมอนสเตอร์ในห้อง ใช้สองมือ", () -> wGun.visible, GA, GB, () -> { if (wGun.visible) closeGun(); else openGame(true); }));
         tools.add(new NvUi.Btn("🍉", () -> "เกมฟันผลไม้", () -> wFruit.visible ? "เปิดอยู่" : "ปัดนิ้วฟันผลไม้", () -> wFruit.visible, GA, GB, () -> rend.toggle(wFruit, 0f, 2f)));
         tools.add(new NvUi.Btn("⏱", () -> "นาฬิกา/จับเวลา", () -> wClock.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wClock.visible, GA, GB, () -> rend.toggle(wClock, 18f, 0f)));
         tools.add(new NvUi.Btn("📈", () -> "สถานะระบบ", () -> wStats.visible ? "เปิดอยู่" : "ปิดอยู่", () -> wStats.visible, GA, GB, () -> rend.toggle(wStats, -18f, 0f)));
