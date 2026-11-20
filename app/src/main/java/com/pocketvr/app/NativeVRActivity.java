@@ -157,7 +157,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                     for (int k = 0; k < 4; k++) { out[k] = c * m[k] - s * m[4 + k]; out[4 + k] = s * m[k] + c * m[4 + k]; }
                     rend.setRotation(out);
                 } else rend.setRotation(m);
-                if (motion != null && (motion.enabled || motion.visOn)) motion.pushRot(android.os.SystemClock.elapsedRealtimeNanos(), rend.rotCopy());       // when it ARRIVED: the same time the renderer files the turn under
+                if (motion != null && motion.wanted()) motion.pushRot(android.os.SystemClock.elapsedRealtimeNanos(), rend.rotCopy());       // when it ARRIVED: the same time the renderer files the turn under
             } catch (Throwable ignored) { }
         }
         @Override public void onAccuracyChanged(android.hardware.Sensor s, int acc) { }
@@ -224,7 +224,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 savePrefsIfChanged();
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.218 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.219 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -695,13 +695,13 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.step("🕐", "ความหน่วงของภาพกล้อง (ปรับให้ภาพนิ่งตอนหันหัว)", () -> rend.camLagMeasured > 0f ? "อัตโนมัติ " + Math.round(rend.camLagMeasured) + " ms" : rend.camLagMs + " ms",
                 () -> rend.camLagMs = Math.max(0, rend.camLagMs - 10),
                 () -> rend.camLagMs = Math.min(250, rend.camLagMs + 10));
-        s.toggle("⏲", "จูนเวลากล้อง-ไจโรเอง (ให้ภาพกับหน้าต่างไม่ไหลสวนตอนหันหัว)", () -> motion.tune.on, () -> { motion.tune.on = !motion.tune.on; if (motion.tune.on) motion.tune.reset(); else motion.offMs = 0f; });
+        s.toggle("⏲", "จูนเวลากล้อง-ไจโรเอง (ลองใช้ — ปิดไว้ก่อน: ยังไม่นิ่งบนเครื่องจริง)", () -> motion.tune.on, () -> { motion.tune.on = !motion.tune.on; if (motion.tune.on) motion.tune.reset(); else motion.offMs = 0f; });
         s.step("👁", "แก้ภาพซ้อน (ขยับเข้าหาจมูก)", () -> String.format("%.2f", rend.eyeShift),
                 () -> rend.eyeShift = Math.max(-0.20f, Math.round((rend.eyeShift - 0.03f) * 100f) / 100f),
                 () -> rend.eyeShift = Math.min(0.40f, Math.round((rend.eyeShift + 0.03f) * 100f) / 100f));
 
         s.cat("","Position");
-        s.toggle("👁", "กล้องช่วยกันจอไหลข้าง (ลองใช้)", () -> vis.on, () -> { vis.on = !vis.on; motion.visOn = vis.on; });
+        s.toggle("👁", "กล้องช่วยกันจอไหลข้าง (ลองใช้ — ปิดไว้ก่อน: ฉากใกล้ๆ อ่านมือสั่นเป็นการหมุน)", () -> vis.on, () -> { vis.on = !vis.on; motion.visOn = vis.on; });
         s.toggle("🧭", "เข็มทิศช่วยแก้ทิศ (กันจอไหล)", () -> compass, () -> compass = !compass);
         s.action("📍", "จัดหน้าต่างมาตรงหน้า", "จัดกลางใหม่", () -> rend.recenter = true);
         s.cycle("🚶", "เดินรอบได้", () -> motion.enabled ? (motion.err.isEmpty() ? String.format("เปิด %.1f,%.1f ม.", motion.px, motion.py) : "ผิดพลาด") : "ปิดอยู่", () -> {

@@ -661,7 +661,7 @@ public class NvCam {
             if (camT0 == 0) camT0 = now;
             if (now - camT0 >= 1000) { camFps = camCount * 1000f / (now - camT0); camCount = 0; camT0 = now; }
             NvMotion mo = motion;
-            if (mo != null && (mo.enabled || mo.visOn)) { try { mo.hands = result; mo.feed(img, hFov); } catch (Throwable t) { mo.err = String.valueOf(t); } }
+            if (mo != null && mo.wanted()) { try { mo.hands = result; mo.feed(img, hFov); } catch (Throwable t) { mo.err = String.valueOf(t); } }
             if (flowOn) { try { feedFlow(img, now); } catch (Throwable t) { flowOk = false; } } else flowOk = false;
             float[] rr = result;
             if (rr != null && rr.length > 0 && rr[0] >= 1) lastSeenHand = now;

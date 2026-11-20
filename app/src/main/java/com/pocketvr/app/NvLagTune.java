@@ -21,7 +21,7 @@ final class NvLagTune {
     private static final double MAX_RES = 0.05;      // a left-over bigger than this (3 px of the small picture) is a bad match, not a timing error
     private static final double DEAD = 1.0;          // ms: a smaller error than this is left alone
 
-    volatile boolean on = true;
+    volatile boolean on = false;                     // off to begin with: on the phone it ran into its limit and did not settle
     volatile boolean good = false;                   // a result has been found and taken in recently
     volatile double offMs = 0.0;                     // learned: the picture is this much older than the time stamp says (ms)
     volatile double lastE = 0.0;                     // the last error found (ms)

@@ -13,7 +13,7 @@ final class NvVisYaw {
     private static final double MAX_BIAS = Math.toRadians(4.0);        // a turn sensor never drifts more than this (rad/s); more = not trusted
     private static final double MAX_RATE = Math.toRadians(12.0);       // a left-over faster than this is a bad measurement, not a drift
 
-    volatile boolean on = true;
+    volatile boolean on = false;                    // off to begin with (see NvMotion.visOn)
     volatile boolean good = false;                  // the picture has recently given a trustworthy result
     volatile double biasRate = 0.0;                 // learned: how far the gyro is off (rad/s)
     volatile double lastRate = 0.0;                 // the last left-over (rad/s)
@@ -27,7 +27,17 @@ final class NvVisYaw {
 
     /** called with every sensor reading: returns the angle (rad) to add to the facing */
     double step(NvMotion mo, long nowMs) {
-        if (!on || dead || mo == null || !mo.visOn) { good = false; return visAdj; }
+        if (!on || dead || mo == null || !mo.visOn) {
+            good = false; biasRate = 0.0;
+            // off or given up: whatever turn it had added is taken back slowly (a few seconds), so the windows do not stay turned away from where they were
+            if (visAdj != 0.0) {
+                double dt = lastMs == 0 ? 0.0 : Math.min(0.2, (nowMs - lastMs) / 1000.0);
+                visAdj *= Math.exp(-dt / 2.0);
+                if (Math.abs(visAdj) < 1e-5) visAdj = 0.0;
+            }
+            lastMs = nowMs;
+            return visAdj;
+        }
         // the learned drift goes on being taken out in between results
         if (lastMs != 0 && good) visAdj += biasRate * Math.min(0.05, (nowMs - lastMs) / 1000.0);
         lastMs = nowMs;

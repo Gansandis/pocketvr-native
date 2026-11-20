@@ -22,7 +22,11 @@ public class NvMotion {
      * resX / resY: the mean left-over shift of the room's spots (picture units, -1..1 = the picture's half width / half height) over the last `resSpan` seconds;
      * resSeq counts the results; they are only given when enough spots agree and the head was not turning fast (then the gyro and the picture are not in step).
      */
-    public volatile boolean visOn = true;
+    static volatile long testClockMs = -1L;             // only the tests set this (a made-up clock); in the app it stays -1
+    static long clockMs() { return testClockMs >= 0 ? testClockMs : System.nanoTime() / 1000000L; }
+    public volatile boolean visOn = false;              // off to begin with: on the phone it read a small shake of the hand as a turn (see NvVisYaw) and left the windows turned
+    /** is the camera picture worth looking at at all (walking, the drift helper or the timing helper)? */
+    public boolean wanted() { return enabled || visOn || tune.on; }
     public volatile float resX = 0f, resY = 0f, resSpan = 0f, resTanH = 0.8f;
     public volatile int resSeq = 0, resUsed = 0;
     public volatile long resMs = 0L;
@@ -125,7 +129,7 @@ public class NvMotion {
     public void reset() { px = py = pz = 0; count = 0; quality = 0; tracked = 0; usedN = 0; }
 
     public void feed(Image img, float hFov) {
-        long now = System.nanoTime() / 1000000L;
+        long now = clockMs();
         if (now - lastMs < 55) return;                  // ~18 looks a second is enough, and cheap
         RotSource rs = rot;
         if (rs == null) return;
@@ -267,7 +271,7 @@ public class NvMotion {
         usedN = used;
         lagSample(rn, tanH, tanV, sol, used);
         if (used >= 14 && calmTurn && spanNs > 30_000_000L && spanNs < 600_000_000L) {   // enough spots agree, no fast turn: a result for the turn check
-            resX = sol[0]; resY = sol[1]; resSpan = spanNs / 1e9f; resTanH = tanH; resUsed = used; resMs = System.nanoTime() / 1000000L; resSeq++;
+            resX = sol[0]; resY = sol[1]; resSpan = spanNs / 1e9f; resTanH = tanH; resUsed = used; resMs = clockMs(); resSeq++;
         }
         lastA = sol[0] * 0.9f; lastB = sol[1] * 0.9f; lastC = sol[2] * 0.9f;
         quality = used / (float) (NX * NY);
@@ -312,7 +316,7 @@ public class NvMotion {
         float[] p0 = new float[2], p1 = new float[2];
         if (!centreShift(rotPrev, rn, tanH, tanV, p0) || !centreShift(rotPrevAlt, rotNewAlt, tanH, tanV, p1)) return;
         double k = 1.0 / (ALT_NS / 1e6);
-        tune.add(sol[0], sol[1], (p1[0] - p0[0]) * k, (p1[1] - p0[1]) * k, used, System.nanoTime() / 1000000L);
+        tune.add(sol[0], sol[1], (p1[0] - p0[0]) * k, (p1[1] - p0[1]) * k, used, clockMs());
     }
 
     // least squares for  dx = a + c*x,  dy = b + c*y
