@@ -128,18 +128,6 @@ final class NvHandRig {
         return w > 0.55f * s && w < 1.2f * s;                                     // the palm is seen from the front (not edge-on)
     }
 
-    /** is this hand (numbers of one hand in res, starting at b) open and facing the camera? (used by the shape learning, which needs the same kind of picture) */
-    boolean openFront(float[] res, int b, float ar) {
-        if (res == null || res.length < b + 63 || !(ar > 0.1f)) return false;
-        float[] L = new float[63];
-        for (int k = 0; k < 21; k++) {
-            float x = res[b + k * 3], y = res[b + k * 3 + 1], z = res[b + k * 3 + 2];
-            if (Float.isNaN(x + y + z) || Float.isInfinite(x + y + z)) return false;
-            L[k * 3] = x * ar; L[k * 3 + 1] = y; L[k * 3 + 2] = z * ar;
-        }
-        return goodFor(L, len(L, 0, 9));
-    }
-
     private static float len2(float[] a, int i, int j) {
         float dx = a[j * 3] - a[i * 3], dy = a[j * 3 + 1] - a[i * 3 + 1];
         return (float) Math.sqrt(dx * dx + dy * dy);

@@ -186,14 +186,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile boolean flatWins = false;             // off (default): every window is a real flat thing in the room, seen in true perspective (no roll correction of any kind). On: it is turned square to the screen instead (top edge level with the screen, no perspective)
     public volatile boolean floaty = false;               // windows stay perfectly still unless this is switched on
     public volatile int cursorSz = 0;                     // 0 small and faint, 1 medium, 2 large
-    public volatile int sel = 2;              // how things are pressed: 0 pinch, 1 air touch (push the index finger forward), 2 both
-    public volatile int pokeS = 1;            // air touch sensitivity: 0 light, 1 medium, 2 firm
-    private static final float[] POKE_TH = {0.07f, 0.10f, 0.14f};
-    private float pkBase = 0, pkPeak = 0, pkProg = 0;
-    private long pkT = 0;
-    private boolean pkOn = false, pkInit = false;
-    private long pkT2 = 0, pkAbove = 0, idxSince = 0, pkRelT = 0, lastFreshT = 0;
-    private float pkDepthF = 0, handSpd = 0, lastTx = 0, lastTy = 0;
+    public volatile int curAnchor = 0;        // where the pointer sits: 0 between thumb tip and index tip, 1 on the index fingertip
+    public volatile int pointMode = 2;        // point to select: 0 off, 1 just stretch the finger (held), 2 light push, 3 firm push
+    public volatile int pointGrip = 1;        // how tightly the other fingers must be folded: 0 loose, 1 medium, 2 tight
+    private final NvPoint pt = new NvPoint();
+    private float pkProg = 0;
+    private boolean pkOn = false;
+    private float handSpd = 0, lastTx = 0, lastTy = 0;
     private float[] lastRef = null;
     private final float[] tA = new float[16], tB = new float[16], tC = new float[16], tD = new float[16];
 
@@ -1765,7 +1764,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         boolean hand = r.length >= 64 && r[0] >= 1;
         if (!hand) {
             pinchAmt *= 0.6f;
-            curOk = false; pkOn = false; pkProg = 0; pkInit = false;
+            curOk = false; pkOn = false; pkProg = 0; pt.reset();
             mpOn = false; mpSince = 0; mpProg = 0; mpLatched = false;
             if (lostT == 0) lostT = nowMs;
             // a short loss of the hand (detection blink) must not drop a grabbed window
@@ -1814,46 +1813,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         pinchAmt += (pinchTarget - pinchAmt) * 0.35f;
         if (pinching && !prevPinch) { rippleT = nowMs; rippleX = cnx; rippleY = cny; }
 
-        // air touch (as in the web version): the index finger is out and is pushed forward = the hand gets smaller in the picture.
-        // Made calmer: the depth is smoothed, the pose has to be steady for a moment, a fast-moving hand does not count as a push,
-        // the push must last a moment, and there is a short pause after a press.
-        int selM = 0;                                   // air touch was taken out (too hard to use): pinching is the only way to press
-        {
-            float z8 = r[1 + 8 * 3 + 2], z0 = r[1 + 2];
-            float sz = Math.max(1e-3f, size);
-            float depthRaw = -((float) Math.log(sz) - 0.6f * (z8 - z0) / sz);
-            float dtF = pkT2 == 0 ? 0.02f : Math.min(0.1f, (nowMs - pkT2) / 1000f);
-            pkT2 = nowMs;
-            pkDepthF = !pkInit ? depthRaw : pkDepthF + (depthRaw - pkDepthF) * (1f - (float) Math.exp(-dtF / 0.10f));
-            float depth = pkDepthF;
-            if (vel.length > handBase + 27) handSpd = (float) Math.hypot(vel[1 + handBase + 8 * 3], vel[1 + handBase + 8 * 3 + 1]);    // how fast the fingertip crosses the picture (picture widths per second)
-            float d8 = (float) Math.hypot((tx - wx) * ar, ty - wy);
-            float d6 = (float) Math.hypot((r[1 + 6 * 3] - wx) * ar, r[1 + 6 * 3 + 1] - wy);
-            boolean idxOut = !pinching && ratio > 0.30f && d8 > d6 * 1.1f;
-            if (!idxOut) idxSince = 0; else if (idxSince == 0) idxSince = nowMs;
-            boolean ready = idxOut && nowMs - idxSince > 120 && nowMs - pkRelT > 300 && handSpd < 0.6f;
-            if (selM == 0 || !idxOut) { pkOn = false; pkBase = depth; pkT = nowMs; pkProg = 0; pkInit = true; pkAbove = 0; }
-            else if (!ready && !pkOn) { pkBase = depth; pkT = nowMs; pkProg = 0; pkAbove = 0; pkInit = true; }
-            else {
-                if (!pkInit) { pkBase = depth; pkT = nowMs; pkInit = true; }
-                float th = POKE_TH[Math.max(0, Math.min(2, pokeS))] * 1.6f;
-                pkProg = pkOn ? 1f : Math.max(0f, Math.min(1f, (depth - pkBase) / th));
-                if (!pkOn) {
-                    float dt = Math.min(0.5f, (nowMs - pkT) / 1000f); pkT = nowMs;
-                    if (depth - pkBase > th) {
-                        if (pkAbove == 0) pkAbove = nowMs;
-                        if (nowMs - pkAbove > 70) { pkOn = true; pkPeak = depth; }      // must stay pushed for a moment
-                    } else {
-                        pkAbove = 0;
-                        pkBase += (depth - pkBase) * Math.min(1f, dt / 0.6f);              // slow changes (the whole arm moving) are not a poke
-                    }
-                } else {
-                    if (depth > pkPeak) pkPeak = depth;
-                    if (depth - pkBase < th * 0.45f) { pkOn = false; pkRelT = nowMs; pkAbove = 0; }   // finger pulled back
-                }
-            }
-        }
-        final boolean press = selM == 0 ? pinching : (selM == 1 ? pkOn : (pinching || pkOn));
+        // point to select (NvPoint): the index finger out and the other fingers folded; what counts as the click is set in the Hands settings
+        // (just stretch / light push / firm push). It looks like poking a button, but nothing is touched: it is a pose. Pinching stays the way to grab and drag.
+        if (vel.length > handBase + 27) handSpd = (float) Math.hypot(vel[1 + handBase + 8 * 3], vel[1 + handBase + 8 * 3 + 1]);    // how fast the fingertip crosses the picture (picture widths per second)
+        final boolean ptActive = pointMode > 0 && !gameUp() && pmFade < 0.05f;      // (not while a game is up, or the palm menu is shown: poking its icons is not a click on a window)
+        pt.level = Math.max(0, pointMode - 1); pt.grip = pointGrip;
+        boolean ptClick = false;
+        if (ptActive) ptClick = pt.update(r, ar, nowMs, size, psize, ratio, ratioM, handSpd, pinching); else pt.reset();
+        pkOn = pt.press; pkProg = pt.prog;
+        final boolean ptPose = ptActive && pt.pose;
+        final boolean press = pinching || pkOn;
+        if (ptClick) { rippleT = nowMs; rippleX = cnx; rippleY = cny; }
 
         // thumb + middle finger held together for a moment: show / hide the menu
         boolean mpPrev = mpOn;
@@ -1874,10 +1844,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         mpNx = mhx * 2f - 1f; mpNy = 1f - mhy * 2f;
 
         // the pointer sits between thumb tip and index tip, so closing the fingers does not push it off the target
-        float hx = selM == 0 ? (tx + ax) * 0.5f : tx, hy = selM == 0 ? (ty + ay) * 0.5f : ty;     // air touch: the fingertip itself
+        final boolean useTip = curAnchor == 1 || ptPose;                                           // (the pointing pose has no pinch: the fingertip itself)
+        float hx = useTip ? tx : (tx + ax) * 0.5f, hy = useTip ? ty : (ty + ay) * 0.5f;
         if (rot180) { hx = 1f - hx; hy = 1f - hy; }
         float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
-        boolean hold = selM != 0 && (ratio < 0.45f || pkProg > 0.5f);          // fingers closing / finger being pushed: the pointer stays where it was
+        boolean hold = ptPose && pt.freeze();                                  // the finger is about to click / being pushed: the pointer stays where it was
         if (!curOk) { cnx = nx; cny = ny; } else if (!hold) {
             // adaptive follow: a slow, shaky fingertip is calmed down, a quick one is followed almost exactly (sticks to the hand)
             float sp = (float) Math.hypot(nx - cnx, ny - cny);
@@ -1933,7 +1904,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
         }
         barHovWin = barWin; barHovIdx = barWin != null ? barReg : -1;
-        if (barWin != null && pinching && !prevPinch && barReg >= 0 && barReg < 6) { holdPop(cnx, cny, false); barAct(barWin, barReg); }
+        if (barWin != null && ((pinching && !prevPinch) || ptClick) && barReg >= 0 && barReg < 6) { holdPop(cnx, cny, false); barAct(barWin, barReg); }
         gripHot = gripWin != null || (dragWin != null && resizing);
         // OK sign (thumb and index in a ring, the other three fingers stretched out) held for a moment over empty space:
         // all windows go back to the standard places and sizes
@@ -1951,7 +1922,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 if (okProg >= 1f && !okDone) { okDone = true; resetLayoutReq = true; recenter = true; holdPop(cnx, cny, true); }
             } else { okT0 = 0; okProg = 0; if (!pinching) okDone = false; }
         }
-        if (target != null && target.ghost && pinching && !prevPinch) {      // the confirming click: it opens for real
+        if (target != null && target.ghost && ((pinching && !prevPinch) || ptClick)) {      // the confirming click: it opens for real
             target.ghost = false; target.confT0 = System.nanoTime(); holdPop(cnx, cny, false);
         }
         if (gripWin != null && pinching && !prevPinch) {
@@ -2159,7 +2130,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private boolean maskReady = false;
     private final float[] ringH = new float[8];
     /** half width of the bone ending at each landmark, in hand-size units (size = wrist to the root of the middle finger): the fingers get thinner towards the tip, the palm lines are wide */
-    private static final float[] BONE_W = NvHandShape.DEFAULT;      // until this person's own finger widths are learnt (NvHandShape)
+    private static final float[] BONE_W = {0f, 0.10f, 0.11f, 0.105f, 0.09f, 0.10f, 0.088f, 0.078f, 0.068f, 0.10f, 0.092f, 0.082f, 0.07f, 0.10f, 0.088f, 0.078f, 0.066f, 0.10f, 0.072f, 0.064f, 0.056f};
 
     private void renderMask(float[] r) {
         maskReady = false;
@@ -2174,8 +2145,6 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         float hwS = sceneW / 2f, hhS = sceneH / 2f;
         final boolean thr = true, arm = skel == 4;
-        final boolean mine = cam.shapeOn && cam.shape.isLearned() && !arm;      // the finger widths are this person's own (learnt once from the pixels): the band is drawn exactly that wide, no extra for speed
-        final float[] bwL = mine ? cam.shape.widths() : BONE_W;
         for (int pass = 0; pass < 3; pass++) {              // pass 0: R = the skin-checked band around the hand; pass 1: G = the sure core; pass 2: A = a wide area round the CURRENT skeleton (nothing is accepted as hand outside it)
             if (thr) GLES20.glColorMask(pass == 0, pass == 1, pass == 0, pass == 2);
             for (int i = 0; i < n; i++) {
@@ -2201,8 +2170,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     }
                     // the width follows the real finger (so the gaps between the fingers stay open): the sure core a little inside of it, the colour-checked band a little outside of it
                     boolean palmLine = p1 == 1 || p1 == 5 || p1 == 9 || p1 == 13 || p1 == 17;
-                    float wf = bwL[p1 < 21 ? p1 : 0]; if (mine && p1 == 17) wf = (p0 == 0) ? Math.min(wf, 0.125f) : BONE_W[17];      // the palm edge keeps its learnt width (not wider than 0.125: its round end would bulge at the pinky root), the knuckle line the normal one
-                    float bwid = core ? (palmLine ? 0.10f : Math.max(0.028f, wf - 0.045f)) : gate ? wf + (arm ? 0.22f : 0.16f) + Math.min(0.12f, handSpd * 0.12f) : (arm ? wf + 0.06f + Math.min(0.06f, handSpd * 0.06f) : (mine ? wf + 0.006f : wf + 0.012f + Math.min(0.02f, handSpd * 0.02f)));
+                    float wf = BONE_W[p1 < 21 ? p1 : 0];
+                    float bwid = core ? (palmLine ? 0.10f : Math.max(0.028f, wf - 0.045f)) : gate ? wf + (arm ? 0.22f : 0.16f) + Math.min(0.12f, handSpd * 0.12f) : (arm ? wf + 0.06f + Math.min(0.06f, handSpd * 0.06f) : wf + 0.012f + Math.min(0.02f, handSpd * 0.02f));
                     aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * bwid));
                 }
                 if (thr) {
@@ -2225,8 +2194,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         GLES20.glColorMask(true, true, true, true);
         segDraw = false; segLutUse = 0;
-        if (cam.noCut) segDbg = "เส้นมือ: วาดจากโครงมือ + ความหนาที่จำ (ไม่ตัดภาพ) จำแล้ว=" + cam.shape.isLearned(); else segDbg = segDbg;
-        if (thr && !cam.noCut) { try { drawSegs(r, n); } catch (Throwable t) { segDraw = false; } }      // (noCut: the shape is drawn alone from the learnt widths, nothing is cut from the picture)
+        if (thr) { try { drawSegs(r, n); } catch (Throwable t) { segDraw = false; } }
     }
 
     /** puts the hand cut out of the real pixels (NvSeg) into the B channel of the mask, moved and turned to where the hand is NOW (the cut was made ~100 ms ago, the 21 points have moved since) */
@@ -2571,7 +2539,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         predictNow(now);                                    // where the hand is on screen right now (needed first: the outline mask is made before the scene picture)
         try { ilyUpdate(now); } catch (Throwable ignored) { ilyProg = 0f; }
         final boolean hide3 = h3.mode > 0 && h3.hideCam;     // 3D mode: the camera's own outline / skeleton of the hand is not shown, the 3D hand is
-        cam.noCut = hide3 || (cam.shapeOn && cam.shape.isLearned() && skel != 4);                                    // ... and the heavy cutting of the hand out of the camera's pixels is not done at all
+        cam.noCut = hide3;                                    // ... and the heavy cutting of the hand out of the camera's pixels is not done at all
         if (skel >= 2 && !hide3) {
             renderMask(dispDraw);
             if (maskReady) {                                          // the same for every hand mode: the shape is checked against the skin colour of the camera picture, so it sticks to the real hand

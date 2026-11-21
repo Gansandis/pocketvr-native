@@ -229,8 +229,6 @@ public class NvCam {
     public volatile boolean segOn = true;
     public final NvHandRig rig = new NvHandRig();                 // the steady hand skeleton (learns the bone lengths of the user's hand, then keeps them)
     public volatile boolean rigOn = true;
-    public final NvHandShape shape = new NvHandShape();           // how thick this person's fingers are (learnt once from the real pixels); the outline is then drawn from it and the steady skeleton
-    public volatile boolean shapeOn = false;     // (off by default: the outline drawn from the learnt shape alone did not sit on the real hand in the first test; the cut from the pixels is the default again)
     public volatile boolean noCut = false;                        // the hand is drawn as a 3D model: nothing needs the cut-out from the camera's pixels (the heaviest part of the hand work)
     public volatile String segErr = "";
     public volatile int segCount = 0;
@@ -248,7 +246,6 @@ public class NvCam {
         final float[][] lms = new float[nh][42], rois = new float[nh][];
         final float[] szs = new float[nh];
         final boolean[] need = new boolean[nh];
-        final boolean[] learnShape = new boolean[nh];
         final long t = System.currentTimeMillis();
         boolean any = false;
         for (int i = 0; i < nh; i++) {
@@ -265,7 +262,6 @@ public class NvCam {
             }
             need[i] = !still;
             any |= need[i];
-            learnShape[i] = shapeOn && !shape.isLearned() && rig.openFront(res, 1 + i * 63, (float) w / Math.max(1, h));
         }
         if (!any) {                                                   // nothing moved: only say the old cuts are still good
             SegOut[] same = new SegOut[2];
@@ -297,7 +293,6 @@ public class NvCam {
                     for (int k = 0; k < 21; k++) { q[k * 2] = (lms[i][k * 2] - rois[i][0]) * sc; q[k * 2 + 1] = (lms[i][k * 2 + 1] - rois[i][1]) * sc; }
                     SegOut o = new SegOut();
                     o.p = segWorker.run(crops[i], q, szs[i] * sc, arm);
-                    if (learnShape[i]) { try { shape.add(o.p, S, q, szs[i] * sc); } catch (Throwable e) { segErr = "shape:" + e; } }      // (before the cut is mixed with the old one: the true edge is what is measured)
                     o.cl = segWorker.lut.clone();
                     o.x0 = rois[i][0]; o.y0 = rois[i][1]; o.side = rois[i][2]; o.W = W; o.H = H; o.lm = lms[i]; o.t = t; o.born = t; o.arm = arm;
                     segBlend(o, segPrev[i]);
