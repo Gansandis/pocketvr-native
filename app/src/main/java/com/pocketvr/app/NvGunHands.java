@@ -29,7 +29,7 @@ public final class NvGunHands {
     public float walkMinDist = 0.42f, walkFullDist = 0.70f, walkMaxSpeed = 1.6f;   // arm reach (eyes -> hand) that starts walking / walks at full speed
     public float bodyYawTau = 0.8f;                                  // seconds the body takes to follow the head's turn
     public float tiltGain = 0f;                                      // 0 = the gun points exactly along eyes->hand. >0 lets the hand's own tilt (seen in the picture) bend it a bit
-    public float handTimeoutMs = 250f;                               // a hand not seen for this long is gone
+    public float handTimeoutMs = 450f;                               // a hand not seen for this long is gone (the hand tracking itself keeps a lost hand for 450 ms, followed by the camera)
 
     // ---- results (read them after update) ----
     public int gunState = HOLSTERED;

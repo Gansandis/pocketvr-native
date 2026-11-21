@@ -226,9 +226,10 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 cam.ecoMode = ecoLevel;                                    // when warm the model rests only while the hand is still (see NvCam.stillPaceMs), not all the time
                 for (NvBrowser b : brs) if (b != null) b.poll();
                 savePrefsIfChanged();
+                if (!rigSaved && cam.rig.isLearned()) saveRig();                  // the hand has just been learned: keep it
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.220 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.221 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -663,6 +664,9 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.cycle("", "ระยะมือที่รับ", () -> String.format("%.1f ม.", hands.maxDistM), () -> hands.maxDistM = hands.maxDistM < 0.7f ? 0.85f : hands.maxDistM < 0.9f ? 1.1f : hands.maxDistM < 1.2f ? 1.5f : 0.6f);
         s.toggle("", "ล็อกมือผู้ใช้ (ตามมือที่อยู่ในภาพต่อเนื่อง 1 วินาที มือใหม่จากที่อื่นไม่รับ)", () -> hands.lockMine, () -> hands.lockMine = !hands.lockMine);
         s.toggle("🖐", "เมนูบนฝ่ามือซ้าย (แบมือซ้าย จิ้มไอคอนด้วยนิ้วมือขวา)", () -> rend.palmMenu, () -> rend.palmMenu = !rend.palmMenu);
+        s.toggle("🦴", "โครงมือนิ่ง (เรียนรู้ความยาวนิ้วของคุณ นิ้วไม่ยืดหด สั่นน้อย ไม่หลุดง่าย)", () -> cam.rigOn, () -> { cam.rigOn = !cam.rigOn; saveRig(); });
+        s.cycle("📏", "โครงมือ: การเรียนรู้", () -> cam.rig.isLearned() ? "เรียนรู้แล้ว (กดเพื่อเรียนรู้ใหม่)" : "แบมือหันหน้าเข้ากล้องค้างไว้ " + Math.round(cam.rig.progress() * 100f) + "%", () -> { cam.rig.resetLearning(); rigSaved = false; saveRig(); });
+        s.toggle("🧊", "เปิดมือ 3D ตั้งแต่เปิดแอป (แทนเงามือจากกล้อง ลดความร้อน)", () -> boot3d, () -> { boot3d = !boot3d; save3d(); });
         s.cycle("🫱", "มือหลัก (ตอนยกสองมือ)", () -> rend.mainHand == 0 ? "มือซ้าย" : "มือขวา", () -> rend.mainHand = rend.mainHand == 0 ? 1 : 0);
         s.cycle("🖐", "โมเดลมือ 3D: แบบ", () -> Nv3DHands.STYLE_N[Math.max(0, Math.min(Nv3DHands.STYLE_N.length - 1, rend.h3.style))], () -> { rend.h3.style = (rend.h3.style + 1) % Nv3DHands.STYLE_N.length; save3d(); });
         s.cycle("🎨", "โมเดลมือ 3D: สี", () -> Nv3DHands.COLOR_N[Math.max(0, Math.min(Nv3DHands.COLOR_N.length - 1, rend.h3.color))], () -> { rend.h3.color = (rend.h3.color + 1) % Nv3DHands.COLOR_N.length; save3d(); });
@@ -753,11 +757,26 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
 
     // ================= saved settings (kept when the app is closed) =================
     private static final String[] PK = {"sel", "pokeS", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck4", "flow", "eco", "autoRes", "tips", "pmenu", "lang", "lock", "range", "night", "scene"};
+    private boolean boot3d = true, rigSaved = false;
+    /** the learned bone lengths and the switch of the steady skeleton are kept, so the hand is learned once */
+    private void saveRig() {
+        try {
+            getSharedPreferences("pvr_rig", MODE_PRIVATE).edit().putString("p", cam.rig.isLearned() ? cam.rig.save() : "").putBoolean("on", cam.rigOn).apply();
+            if (cam.rig.isLearned()) rigSaved = true;
+        } catch (Throwable ignored) { }
+    }
+    private void loadRig() {
+        try {
+            android.content.SharedPreferences sp = getSharedPreferences("pvr_rig", MODE_PRIVATE);
+            cam.rigOn = sp.getBoolean("on", true);
+            rigSaved = cam.rig.load(sp.getString("p", ""));
+        } catch (Throwable ignored) { }
+    }
     private void save3d() {
         try {
             Nv3DHands h = rend.h3;
             getSharedPreferences("pvr_3d", MODE_PRIVATE).edit().putInt("style", h.style).putInt("color", h.color).putFloat("op", h.opacity).putFloat("th", h.thick)
-                    .putBoolean("ges", h.gesture).putBoolean("both", h.gestureBoth).putBoolean("hide", h.hideCam).putInt("last", h.lastMode).apply();
+                    .putBoolean("ges", h.gesture).putBoolean("both", h.gestureBoth).putBoolean("hide", h.hideCam).putInt("last", h.lastMode).putBoolean("boot", boot3d).apply();
         } catch (Throwable ignored) { }
     }
     private void load3d() {
@@ -768,6 +787,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             h.opacity = Math.max(0.3f, Math.min(1f, sp.getFloat("op", 0.9f))); h.thick = Math.max(0.7f, Math.min(1.4f, sp.getFloat("th", 1f)));
             h.gesture = sp.getBoolean("ges", true); h.gestureBoth = sp.getBoolean("both", false); h.hideCam = sp.getBoolean("hide", true);
             h.lastMode = sp.getInt("last", 1) == 3 ? 3 : 1;
+            boot3d = sp.getBoolean("boot", true);
+            if (boot3d) h.mode = 1;                                    // the 3D hand is the hand of the app (the camera-pixel cut-out is the heavy, flickery one)
         } catch (Throwable ignored) { }
     }
     private String h3Str() { return rend.h3.mode > 0 ? "\n" + rend.h3.dbg : ""; }
@@ -780,7 +801,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     private void applyPrefs(double[] v) {
-        load3d(); loadLag();
+        load3d(); loadLag(); loadRig();
         rend.sel = (int) v[0]; rend.pokeS = (int) v[1]; rend.predict = v[2] > 0.5; cam.detW = (int) v[3]; rend.floaty = v[4] > 0.5;
         NvUi.glass = (int) v[5]; rend.cursorSz = (int) v[6]; rend.skel = (int) v[7]; hudOn = v[8] > 0.5;
         rend.sharpen = (float) v[9]; rend.stereo = v[10] > 0.5; rend.lens = (int) v[11]; rend.eyeShift = (float) v[12]; compass = v[13] > 0.5;

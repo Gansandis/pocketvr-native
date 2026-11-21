@@ -2568,6 +2568,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         predictNow(now);                                    // where the hand is on screen right now (needed first: the outline mask is made before the scene picture)
         try { ilyUpdate(now); } catch (Throwable ignored) { ilyProg = 0f; }
         final boolean hide3 = h3.mode > 0 && h3.hideCam;     // 3D mode: the camera's own outline / skeleton of the hand is not shown, the 3D hand is
+        cam.noCut = hide3;                                    // ... and the heavy cutting of the hand out of the camera's pixels is not done at all
         if (skel >= 2 && !hide3) {
             renderMask(dispDraw);
             if (maskReady) {                                          // the same for every hand mode: the shape is checked against the skin colour of the camera picture, so it sticks to the real hand

@@ -227,6 +227,9 @@ public class NvCam {
     public volatile SegOut[] segs = new SegOut[2];
     public volatile boolean segArm = false;                       // the forearm counts as hand too (set by the renderer)
     public volatile boolean segOn = true;
+    public final NvHandRig rig = new NvHandRig();                 // the steady hand skeleton (learns the bone lengths of the user's hand, then keeps them)
+    public volatile boolean rigOn = true;
+    public volatile boolean noCut = false;                        // the hand is drawn as a 3D model: nothing needs the cut-out from the camera's pixels (the heaviest part of the hand work)
     public volatile String segErr = "";
     public volatile int segCount = 0;
     public volatile float segMs = 0f;
@@ -676,6 +679,7 @@ public class NvCam {
             final Bitmap bmp = yuvToBitmap(img, this);
             convMs += ((System.nanoTime() - c0) / 1e6f - convMs) * 0.2f;
             final long ts = now;
+            final float arB = (float) bmp.getWidth() / Math.max(1, bmp.getHeight());     // (read now: the hand model recycles the picture)
             ExecutorService ex = detEx;
             if (ex == null) { detBusy.set(false); return; }
             ex.execute(() -> {
@@ -690,7 +694,7 @@ public class NvCam {
                     }
                     // the hand model closes the picture it is given (and that recycles the bitmap), so a copy is kept for the colour learning and the cutting of the hand
                     Bitmap keep = null;
-                    try { keep = bmp.copy(Bitmap.Config.ARGB_8888, false); } catch (Throwable e) { segErr = "copy:" + e; }
+                    if (!noCut) { try { keep = bmp.copy(Bitmap.Config.ARGB_8888, false); } catch (Throwable e) { segErr = "copy:" + e; } }
                     float[] res = hands.detect(bmp, ts);
                     trackStill(res);
                     if (keep != null) {
@@ -708,7 +712,14 @@ public class NvCam {
                     if (res != null) {
                         heldFlag = false;
                         res = holdSecond(res, result, System.nanoTime() / 1000000L);
-                        if (res[0] >= 1 && filt) smooth(res, ts);
+                        if (res[0] >= 1 && filt) {
+                            boolean ro = rigOn;
+                            rig.on = ro;
+                            boolean done = false;
+                            if (ro) { try { done = rig.process(res, ts, arB); } catch (Throwable e) { rig.on = false; rigOn = false; segErr = "rig:" + e; } }   // never let it break the hand
+                            if (done) fOk = false;                                  // the steady skeleton (once it has learned the hand) replaces the point-by-point filter
+                            else smooth(res, ts);
+                        }
                         long tn = System.nanoTime() / 1000000L;
                         if (res[0] >= 1) {
                             if (tn - lastHandT > 1000) { sessionT = tn; lastTwoT = tn; }       // a new time with hands in view
@@ -719,7 +730,7 @@ public class NvCam {
                             // when two hands are chosen in the settings, two are looked for all the time.)
                         } else if (tn - lastHandT > 1000 && autoDown) autoDown = false;
                         // one or two empty answers in a row (a blink of the model) must not drop the hand: keep the last good points for a moment
-                        if (res[0] < 1 && result.length > 0 && result[0] >= 1 && tn - lastHandT < 260) res = result;
+                        if (res[0] < 1 && result.length > 0 && result[0] >= 1 && tn - lastHandT < ((rigOn && rig.isLearned()) ? 450 : 260)) res = result;
                         else {
                             resultCapT = ts;
                             float[] rf = new float[NvFlow.NTRK * 2];                       // where the moves of every follower stood when that picture was taken (set before the points)
