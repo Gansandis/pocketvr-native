@@ -2159,7 +2159,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private boolean maskReady = false;
     private final float[] ringH = new float[8];
     /** half width of the bone ending at each landmark, in hand-size units (size = wrist to the root of the middle finger): the fingers get thinner towards the tip, the palm lines are wide */
-    private static final float[] BONE_W = {0f, 0.10f, 0.11f, 0.105f, 0.09f, 0.10f, 0.088f, 0.078f, 0.068f, 0.10f, 0.092f, 0.082f, 0.07f, 0.10f, 0.088f, 0.078f, 0.066f, 0.10f, 0.072f, 0.064f, 0.056f};
+    private static final float[] BONE_W = NvHandShape.DEFAULT;      // until this person's own finger widths are learnt (NvHandShape)
 
     private void renderMask(float[] r) {
         maskReady = false;
@@ -2174,6 +2174,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
         float hwS = sceneW / 2f, hhS = sceneH / 2f;
         final boolean thr = true, arm = skel == 4;
+        final boolean mine = cam.shapeOn && cam.shape.isLearned() && !arm;      // the finger widths are this person's own (learnt once from the pixels): the band is drawn exactly that wide, no extra for speed
+        final float[] bwL = mine ? cam.shape.widths() : BONE_W;
         for (int pass = 0; pass < 3; pass++) {              // pass 0: R = the skin-checked band around the hand; pass 1: G = the sure core; pass 2: A = a wide area round the CURRENT skeleton (nothing is accepted as hand outside it)
             if (thr) GLES20.glColorMask(pass == 0, pass == 1, pass == 0, pass == 2);
             for (int i = 0; i < n; i++) {
@@ -2199,8 +2201,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     }
                     // the width follows the real finger (so the gaps between the fingers stay open): the sure core a little inside of it, the colour-checked band a little outside of it
                     boolean palmLine = p1 == 1 || p1 == 5 || p1 == 9 || p1 == 13 || p1 == 17;
-                    float wf = BONE_W[p1 < 21 ? p1 : 0];
-                    float bwid = core ? (palmLine ? 0.10f : Math.max(0.028f, wf - 0.045f)) : gate ? wf + (arm ? 0.22f : 0.16f) + Math.min(0.12f, handSpd * 0.12f) : (arm ? wf + 0.06f + Math.min(0.06f, handSpd * 0.06f) : wf + 0.012f + Math.min(0.02f, handSpd * 0.02f));
+                    float wf = bwL[p1 < 21 ? p1 : 0]; if (mine && p1 == 17) wf = (p0 == 0) ? Math.min(wf, 0.125f) : BONE_W[17];      // the palm edge keeps its learnt width (not wider than 0.125: its round end would bulge at the pinky root), the knuckle line the normal one
+                    float bwid = core ? (palmLine ? 0.10f : Math.max(0.028f, wf - 0.045f)) : gate ? wf + (arm ? 0.22f : 0.16f) + Math.min(0.12f, handSpd * 0.12f) : (arm ? wf + 0.06f + Math.min(0.06f, handSpd * 0.06f) : (mine ? wf + 0.006f : wf + 0.012f + Math.min(0.02f, handSpd * 0.02f)));
                     aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * bwid));
                 }
                 if (thr) {
@@ -2223,7 +2225,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         GLES20.glColorMask(true, true, true, true);
         segDraw = false; segLutUse = 0;
-        if (thr) { try { drawSegs(r, n); } catch (Throwable t) { segDraw = false; } }
+        if (thr && !cam.noCut) { try { drawSegs(r, n); } catch (Throwable t) { segDraw = false; } }      // (noCut: the shape is drawn alone from the learnt widths, nothing is cut from the picture)
     }
 
     /** puts the hand cut out of the real pixels (NvSeg) into the B channel of the mask, moved and turned to where the hand is NOW (the cut was made ~100 ms ago, the 21 points have moved since) */
@@ -2568,7 +2570,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         predictNow(now);                                    // where the hand is on screen right now (needed first: the outline mask is made before the scene picture)
         try { ilyUpdate(now); } catch (Throwable ignored) { ilyProg = 0f; }
         final boolean hide3 = h3.mode > 0 && h3.hideCam;     // 3D mode: the camera's own outline / skeleton of the hand is not shown, the 3D hand is
-        cam.noCut = hide3;                                    // ... and the heavy cutting of the hand out of the camera's pixels is not done at all
+        cam.noCut = hide3 || (cam.shapeOn && cam.shape.isLearned() && skel != 4);                                    // ... and the heavy cutting of the hand out of the camera's pixels is not done at all
         if (skel >= 2 && !hide3) {
             renderMask(dispDraw);
             if (maskReady) {                                          // the same for every hand mode: the shape is checked against the skin colour of the camera picture, so it sticks to the real hand

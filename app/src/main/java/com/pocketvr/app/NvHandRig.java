@@ -115,7 +115,7 @@ final class NvHandRig {
     }
 
     /** a hand that is open and faces the camera shows its bones at their true length: only such pictures are used for learning */
-    private boolean goodForLearning(float s) {
+    private static boolean goodFor(float[] P, float s) {
         if (!(s > 0.03f)) return false;
         for (int f = 0; f < 4; f++) {                                           // every finger stretched: the tip is far from the wrist compared with the middle joint
             int m = 5 + f * 4;                                                    // the finger's first knuckle; the tip of a stretched finger is ~1.8 times as far from the wrist
@@ -126,6 +126,18 @@ final class NvHandRig {
         if (dz1 > 0.45f * s || dz2 > 0.45f * s) return false;                    // turned away from the camera: bones look short
         float w = len(P, 5, 17);
         return w > 0.55f * s && w < 1.2f * s;                                     // the palm is seen from the front (not edge-on)
+    }
+
+    /** is this hand (numbers of one hand in res, starting at b) open and facing the camera? (used by the shape learning, which needs the same kind of picture) */
+    boolean openFront(float[] res, int b, float ar) {
+        if (res == null || res.length < b + 63 || !(ar > 0.1f)) return false;
+        float[] L = new float[63];
+        for (int k = 0; k < 21; k++) {
+            float x = res[b + k * 3], y = res[b + k * 3 + 1], z = res[b + k * 3 + 2];
+            if (Float.isNaN(x + y + z) || Float.isInfinite(x + y + z)) return false;
+            L[k * 3] = x * ar; L[k * 3 + 1] = y; L[k * 3 + 2] = z * ar;
+        }
+        return goodFor(L, len(L, 0, 9));
     }
 
     private static float len2(float[] a, int i, int j) {
@@ -173,7 +185,7 @@ final class NvHandRig {
             Slot sl = slots[slotOf[h]];
             float s = len(P, 0, 9);
             if (!(s > 0.02f)) continue;
-            if (!frozen && goodForLearning(s)) learn();
+            if (!frozen && goodFor(P, s)) learn();
             if (!learned) { sl.have = false; sl.wx = P[0]; sl.wy = P[1]; sl.t = ts; continue; }
             if (rebuild(sl, ts, s)) {
                 for (int k = 0; k < 21; k++) { res[b + k * 3] = Q[k * 3] / ar; res[b + k * 3 + 1] = Q[k * 3 + 1]; res[b + k * 3 + 2] = Q[k * 3 + 2] / ar; }
