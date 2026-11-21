@@ -60,6 +60,8 @@ public final class Tr {
         {"จุดเคอร์เซอร์", "Pointer position"},
         {"ระหว่างนิ้วโป้งกับนิ้วชี้", "Between thumb and index"},
         {"ปลายนิ้วชี้", "Index fingertip"},
+        {"ปลายนิ้วชี้ (ตรงๆ)", "Index fingertip (raw)"},
+        {"ปลายนิ้วชี้ (คำนวณจากข้อต่อ นิ่งกว่า)", "Index fingertip (from the joints, steadier)"},
         {"คลิกด้วยท่ากำ/ชี้ (กำมือหรือชี้ แล้วดันมือไปข้างหน้านิดหน่อย)", "Click with a fist / pointing hand (push the hand a little forward)"},
         {"แค่ยื่น (ชี้ค้างไว้)", "Just stretch (hold the pose)"},
         {"จิ้มเบา (ยื่นแล้วดันไปข้างหน้านิดหน่อย)", "Light poke (point, then push a little forward)"},

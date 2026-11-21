@@ -229,7 +229,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 if (!rigSaved && cam.rig.isLearned()) saveRig();                  // the hand has just been learned: keep it
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.226 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.227 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (rend.ptDbg.isEmpty() ? "" : "\n" + rend.ptDbg) + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -666,7 +666,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.toggle("🖐", "เมนูบนฝ่ามือซ้าย (แบมือซ้าย จิ้มไอคอนด้วยนิ้วมือขวา)", () -> rend.palmMenu, () -> rend.palmMenu = !rend.palmMenu);
         s.toggle("🦴", "โครงมือนิ่ง (เรียนรู้ความยาวนิ้วของคุณ นิ้วไม่ยืดหด สั่นน้อย ไม่หลุดง่าย)", () -> cam.rigOn, () -> { cam.rigOn = !cam.rigOn; saveRig(); });
         s.cycle("📏", "โครงมือ: การเรียนรู้", () -> cam.rig.isLearned() ? "เรียนรู้แล้ว (กดเพื่อเรียนรู้ใหม่)" : "แบมือหันหน้าเข้ากล้องค้างไว้ " + Math.round(cam.rig.progress() * 100f) + "%", () -> { cam.rig.resetLearning(); rigSaved = false; saveRig(); });
-        s.cycle("🎯", "จุดเคอร์เซอร์", () -> rend.curAnchor == 0 ? "ระหว่างนิ้วโป้งกับนิ้วชี้" : "ปลายนิ้วชี้", () -> rend.curAnchor = 1 - rend.curAnchor);
+        s.cycle("🎯", "จุดเคอร์เซอร์", () -> rend.curAnchor == 0 ? "ระหว่างนิ้วโป้งกับนิ้วชี้" : rend.curAnchor == 1 ? "ปลายนิ้วชี้ (ตรงๆ)" : "ปลายนิ้วชี้ (คำนวณจากข้อต่อ นิ่งกว่า)", () -> rend.curAnchor = (rend.curAnchor + 1) % 3);
         s.cycle("👉", "คลิกด้วยท่ากำ/ชี้ (กำมือหรือชี้ แล้วดันมือไปข้างหน้านิดหน่อย)", () -> rend.pointMode == 0 ? "ปิด" : rend.pointMode == 1 ? "แค่ยื่น (ชี้ค้างไว้)" : rend.pointMode == 2 ? "จิ้มเบา (ยื่นแล้วดันไปข้างหน้านิดหน่อย)" : "จิ้มจริง (ดันไปข้างหน้าชัดๆ)", () -> rend.pointMode = (rend.pointMode + 1) % 4);
         s.cycle("✊", "ความแน่นของนิ้วที่หุบ (ท่ากำ/ชี้)", () -> rend.pointGrip == 0 ? "หลวม" : rend.pointGrip == 1 ? "กลาง" : "แน่น", () -> rend.pointGrip = (rend.pointGrip + 1) % 3);
         s.toggle("🧊", "เปิดมือ 3D ตั้งแต่เปิดแอป (แทนเส้นมือจากกล้อง ลดความร้อน)", () -> boot3d, () -> { boot3d = !boot3d; save3d(); });
@@ -776,7 +776,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     // ================= saved settings (kept when the app is closed) =================
-    private static final String[] PK = {"ptMode", "ptGrip", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck4", "flow", "eco", "autoRes", "tips", "pmenu", "lang", "lock", "range", "night", "scene", "anchor"};
+    private static final String[] PK = {"ptMode", "ptGrip", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck4", "flow", "eco", "autoRes", "tips", "pmenu", "lang", "lock", "range", "night", "scene", "anchor2"};
     private boolean boot3d = false, rigSaved = false;
     /** the learned bone lengths and the switch of the steady skeleton are kept, so the hand is learned once */
     private void saveRig() {
@@ -826,7 +826,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         NvUi.glass = (int) v[5]; rend.cursorSz = (int) v[6]; rend.skel = (int) v[7]; hudOn = v[8] > 0.5;
         rend.sharpen = (float) v[9]; rend.stereo = v[10] > 0.5; rend.lens = (int) v[11]; rend.eyeShift = (float) v[12]; compass = v[13] > 0.5;
         motion.depthM = (float) v[14]; motion.lagMs = (int) v[15]; cam.handsN = Math.max(1, Math.min(2, (int) v[16])); rend.vrFov = (float) Math.max(50, Math.min(110, v[17]));
-        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19])); rend.mainHand = v[20] > 0.5 ? 1 : 0; rend.chroma = (float) Math.max(-0.06, Math.min(0.06, v[21])); cam.handsGpu = v[22] > 0.5; rend.neck = v[23] > 0.5; cam.flowOn = v[24] > 0.5; eco = Math.max(0, Math.min(3, (int) v[25])); rend.autoRes = v[26] > 0.5; cam.tipsOn = v[27] > 0.5; rend.palmMenu = v[28] > 0.5; Tr.setThai(v.length > 29 && v[29] > 0.5); if (v.length > 31) { hands.lockMine = v[30] > 0.5; hands.maxDistM = (float) Math.max(0.4, Math.min(2.0, v[31])); } if (v.length > 32) { cam.night = Math.max(0, Math.min(2, (int) v[32])); rend.lift = cam.night == 0 ? 0f : cam.night == 1 ? 0.6f : 1.0f; } if (v.length > 33) rend.envScene = Math.max(0, Math.min(1, (int) v[33])); if (v.length > 34) rend.curAnchor = Math.max(0, Math.min(1, (int) v[34]));
+        rend.reproj = v[18] > 0.5; rend.camLagMs = Math.max(0, Math.min(250, (int) v[19])); rend.mainHand = v[20] > 0.5 ? 1 : 0; rend.chroma = (float) Math.max(-0.06, Math.min(0.06, v[21])); cam.handsGpu = v[22] > 0.5; rend.neck = v[23] > 0.5; cam.flowOn = v[24] > 0.5; eco = Math.max(0, Math.min(3, (int) v[25])); rend.autoRes = v[26] > 0.5; cam.tipsOn = v[27] > 0.5; rend.palmMenu = v[28] > 0.5; Tr.setThai(v.length > 29 && v[29] > 0.5); if (v.length > 31) { hands.lockMine = v[30] > 0.5; hands.maxDistM = (float) Math.max(0.4, Math.min(2.0, v[31])); } if (v.length > 32) { cam.night = Math.max(0, Math.min(2, (int) v[32])); rend.lift = cam.night == 0 ? 0f : cam.night == 1 ? 0.6f : 1.0f; } if (v.length > 33) rend.envScene = Math.max(0, Math.min(1, (int) v[33])); if (v.length > 34) rend.curAnchor = Math.max(0, Math.min(2, (int) v[34]));
     }
 
     // ----- where the windows were left (turn, height, size, distance) -----

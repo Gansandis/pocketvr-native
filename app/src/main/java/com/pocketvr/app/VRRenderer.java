@@ -186,10 +186,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile boolean flatWins = false;             // off (default): every window is a real flat thing in the room, seen in true perspective (no roll correction of any kind). On: it is turned square to the screen instead (top edge level with the screen, no perspective)
     public volatile boolean floaty = false;               // windows stay perfectly still unless this is switched on
     public volatile int cursorSz = 0;                     // 0 small and faint, 1 medium, 2 large
-    public volatile int curAnchor = 0;        // where the pointer sits: 0 between thumb tip and index tip, 1 on the index fingertip
+    public volatile int curAnchor = 2;        // where the pointer sits: 0 between thumb tip and index tip, 1 on the index fingertip, 2 on the index fingertip worked out from its joints
     public volatile int pointMode = 2;        // point to select: 0 off, 1 just stretch the finger (held), 2 light push, 3 firm push
     public volatile int pointGrip = 1;        // how tightly the other fingers must be folded: 0 loose, 1 medium, 2 tight
     private final NvPoint pt = new NvPoint();
+    private float idxLr = 0.9f, idxLf = 0f;
+    private long idxLfT = 0;
     public volatile String ptDbg = "";
     private long ptDbgT = 0;
     private float pkProg = 0;
@@ -1800,13 +1802,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         ratioT = nowMs;
         if (!pinching) {
             offSince = 0;
-            if (ratioF < 0.15f) { pinching = true; onSince = 0; }
-            else if (ratioF < 0.23f) { if (onSince == 0) onSince = nowMs; else if (nowMs - onSince >= 30) { pinching = true; onSince = 0; } }
+            if (ratioF < 0.18f) { pinching = true; onSince = 0; }
+            else if (ratioF < 0.28f) { if (onSince == 0) onSince = nowMs; else if (nowMs - onSince >= 30) { pinching = true; onSince = 0; } }
             else onSince = 0;
         } else {
             onSince = 0;
-            if (ratioF > 0.45f) { pinching = false; offSince = 0; }
-            else if (ratioF > 0.34f) { if (offSince == 0) offSince = nowMs; else if (nowMs - offSince >= 50) { pinching = false; offSince = 0; } }
+            if (ratioF > 0.50f) { pinching = false; offSince = 0; }
+            else if (ratioF > 0.38f) { if (offSince == 0) offSince = nowMs; else if (nowMs - offSince >= 50) { pinching = false; offSince = 0; } }
             else offSince = 0;
         }
         if (pinching) lastPinchT = nowMs;
@@ -1847,9 +1849,30 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (rot180) { mhx = 1f - mhx; mhy = 1f - mhy; }
         mpNx = mhx * 2f - 1f; mpNy = 1f - mhy * 2f;
 
-        // the pointer sits between thumb tip and index tip, so closing the fingers does not push it off the target
-        final boolean useTip = curAnchor == 1 || (ptPose && NvPoint.fold(r, 8, 5, ar) > 1.3f);                                           // (the pointing pose has no pinch: the fingertip itself)
-        float hx = useTip ? tx : (tx + ax) * 0.5f, hy = useTip ? ty : (ty + ay) * 0.5f;
+        // where the pointer sits: 0 between thumb tip and index tip (closing the fingers does not push it off the target), 1 on the index tip itself,
+        // 2 on the index tip worked out from the finger's JOINTS: the direction of the knuckle -> next joint (steadier than the tip, which shakes) and a smoothed finger length;
+        // while the fingers close the length is kept, so the bending finger does not drag the pointer away from what was aimed at
+        final boolean idxOutNow = NvPoint.fold(r, 8, 5, ar) > 1.3f;
+        final int anc = (curAnchor == 0 && ptPose && idxOutNow) ? 2 : curAnchor;
+        float hx, hy;
+        if (anc == 0) { hx = (tx + ax) * 0.5f; hy = (ty + ay) * 0.5f; }
+        else if (anc == 1) { hx = tx; hy = ty; }
+        else {
+            float bx = r[1 + 5 * 3] * ar, by = r[1 + 5 * 3 + 1];                           // the knuckle (first joint of the index finger)
+            float px = r[1 + 6 * 3] * ar, py = r[1 + 6 * 3 + 1], qx = r[1 + 7 * 3] * ar, qy = r[1 + 7 * 3 + 1];
+            float vx = (px - bx) * 0.4f + (qx - bx) * 0.6f, vy = (py - by) * 0.4f + (qy - by) * 0.6f;
+            float vl = (float) Math.hypot(vx, vy);
+            float lcur = (float) Math.hypot(tx * ar - bx, ty - by);
+            float ux1 = px - bx, uy1 = py - by, ux2 = tx * ar - qx, uy2 = ty - qy;
+            float n1 = (float) Math.hypot(ux1, uy1) * (float) Math.hypot(ux2, uy2);
+            boolean straight = n1 > 1e-8f && (ux1 * ux2 + uy1 * uy2) / n1 > 0.93f;
+            if (straight && pinchAmt < 0.2f && psize > 1e-4f) idxLr = Math.max(0.5f, Math.min(1.4f, idxLr + (lcur / psize - idxLr) * 0.05f));   // how long the finger is (compared with the hand): learnt while it is straight
+            float len = lcur + (idxLr * psize - lcur) * Math.min(1f, pinchAmt * 1.2f);
+            idxLf = idxLf <= 0f || nowMs - idxLfT > 300 ? len : idxLf + (len - idxLf) * 0.4f;
+            idxLfT = nowMs;
+            if (vl > 1e-6f && psize > 1e-4f) { hx = (bx + vx / vl * idxLf) / ar; hy = by + vy / vl * idxLf; }
+            else { hx = tx; hy = ty; }
+        }
         if (rot180) { hx = 1f - hx; hy = 1f - hy; }
         float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
         boolean hold = ptPose && pt.freeze();                                  // the finger is about to click / being pushed: the pointer stays where it was
@@ -1857,6 +1880,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             // adaptive follow: a slow, shaky fingertip is calmed down, a quick one is followed almost exactly (sticks to the hand)
             float sp = (float) Math.hypot(nx - cnx, ny - cny);
             float al = Math.max(0.50f, Math.min(0.95f, 0.50f + sp * 9f));      // the points are already steadied at the source, so this only needs to calm the last bit
+            if (!pinching && ratioF < 0.30f && sp < 0.05f) al = Math.min(al, 0.30f);      // the fingers are about to close: the pointer stays still on what was aimed at, so the pinch lands
             cnx += (nx - cnx) * al; cny += (ny - cny) * al;
         }
         curOk = true;
