@@ -2225,6 +2225,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         GLES20.glColorMask(true, true, true, true);
         segDraw = false; segLutUse = 0;
+        if (cam.noCut) segDbg = "เส้นมือ: วาดจากโครงมือ + ความหนาที่จำ (ไม่ตัดภาพ) จำแล้ว=" + cam.shape.isLearned(); else segDbg = segDbg;
         if (thr && !cam.noCut) { try { drawSegs(r, n); } catch (Throwable t) { segDraw = false; } }      // (noCut: the shape is drawn alone from the learnt widths, nothing is cut from the picture)
     }
 

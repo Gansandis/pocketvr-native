@@ -230,7 +230,7 @@ public class NvCam {
     public final NvHandRig rig = new NvHandRig();                 // the steady hand skeleton (learns the bone lengths of the user's hand, then keeps them)
     public volatile boolean rigOn = true;
     public final NvHandShape shape = new NvHandShape();           // how thick this person's fingers are (learnt once from the real pixels); the outline is then drawn from it and the steady skeleton
-    public volatile boolean shapeOn = true;
+    public volatile boolean shapeOn = false;     // (off by default: the outline drawn from the learnt shape alone did not sit on the real hand in the first test; the cut from the pixels is the default again)
     public volatile boolean noCut = false;                        // the hand is drawn as a 3D model: nothing needs the cut-out from the camera's pixels (the heaviest part of the hand work)
     public volatile String segErr = "";
     public volatile int segCount = 0;

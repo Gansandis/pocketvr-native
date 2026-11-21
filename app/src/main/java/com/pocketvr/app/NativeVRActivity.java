@@ -229,7 +229,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 if ((!rigSaved && cam.rig.isLearned()) || (!shapeSaved && cam.shape.isLearned())) saveRig();                  // the hand has just been learned: keep it
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.222 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.223 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -666,7 +666,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.toggle("🖐", "เมนูบนฝ่ามือซ้าย (แบมือซ้าย จิ้มไอคอนด้วยนิ้วมือขวา)", () -> rend.palmMenu, () -> rend.palmMenu = !rend.palmMenu);
         s.toggle("🦴", "โครงมือนิ่ง (เรียนรู้ความยาวนิ้วของคุณ นิ้วไม่ยืดหด สั่นน้อย ไม่หลุดง่าย)", () -> cam.rigOn, () -> { cam.rigOn = !cam.rigOn; saveRig(); });
         s.cycle("📏", "โครงมือ: การเรียนรู้", () -> cam.rig.isLearned() ? "เรียนรู้แล้ว (กดเพื่อเรียนรู้ใหม่)" : "แบมือหันหน้าเข้ากล้องค้างไว้ " + Math.round(cam.rig.progress() * 100f) + "%", () -> { cam.rig.resetLearning(); rigSaved = false; saveRig(); });
-        s.toggle("✋", "จำรูปมือ (เรียนรู้ความหนานิ้วจากภาพจริงครั้งเดียว แล้ววาดเส้นรอบมือจากรูปที่จำไว้ ไม่ตัดภาพทุกเฟรม เสถียร เบาเครื่อง)", () -> cam.shapeOn, () -> { cam.shapeOn = !cam.shapeOn; saveRig(); });
+        s.toggle("✋", "จำรูปมือ (ทดลอง: วาดเส้นจากความหนานิ้วที่จำไว้ ไม่ตัดภาพ ถ้าเส้นไม่ตรงมือให้ปิด)", () -> cam.shapeOn, () -> { cam.shapeOn = !cam.shapeOn; saveRig(); });
         s.cycle("📐", "จำรูปมือ: การเรียนรู้", () -> cam.shape.isLearned() ? "จำแล้ว (กดเพื่อเรียนรู้ใหม่)" : "แบมือหันหน้าเข้ากล้องค้างไว้ " + Math.round(cam.shape.progress() * 100f) + "%", () -> { cam.shape.reset(); shapeSaved = false; saveRig(); });
         s.toggle("🧊", "เปิดมือ 3D ตั้งแต่เปิดแอป (แทนเส้นมือจากกล้อง ลดความร้อน)", () -> boot3d, () -> { boot3d = !boot3d; save3d(); });
         s.cycle("🫱", "มือหลัก (ตอนยกสองมือ)", () -> rend.mainHand == 0 ? "มือซ้าย" : "มือขวา", () -> rend.mainHand = rend.mainHand == 0 ? 1 : 0);
@@ -764,7 +764,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     private void saveRig() {
         try {
             getSharedPreferences("pvr_rig", MODE_PRIVATE).edit().putString("p", cam.rig.isLearned() ? cam.rig.save() : "").putBoolean("on", cam.rigOn)
-                    .putString("s", cam.shape.isLearned() ? cam.shape.save() : "").putBoolean("son", cam.shapeOn).apply();
+                    .putString("s", cam.shape.isLearned() ? cam.shape.save() : "").putBoolean("son2", cam.shapeOn).apply();
             if (cam.rig.isLearned()) rigSaved = true;
             if (cam.shape.isLearned()) shapeSaved = true;
         } catch (Throwable ignored) { }
@@ -774,7 +774,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             android.content.SharedPreferences sp = getSharedPreferences("pvr_rig", MODE_PRIVATE);
             cam.rigOn = sp.getBoolean("on", true);
             rigSaved = cam.rig.load(sp.getString("p", ""));
-            cam.shapeOn = sp.getBoolean("son", true);
+            cam.shapeOn = sp.getBoolean("son2", false);
             shapeSaved = cam.shape.load(sp.getString("s", ""));
         } catch (Throwable ignored) { }
     }

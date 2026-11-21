@@ -52,7 +52,7 @@ public final class Tr {
         {"โครงมือนิ่ง (เรียนรู้ความยาวนิ้วของคุณ นิ้วไม่ยืดหด สั่นน้อย ไม่หลุดง่าย)", "Steady hand skeleton (learns your finger lengths: no stretching, less shake, fewer drop-outs)"},
         {"โครงมือ: การเรียนรู้", "Hand skeleton: learning"},
         {"เรียนรู้แล้ว (กดเพื่อเรียนรู้ใหม่)", "Learned (tap to learn again)"},
-        {"จำรูปมือ (เรียนรู้ความหนานิ้วจากภาพจริงครั้งเดียว แล้ววาดเส้นรอบมือจากรูปที่จำไว้ ไม่ตัดภาพทุกเฟรม เสถียร เบาเครื่อง)", "Remember hand shape (learn finger thickness once from the real picture, then draw the outline from it: steady, lighter on the phone)"},
+        {"จำรูปมือ (ทดลอง: วาดเส้นจากความหนานิ้วที่จำไว้ ไม่ตัดภาพ ถ้าเส้นไม่ตรงมือให้ปิด)", "Remember hand shape (experimental: outline from the remembered finger thickness, no picture cut; turn off if the line misses the hand)"},
         {"จำรูปมือ: การเรียนรู้", "Hand shape: learning"},
         {"จำแล้ว (กดเพื่อเรียนรู้ใหม่)", "Remembered (tap to learn again)"},
         {"แบมือหันหน้าเข้ากล้องค้างไว้ ", "Hold your open hand facing the camera "},
