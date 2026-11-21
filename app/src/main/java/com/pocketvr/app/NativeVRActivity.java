@@ -229,7 +229,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 if (!rigSaved && cam.rig.isLearned()) saveRig();                  // the hand has just been learned: keep it
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.225 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n" : "") + String.format("native v3.226 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (rend.ptDbg.isEmpty() ? "" : "\n" + rend.ptDbg) + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -667,8 +667,8 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
         s.toggle("🦴", "โครงมือนิ่ง (เรียนรู้ความยาวนิ้วของคุณ นิ้วไม่ยืดหด สั่นน้อย ไม่หลุดง่าย)", () -> cam.rigOn, () -> { cam.rigOn = !cam.rigOn; saveRig(); });
         s.cycle("📏", "โครงมือ: การเรียนรู้", () -> cam.rig.isLearned() ? "เรียนรู้แล้ว (กดเพื่อเรียนรู้ใหม่)" : "แบมือหันหน้าเข้ากล้องค้างไว้ " + Math.round(cam.rig.progress() * 100f) + "%", () -> { cam.rig.resetLearning(); rigSaved = false; saveRig(); });
         s.cycle("🎯", "จุดเคอร์เซอร์", () -> rend.curAnchor == 0 ? "ระหว่างนิ้วโป้งกับนิ้วชี้" : "ปลายนิ้วชี้", () -> rend.curAnchor = 1 - rend.curAnchor);
-        s.cycle("👉", "คลิกด้วยท่าชี้ (ยื่นนิ้วชี้ หุบนิ้วอื่น)", () -> rend.pointMode == 0 ? "ปิด" : rend.pointMode == 1 ? "แค่ยื่น (ชี้ค้างไว้)" : rend.pointMode == 2 ? "จิ้มเบา (ยื่นแล้วดันไปข้างหน้านิดหน่อย)" : "จิ้มจริง (ดันไปข้างหน้าชัดๆ)", () -> rend.pointMode = (rend.pointMode + 1) % 4);
-        s.cycle("✊", "ความแน่นของนิ้วที่หุบ (ท่าชี้)", () -> rend.pointGrip == 0 ? "หลวม" : rend.pointGrip == 1 ? "กลาง" : "แน่น", () -> rend.pointGrip = (rend.pointGrip + 1) % 3);
+        s.cycle("👉", "คลิกด้วยท่ากำ/ชี้ (กำมือหรือชี้ แล้วดันมือไปข้างหน้านิดหน่อย)", () -> rend.pointMode == 0 ? "ปิด" : rend.pointMode == 1 ? "แค่ยื่น (ชี้ค้างไว้)" : rend.pointMode == 2 ? "จิ้มเบา (ยื่นแล้วดันไปข้างหน้านิดหน่อย)" : "จิ้มจริง (ดันไปข้างหน้าชัดๆ)", () -> rend.pointMode = (rend.pointMode + 1) % 4);
+        s.cycle("✊", "ความแน่นของนิ้วที่หุบ (ท่ากำ/ชี้)", () -> rend.pointGrip == 0 ? "หลวม" : rend.pointGrip == 1 ? "กลาง" : "แน่น", () -> rend.pointGrip = (rend.pointGrip + 1) % 3);
         s.toggle("🧊", "เปิดมือ 3D ตั้งแต่เปิดแอป (แทนเส้นมือจากกล้อง ลดความร้อน)", () -> boot3d, () -> { boot3d = !boot3d; save3d(); });
         s.cycle("🫱", "มือหลัก (ตอนยกสองมือ)", () -> rend.mainHand == 0 ? "มือซ้าย" : "มือขวา", () -> rend.mainHand = rend.mainHand == 0 ? 1 : 0);
         s.cycle("🖐", "โมเดลมือ 3D: แบบ", () -> Nv3DHands.STYLE_N[Math.max(0, Math.min(Nv3DHands.STYLE_N.length - 1, rend.h3.style))], () -> { rend.h3.style = (rend.h3.style + 1) % Nv3DHands.STYLE_N.length; save3d(); });

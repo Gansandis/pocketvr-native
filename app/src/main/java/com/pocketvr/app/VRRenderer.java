@@ -1848,7 +1848,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         mpNx = mhx * 2f - 1f; mpNy = 1f - mhy * 2f;
 
         // the pointer sits between thumb tip and index tip, so closing the fingers does not push it off the target
-        final boolean useTip = curAnchor == 1 || ptPose;                                           // (the pointing pose has no pinch: the fingertip itself)
+        final boolean useTip = curAnchor == 1 || (ptPose && NvPoint.fold(r, 8, 5, ar) > 1.3f);                                           // (the pointing pose has no pinch: the fingertip itself)
         float hx = useTip ? tx : (tx + ax) * 0.5f, hy = useTip ? ty : (ty + ay) * 0.5f;
         if (rot180) { hx = 1f - hx; hy = 1f - hy; }
         float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
