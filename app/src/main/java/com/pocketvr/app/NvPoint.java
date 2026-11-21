@@ -21,6 +21,9 @@ final class NvPoint {
 
     // results of the last update
     boolean pose, press, fired;
+    /** why the last look said "not pointing" (shown on the debug lines so a wrong reading can be seen) */
+    String why = "";
+    private float fMid, fRing, fPink, lastRatio, lastRatioM;
     float prog;                                  // 0..1: how near the click is (the pointer ring tightens with it)
 
     private long poseSince = 0, firedT = 0, lastT = 0, aboveSince = 0, relT = 0;
@@ -32,24 +35,41 @@ final class NvPoint {
     /** the pointer should stay where it is (the click is near / the finger is being pushed) */
     boolean freeze() { return pose && prog > 0.5f && !(level == 0 && locked); }
 
+    /** how far a finger's tip is from the wrist, compared with its first knuckle: about 0.8-1.1 folded in, 1.6-2 stretched out */
+    static float fold(float[] r, int tip, int mcp, float ar) {
+        float b = d(r, 0, mcp, ar);
+        return b < 1e-5f ? 0f : d(r, 0, tip, ar) / b;
+    }
+
     private static float d(float[] r, int i, int j, float ar) {
         return (float) Math.hypot((r[1 + i * 3] - r[1 + j * 3]) * ar, r[1 + i * 3 + 1] - r[1 + j * 3 + 1]);
     }
 
     /** is the hand in the pointing pose? (r = [n, then 21 x 3 numbers] of the one hand, size = wrist to the middle finger's root, psize = the hand size with the palm width counted) */
     boolean poseOf(float[] r, float ar, float psize, float ratio, float ratioM) {
-        if (psize < 1e-4f) return false;
+        lastRatio = ratio; lastRatioM = ratioM;
+        if (psize < 1e-4f) { why = "ไม่เห็นมือ"; return false; }
+        fMid = fold(r, 12, 9, ar); fRing = fold(r, 16, 13, ar); fPink = fold(r, 20, 17, ar);
         float d8 = d(r, 0, 8, ar), d6 = d(r, 0, 6, ar);
-        if (!(d8 > d6 * 1.1f)) return false;                                   // the index is stretched (its tip is further from the wrist than its middle joint)
-        if (d(r, 5, 8, ar) < 0.45f * psize) return false;                       // ... and not folded over its own root
-        if (ratio < 0.30f || ratioM < 0.20f) return false;                      // the thumb is not pinching, and not held on the middle finger (that is the menu sign)
-        float fold = FOLD[Math.max(0, Math.min(2, grip))];
-        int[] tip = {12, 16, 20}, mcp = {9, 13, 17};
-        for (int q = 0; q < 3; q++) {
-            float a = d(r, 0, tip[q], ar), b = d(r, 0, mcp[q], ar);
-            if (b < 1e-5f || a / b > fold) return false;                        // another finger is still out
-        }
+        if (!(d8 > d6 * 1.1f) || d(r, 5, 8, ar) < 0.45f * psize) { why = "นิ้วชี้ยังไม่ยื่น"; return false; }      // the index is stretched out and not folded over its own root
+        if (ratio < 0.30f) { why = "โป้งชิดปลายนิ้วชี้ (จีบ)"; return false; }
+        if (ratioM < 0.20f && fMid > 1.2f) { why = "โป้งแตะนิ้วกลางที่ยื่นอยู่ (ท่าเปิดเมนู)"; return false; }   // thumb on a folded middle finger is a normal way to point; on a stretched one it is the menu sign
+        float fo = FOLD[Math.max(0, Math.min(2, grip))];
+        if (fMid > fo) { why = "นิ้วกลางยังไม่หุบ"; return false; }
+        if (fRing > fo) { why = "นิ้วนางยังไม่หุบ"; return false; }
+        if (fPink > fo) { why = "นิ้วก้อยยังไม่หุบ"; return false; }
+        why = "";
         return true;
+    }
+
+    /** the middle finger is clearly stretched out (the thumb + middle finger menu sign needs this; a fist or a pointing hand has it folded in) */
+    static boolean middleOut(float[] r, float ar, float limit) { return fold(r, 12, 9, ar) > limit; }
+
+    /** one line for the debug screen */
+    String dbg() {
+        return "ท่าชี้: " + (pose ? "ใช่" : "ไม่ (" + why + ")") + " | พับ กลาง " + String.format(java.util.Locale.US, "%.2f นาง %.2f ก้อย %.2f", fMid, fRing, fPink)
+            + " (ต้อง<" + String.format(java.util.Locale.US, "%.2f", FOLD[Math.max(0, Math.min(2, grip))]) + ") | โป้ง-ชี้ " + String.format(java.util.Locale.US, "%.2f", lastRatio)
+            + " โป้ง-กลาง " + String.format(java.util.Locale.US, "%.2f", lastRatioM) + " | คืบหน้า " + Math.round(prog * 100f) + "%";
     }
 
     /** call every picture the hand is seen. Returns true on the picture the click is given. handSpd = how fast the fingertip crosses the picture (picture widths per second) */
@@ -61,6 +81,7 @@ final class NvPoint {
         // the pulse that ends by itself
         if (press && now - firedT > PULSE_MS) press = false;
         boolean p = !pinching && poseOf(r, ar, psize, ratio, ratioM);
+        if (pinching) why = "จีบอยู่";
         if (!p) {
             pose = false; poseSince = 0; prog = 0f; locked = false; init = false; wait = false; aboveSince = 0;
             return false;

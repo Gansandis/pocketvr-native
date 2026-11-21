@@ -190,6 +190,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile int pointMode = 2;        // point to select: 0 off, 1 just stretch the finger (held), 2 light push, 3 firm push
     public volatile int pointGrip = 1;        // how tightly the other fingers must be folded: 0 loose, 1 medium, 2 tight
     private final NvPoint pt = new NvPoint();
+    public volatile String ptDbg = "";
+    private long ptDbgT = 0;
     private float pkProg = 0;
     private boolean pkOn = false;
     private float handSpd = 0, lastTx = 0, lastTy = 0;
@@ -1765,7 +1767,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (!hand) {
             pinchAmt *= 0.6f;
             curOk = false; pkOn = false; pkProg = 0; pt.reset();
-            mpOn = false; mpSince = 0; mpProg = 0; mpLatched = false;
+            mpOn = false; mpSince = 0; mpProg = 0; mpLatched = false; ptDbg = "";
             if (lostT == 0) lostT = nowMs;
             // a short loss of the hand (detection blink) must not drop a grabbed window
             if (!(dragWin != null && nowMs - lostT < 400)) { pinching = false; prevPinch = false; endDrag(); }
@@ -1821,6 +1823,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         boolean ptClick = false;
         if (ptActive) ptClick = pt.update(r, ar, nowMs, size, psize, ratio, ratioM, handSpd, pinching); else pt.reset();
         pkOn = pt.press; pkProg = pt.prog;
+        if (ptActive && nowMs - ptDbgT > 250) { ptDbgT = nowMs; ptDbg = pt.dbg(); } else if (!ptActive) ptDbg = "";
         final boolean ptPose = ptActive && pt.pose;
         final boolean press = pinching || pkOn;
         if (ptClick) { rippleT = nowMs; rippleX = cnx; rippleY = cny; }
@@ -1829,7 +1832,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         boolean mpPrev = mpOn;
         // with two hands the pointing pose (index out, thumb on the middle finger) IS this gesture, so poking a palm icon opened the menu first: it is off while the palm menu is in use
         boolean mpBlock = (palmMenu && disp != null && disp.length > 0 && disp[0] >= 2f) || gameUp();
-        mpOn = !mpBlock && (mpOn ? (ratioM < 0.32f) : (ratioM < 0.20f && ratio > 0.35f));
+        // (the middle finger must be stretched out: a fist, or a pointing hand with the thumb resting on the folded middle finger, must not open the menu)
+        mpOn = !mpBlock && (mpOn ? (ratioM < 0.32f && NvPoint.middleOut(r, ar, 1.1f)) : (ratioM < 0.20f && ratio > 0.35f && NvPoint.middleOut(r, ar, 1.2f)));
         if (mpOn && !mpPrev) mpT0 = nowMs;
         if (!mpOn && mpPrev && !mpLatched && nowMs - mpT0 < 500) {        // a quick tap; two quick taps = put the screens back in front of you
             if (nowMs - mpTapT < 1000) { recenter = true; mpTapT = 0; } else mpTapT = nowMs;
