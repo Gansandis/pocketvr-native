@@ -19,18 +19,19 @@ final class NvTipPix {
      */
     static float[] tip(byte[] p, int S, float[] q, float size) {
         if (p == null || q == null || q.length < 42 || !(size > 8f)) return null;
-        float sx = q[14], sy = q[15], dx = q[16] - sx, dy = q[17] - sy, l = (float) Math.hypot(dx, dy);
-        if (l < 3f) return null;                                              // the last bone is too short to give a direction (finger folded or pointing at the camera)
+        // the direction is taken over the last TWO bones (middle joint -> tip): when the finger points at the camera or away from it the last bone alone is tiny and the model's tip may be far from the real one
+        float sx = q[14], sy = q[15], dx = q[16] - q[12], dy = q[17] - q[13], l = (float) Math.hypot(dx, dy);
+        if (l < 3f) return null;                                              // too short to give a direction (finger folded)
         dx /= l; dy /= l;
         if (at(p, S, sx, sy) < 0.5f) return null;                             // the joint is not hand in the cut: the cut is not good here
-        float max = l * 1.8f + 0.12f * size, end = -1f, prev = at(p, S, sx, sy);
+        float max = 0.55f * size, end = -1f, prev = at(p, S, sx, sy);
         for (float t = 0.25f; t <= max; t += 0.25f) {
             float v = at(p, S, sx + dx * t, sy + dy * t);
             if (v < 0.5f) { end = t - 0.25f + 0.25f * ((prev - 0.5f) / Math.max(1e-4f, prev - v)); break; }
             prev = v;
         }
         if (end < 0f) return null;                                            // never ended: the cut spills over into something else
-        if (end < 0.4f * l || end > l * 1.7f) return null;                    // far away from what the model says: not trusted
+        if (end < 0.05f * size) return null;                                 // the finger ends right at the joint: not the end of a finger
         end -= 0.025f * size;                                                 // a little inside the nail's edge
         return new float[]{sx + dx * end, sy + dy * end};
     }

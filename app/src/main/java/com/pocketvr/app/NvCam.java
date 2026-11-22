@@ -297,7 +297,7 @@ public class NvCam {
                     try {
                         float[] tp = NvTipPix.tip(o.p, S, q, szs[i] * sc);
                         if (tp != null) {
-                            float fx = tp[0] - q[16], fy = tp[1] - q[17], lim = 0.4f * szs[i] * sc, fl = (float) Math.hypot(fx, fy);
+                            float fx = tp[0] - q[16], fy = tp[1] - q[17], lim = 0.5f * szs[i] * sc, fl = (float) Math.hypot(fx, fy);
                             if (fl > lim) { fx *= lim / fl; fy *= lim / fl; }
                             o.tipDx = fx / sc / W; o.tipDy = fy / sc / H; o.tipOk = true;
                         }

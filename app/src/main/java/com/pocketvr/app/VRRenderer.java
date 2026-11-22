@@ -713,10 +713,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         w.yawA = (float) Math.toDegrees(Math.atan2(w.mv[12], -w.mv[14]));
         w.pitchA = (float) Math.toDegrees(Math.atan2(w.mv[13], -w.mv[14]));
         if (dragWin == w && !resizing) {
-            float th = (w.yawA - (rayYaw + w.dragYawOff)) * 0.65f;
-            float ph = ((rayPitch + w.dragPitchOff) - w.pitchA) * 0.65f;
-            th = Math.max(-7f, Math.min(7f, th));              // at most a few degrees per frame, so nothing can snap away
-            ph = Math.max(-7f, Math.min(7f, ph));
+            float th = (w.yawA - (rayYaw + w.dragYawOff)) * 0.95f;
+            float ph = ((rayPitch + w.dragPitchOff) - w.pitchA) * 0.95f;
+            th = Math.max(-20f, Math.min(20f, th));            // (a window in the hand does not lag behind it)
+            ph = Math.max(-20f, Math.min(20f, ph));
             if (th != 0f || ph != 0f) turnWin(w, rn, th, ph);
             uprightAboutCentre(w);                             // and it stays standing straight while it is carried up or down
         }
@@ -1773,7 +1773,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             mpOn = false; mpSince = 0; mpProg = 0; mpLatched = false; ptDbg = "";
             if (lostT == 0) lostT = nowMs;
             // a short loss of the hand (detection blink) must not drop a grabbed window
-            if (!(dragWin != null && nowMs - lostT < 400)) { pinching = false; prevPinch = false; endDrag(); }
+            if (!(dragWin != null && nowMs - lostT < 700)) { pinching = false; prevPinch = false; endDrag(); }
             for (Win w : wins) if (shown(w)) w.c.update(false, 0, 0, false);
             { NvGameWorld wd = world3; if (wd != null) wd.pointer(false, 0f, 0f, 0f, nowMs); }
             return;
@@ -1808,8 +1808,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             else onSince = 0;
         } else {
             onSince = 0;
-            if (ratioF > 0.50f) { pinching = false; offSince = 0; }
-            else if (ratioF > 0.38f) { if (offSince == 0) offSince = nowMs; else if (nowMs - offSince >= 50) { pinching = false; offSince = 0; } }
+            // a window that is being carried is held until the fingers are clearly opened (it is an object in the hand: one bad look must not drop it)
+            final boolean carry = dragWin != null;
+            if (ratioF > (carry ? 0.62f : 0.50f)) { pinching = false; offSince = 0; }
+            else if (ratioF > (carry ? 0.46f : 0.38f)) { if (offSince == 0) offSince = nowMs; else if (nowMs - offSince >= (carry ? 120 : 50)) { pinching = false; offSince = 0; } }
             else offSince = 0;
         }
         if (menuGest == 0 && !prevPinch && dragWin == null && NvPoint.isFist(r, ar, 1.05f)) pinching = false;      // a tight fist is not a pinch (it only came from the thumb lying on the index finger)
@@ -1899,12 +1901,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         if (rot180) { hx = 1f - hx; hy = 1f - hy; }
         float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
-        boolean hold = ptPose && pt.freeze();                                  // the finger is about to click / being pushed: the pointer stays where it was
+        boolean hold = false;                                                  // (the pointer is never locked: it always follows the fingertip)
         if (!curOk) { cnx = nx; cny = ny; } else if (!hold) {
             // adaptive follow: a slow, shaky fingertip is calmed down, a quick one is followed almost exactly (sticks to the hand)
             float sp = (float) Math.hypot(nx - cnx, ny - cny);
             float al = Math.max(0.50f, Math.min(0.95f, 0.50f + sp * 9f));      // the points are already steadied at the source, so this only needs to calm the last bit
-            if (!pinching && ratioF < 0.30f && sp < 0.05f) al = Math.min(al, 0.30f);      // the fingers are about to close: the pointer stays still on what was aimed at, so the pinch lands
             cnx += (nx - cnx) * al; cny += (ny - cny) * al;
         }
         curOk = true;
@@ -1924,7 +1925,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float gxT = dgFrozen ? dgFx : tnx, gyT = dgFrozen ? dgFy : tny;
             float ddx = gxT - dnx, ddy = gyT - dny;
             float dl = (float) Math.hypot(ddx, ddy);
-            float stp = Math.min(dl * 0.55f, 0.10f);                     // smooth, and never a sudden big jump
+            float stp = Math.min(dl * 0.9f, 0.5f);                      // it sticks to the hand: (almost) one to one
             if (dl > 1e-5f) { dnx += ddx / dl * stp; dny += ddy / dl * stp; }
             rayYaw = (float) Math.toDegrees(Math.atan(dnx * tanHc));
             rayPitch = (float) Math.toDegrees(Math.atan(dny * tanVc));
@@ -2018,7 +2019,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             dragWin.dist += (tgD - dragWin.dist) * 0.25f;
         }
         // let go only when the pinch has been open for a moment (one bad detection must not drop the window)
-        if (dragWin != null && !pinching && nowMs - lastPinchT > 250) endDrag();
+        if (dragWin != null && !pinching && nowMs - lastPinchT > 350) endDrag();
         prevPinch = pinching;
         for (Win w : wins) {
             if (!shown(w)) continue;
