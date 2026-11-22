@@ -61,6 +61,11 @@ final class NvPoint {
         return true;
     }
 
+    /** all four fingers are folded in (index, middle, ring, little): a fist. The thumb is not looked at. limit = fold ratio below which a finger counts as folded */
+    static boolean isFist(float[] r, float ar, float limit) {
+        return fold(r, 8, 5, ar) < limit && fold(r, 12, 9, ar) < limit && fold(r, 16, 13, ar) < limit && fold(r, 20, 17, ar) < limit;
+    }
+
     /** the middle finger is clearly stretched out (the thumb + middle finger menu sign needs this; a fist or a pointing hand has it folded in) */
     static boolean middleOut(float[] r, float ar, float limit) { return fold(r, 12, 9, ar) > limit; }
 

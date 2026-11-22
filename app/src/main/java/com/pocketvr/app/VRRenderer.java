@@ -186,14 +186,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile boolean flatWins = false;             // off (default): every window is a real flat thing in the room, seen in true perspective (no roll correction of any kind). On: it is turned square to the screen instead (top edge level with the screen, no perspective)
     public volatile boolean floaty = false;               // windows stay perfectly still unless this is switched on
     public volatile int cursorSz = 0;                     // 0 small and faint, 1 medium, 2 large
-    public volatile int curAnchor = 2;        // where the pointer sits: 0 between thumb tip and index tip, 1 on the index fingertip, 2 on the index fingertip worked out from its joints
+    public volatile int curAnchor = 3;        // where the pointer sits: 0 between thumb tip and index tip, 1 on the index fingertip, 2 on the index fingertip worked out from its joints, 3 on the real fingertip seen in the camera pixels
+    public volatile int menuGest = 0;         // how the menu is opened / closed: 0 hold a fist in front of the camera, 1 hold thumb + middle finger together
     public volatile int pointMode = 2;        // point to select: 0 off, 1 just stretch the finger (held), 2 light push, 3 firm push
     public volatile int pointGrip = 1;        // how tightly the other fingers must be folded: 0 loose, 1 medium, 2 tight
     private final NvPoint pt = new NvPoint();
-    private float idxLr = 0.9f, idxLf = 0f;
+    private float idxLr = 0.9f, idxLf = 0f, tfx = 0f, tfy = 0f;
     private long idxLfT = 0;
     public volatile String ptDbg = "";
-    private long ptDbgT = 0;
+    private long ptDbgT = 0, lastPtClickT = 0;
     private float pkProg = 0;
     private boolean pkOn = false;
     private float handSpd = 0, lastTx = 0, lastTy = 0;
@@ -1811,6 +1812,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             else if (ratioF > 0.38f) { if (offSince == 0) offSince = nowMs; else if (nowMs - offSince >= 50) { pinching = false; offSince = 0; } }
             else offSince = 0;
         }
+        if (menuGest == 0 && !prevPinch && dragWin == null && NvPoint.isFist(r, ar, 1.05f)) pinching = false;      // a tight fist is not a pinch (it only came from the thumb lying on the index finger)
         if (pinching) lastPinchT = nowMs;
         // how closed the fingers are (0..1), eased: the pointer ring tightens as the fingers close; a ripple goes out when the pinch lands
         float pinchTarget = pinching ? 1f : Math.max(0f, Math.min(0.85f, (0.36f - ratioF) / (0.36f - 0.17f)));
@@ -1834,10 +1836,15 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         boolean mpPrev = mpOn;
         // with two hands the pointing pose (index out, thumb on the middle finger) IS this gesture, so poking a palm icon opened the menu first: it is off while the palm menu is in use
         boolean mpBlock = (palmMenu && disp != null && disp.length > 0 && disp[0] >= 2f) || gameUp();
-        // (the middle finger must be stretched out: a fist, or a pointing hand with the thumb resting on the folded middle finger, must not open the menu)
-        mpOn = !mpBlock && (mpOn ? (ratioM < 0.32f && NvPoint.middleOut(r, ar, 1.1f)) : (ratioM < 0.20f && ratio > 0.35f && NvPoint.middleOut(r, ar, 1.2f)));
+        final boolean fistNow = NvPoint.isFist(r, ar, mpOn ? 1.45f : 1.25f);
+        if (ptClick) lastPtClickT = nowMs;
+        if (menuGest == 0) {                                                // hold a fist in front of the camera (not while pushing it forward to click)
+            mpOn = !mpBlock && fistNow && handSpd < 0.5f && !(ptActive && pt.prog > 0.3f) && nowMs - lastPtClickT > 900;
+        } else {                                                           // thumb + middle finger (the middle finger must be stretched out: a fist, or a pointing hand with the thumb resting on the folded middle finger, must not open the menu)
+            mpOn = !mpBlock && (mpOn ? (ratioM < 0.32f && NvPoint.middleOut(r, ar, 1.1f)) : (ratioM < 0.20f && ratio > 0.35f && NvPoint.middleOut(r, ar, 1.2f)));
+        }
         if (mpOn && !mpPrev) mpT0 = nowMs;
-        if (!mpOn && mpPrev && !mpLatched && nowMs - mpT0 < 500) {        // a quick tap; two quick taps = put the screens back in front of you
+        if (menuGest == 1 && !mpOn && mpPrev && !mpLatched && nowMs - mpT0 < 500) {        // a quick tap; two quick taps = put the screens back in front of you
             if (nowMs - mpTapT < 1000) { recenter = true; mpTapT = 0; } else mpTapT = nowMs;
         }
         if (mpOn && !mpLatched) {
@@ -1848,6 +1855,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float mhx = (kx + ax) * 0.5f, mhy = (ky + ay) * 0.5f;
         if (rot180) { mhx = 1f - mhx; mhy = 1f - mhy; }
         mpNx = mhx * 2f - 1f; mpNy = 1f - mhy * 2f;
+        if (menuGest == 0) { mpNx = tnx; mpNy = tny; }                  // (the fist: the ring is shown on the knuckles)
 
         // where the pointer sits: 0 between thumb tip and index tip (closing the fingers does not push it off the target), 1 on the index tip itself,
         // 2 on the index tip worked out from the finger's JOINTS: the direction of the knuckle -> next joint (steadier than the tip, which shakes) and a smoothed finger length;
@@ -1857,6 +1865,22 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float hx, hy;
         if (anc == 0) { hx = (tx + ax) * 0.5f; hy = (ty + ay) * 0.5f; }
         else if (anc == 1) { hx = tx; hy = ty; }
+        else if (anc == 3) {                                                                // the real fingertip, found in the cut-out of the camera's pixels (NvTipPix), fixes the model's tip
+            float fx = 0f, fy = 0f; boolean fok = false;
+            NvCam.SegOut[] so = cam.segs;
+            if (so != null && idxOutNow && !pinching && ratioF > 0.30f) {
+                NvCam.SegOut bo = null; float bd = 0.15f;
+                for (NvCam.SegOut o : so) {
+                    if (o == null || o.lm == null || !o.tipOk || o.W <= 0 || o.H <= 0 || nowMs - o.t > 700) continue;
+                    float dd2 = (float) Math.hypot(o.lm[0] / o.W - r[1], o.lm[1] / o.H - r[2]);
+                    if (dd2 < bd) { bd = dd2; bo = o; }
+                }
+                if (bo != null) { fx = bo.tipDx; fy = bo.tipDy; fok = true; }
+            }
+            if (fok) { tfx += (fx - tfx) * 0.25f; tfy += (fy - tfy) * 0.25f; }
+            else if (!pinching && ratioF > 0.30f) { tfx *= 0.9f; tfy *= 0.9f; }              // (while pinching the last fix is kept: the fingers meet there and the cut cannot tell the index from the thumb)
+            hx = tx + tfx; hy = ty + tfy;
+        }
         else {
             float bx = r[1 + 5 * 3] * ar, by = r[1 + 5 * 3 + 1];                           // the knuckle (first joint of the index finger)
             float px = r[1 + 6 * 3] * ar, py = r[1 + 6 * 3 + 1], qx = r[1 + 7 * 3] * ar, qy = r[1 + 7 * 3 + 1];

@@ -223,7 +223,8 @@ public class NvCam {
     // ---- the hand cut out of the real pixels (see NvSeg) ----
     /** what the cutting made for one hand: a small probability picture of a square area (x0, y0, side in pixels of a W x H picture), and the 21 points it was made from */
     public static final class SegOut { public byte[] p, cl, la;   // p = the cut (log-odds), cl = the colour table, la = cut + widened cut, two bytes per pixel, as the renderer takes it
-         public float x0, y0, side; public int W, H; public float[] lm; public long t, born; public boolean arm; }
+         public float x0, y0, side; public int W, H; public float[] lm; public long t, born; public boolean arm;
+         public float tipDx, tipDy; public boolean tipOk; }      // tipD = where the index fingertip really is in the cut, minus where the hand model puts it (in picture widths / heights)
     public volatile SegOut[] segs = new SegOut[2];
     public volatile boolean segArm = false;                       // the forearm counts as hand too (set by the renderer)
     public volatile boolean segOn = true;
@@ -293,6 +294,14 @@ public class NvCam {
                     for (int k = 0; k < 21; k++) { q[k * 2] = (lms[i][k * 2] - rois[i][0]) * sc; q[k * 2 + 1] = (lms[i][k * 2 + 1] - rois[i][1]) * sc; }
                     SegOut o = new SegOut();
                     o.p = segWorker.run(crops[i], q, szs[i] * sc, arm);
+                    try {
+                        float[] tp = NvTipPix.tip(o.p, S, q, szs[i] * sc);
+                        if (tp != null) {
+                            float fx = tp[0] - q[16], fy = tp[1] - q[17], lim = 0.4f * szs[i] * sc, fl = (float) Math.hypot(fx, fy);
+                            if (fl > lim) { fx *= lim / fl; fy *= lim / fl; }
+                            o.tipDx = fx / sc / W; o.tipDy = fy / sc / H; o.tipOk = true;
+                        }
+                    } catch (Throwable e) { segErr = "tip:" + e; }
                     o.cl = segWorker.lut.clone();
                     o.x0 = rois[i][0]; o.y0 = rois[i][1]; o.side = rois[i][2]; o.W = W; o.H = H; o.lm = lms[i]; o.t = t; o.born = t; o.arm = arm;
                     segBlend(o, segPrev[i]);
