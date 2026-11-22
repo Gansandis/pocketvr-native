@@ -5,7 +5,7 @@ package com.pocketvr.app;
  * No Android classes: tested on any computer.
  *
  * What counts as a click depends on level:
- *   0 = "just stretch": the pose held steady for a moment (0.45 s) is the click,
+ *   0 = "just stretch": the click is given AT ONCE, on the very first picture the pose is seen (no waiting),
  *   1 = "light poke":   the pose, and then a small push forward (the hand gets a little smaller in the picture; a quick pull back is counted the same way),
  *   2 = "firm poke":    the pose, and a bigger push forward.
  * grip = how tightly the other three fingers must be folded: 0 loose, 1 medium, 2 tight.
@@ -17,7 +17,7 @@ final class NvPoint {
     /** the finger folded: the tip's distance from the wrist, compared with the distance of its first knuckle, must be below this */
     private static final float[] FOLD = {1.55f, 1.30f, 1.12f};
     private static final float[] PUSH = {0.0f, 0.03f, 0.05f};        // push forward needed (change of ln hand size)
-    static final long PULSE_MS = 200, SETTLE_MS = 100, DWELL_MS = 450, REARM_MS = 250;
+    static final long PULSE_MS = 60, SETTLE_MS = 100, SETTLE0_MS = 0, REARM_MS = 250, REARM0_MS = 200;
 
     // results of the last update
     boolean pose, press, fired;
@@ -53,6 +53,8 @@ final class NvPoint {
         // (the index may be out or folded: a finger pointing straight forward looks short in the picture, so it is not checked. A fist or a pointing hand both count.)
         if (ratio < 0.30f) { why = "โป้งชิดปลายนิ้วชี้ (จีบ)"; return false; }
         if (ratioM < 0.20f && fMid > 1.2f) { why = "โป้งแตะนิ้วกลางที่ยื่นอยู่ (ท่าเปิดเมนู)"; return false; }   // thumb on a folded middle finger is a normal way to point; on a stretched one it is the menu sign
+        // "click at once" has no push to tell a poke from a fist, so the index finger must be OUT (a fist stays free for the menu gesture: it is the same limit isFist uses)
+        if (level == 0 && fold(r, 8, 5, ar) < 1.25f) { why = "นิ้วชี้ยังไม่ยื่น (คลิกทันทีต้องยื่นนิ้วชี้ ส่วนกำมือ = เมนู)"; return false; }
         float fo = FOLD[Math.max(0, Math.min(2, grip))];
         if (fMid > fo) { why = "นิ้วกลางยังไม่หุบ"; return false; }
         if (fRing > fo) { why = "นิ้วนางยังไม่หุบ"; return false; }
@@ -97,7 +99,8 @@ final class NvPoint {
         float depthRaw = -((float) Math.log(sz) - 0.6f * (z8 - z0) / sz);
         depthF = !init ? depthRaw : depthF + (depthRaw - depthF) * (1f - (float) Math.exp(-dt / 0.07f));
         long held = now - poseSince;
-        boolean ready = held > SETTLE_MS && now - relT > REARM_MS && (level > 0 || handSpd < 0.6f);
+        boolean ready = level == 0 ? (held >= SETTLE0_MS && now - firedT > REARM0_MS && handSpd < 1.0f)      // (only a really fast swing is kept from clicking)
+                                   : (held > SETTLE_MS && now - relT > REARM_MS);
         if (!init || !ready) { base = depthF; init = true; if (!ready) { prog = 0f; return false; } }
         if (locked) {                                                           // one click per push / pose: wait until it is over
             prog = 1f;
@@ -107,9 +110,8 @@ final class NvPoint {
         }
         int lv = Math.max(0, Math.min(2, level));
         if (lv == 0) {
-            prog = Math.max(0f, Math.min(1f, (held - SETTLE_MS) / (float) (DWELL_MS - SETTLE_MS)));
-            if (prog >= 1f && handSpd < 0.35f) { fire(now); return true; }       // held steady
-            return false;
+            prog = Math.max(0f, Math.min(1f, held / (float) SETTLE0_MS));
+            fire(now); return true;                                               // the pose is there: click now
         }
         float th = PUSH[lv];
         float up = Math.abs(depthF - base);                                   // a poke is a quick move out and back: whichever way the hand size changes first counts

@@ -2021,6 +2021,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // let go only when the pinch has been open for a moment (one bad detection must not drop the window)
         if (dragWin != null && !pinching && nowMs - lastPinchT > 350) endDrag();
         prevPinch = pinching;
+        NvUi.poke = pkOn && !pinching;
         for (Win w : wins) {
             if (!shown(w)) continue;
             if (w == target && dragWin == null && !w.ghost) w.c.update(true, o[0], o[1], press);

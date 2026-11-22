@@ -36,6 +36,8 @@ public class NvUi implements NvContent {
     public final List<Btn> home = new ArrayList<>();   // tab 0 cards
     public final List<Btn> apps = new ArrayList<>();   // tab 1 cards (installed apps)
     public final List<Btn> dock = new ArrayList<>();   // always-visible round buttons at the bottom
+    /** set by the renderer: the press that is coming now is a poke (the pointing pose), not a pinch. A poke acts at once on the card under the pointer, it does not wait for the "release" */
+    public static volatile boolean poke = false;
     public volatile boolean open = false;
     public volatile boolean dragging = false;
     private final Btn handle = new Btn("", () -> "", null, null, 0, 0, null);
@@ -188,33 +190,39 @@ public class NvUi implements NvContent {
     private void layout() {
         float u = H / 540f;
         visible.clear();
-        // dock: a floating pill. left: clock, battery, signal, microphone. right: round-cornered icons
+        // dock: a tall pill on the LEFT, top to bottom: clock / battery / signal, the round buttons (big, easy to poke), the microphone
         int n = dock.size();
-        float d = 44 * u, gap = 10 * u, pad = 14 * u, sw = 252 * u;
-        float dh = d + 2 * 10 * u, dw = pad + sw + 14 * u + n * d + Math.max(0, n - 1) * gap + pad;
-        float dx = (W - dw) / 2f, dy = H - 38 * u - dh;
+        float vl = (W - W * safe) / 2f;                                   // the left edge of what is visible
+        float pad = 12 * u, gap = 10 * u, statH = 78 * u, micS = 48 * u;
+        float availH = H - 2 * 22 * u - 2 * pad - statH - micS - 2 * gap;
+        float d = Math.max(30 * u, Math.min(62 * u, (availH - Math.max(0, n - 1) * gap) / Math.max(1, n)));
+        float dw = d + 2 * pad;
+        float dh = pad + statH + gap + n * d + Math.max(0, n - 1) * gap + gap + micS + pad;
+        float dx = vl + 8 * u, dy = (H - dh) / 2f;
         float hbw = 150 * u;
         handle.r.set(W / 2f - hbw / 2f, H - 44 * u, W / 2f + hbw / 2f, H - 6 * u);
         visible.add(handle);
         dockR.set(dx, dy, dx + dw, dy + dh);
-        statR.set(dx + pad, dy, dx + pad + sw, dy + dh);
-        micB.r.set(statR.right - 40 * u, dy + (dh - 36 * u) / 2f, statR.right - 4 * u, dy + (dh + 36 * u) / 2f);
-        visible.add(micB);
+        statR.set(dx, dy + pad, dx + dw, dy + pad + statH);
+        float by0 = statR.bottom + gap;
         for (int i = 0; i < n; i++) {
-            float x = dx + pad + sw + 14 * u + i * (d + gap), y = dy + (dh - d) / 2f;
-            dock.get(i).r.set(x, y, x + d, y + d);
+            float y = by0 + i * (d + gap);
+            dock.get(i).r.set(dx + pad, y, dx + pad + d, y + d);
             visible.add(dock.get(i));
         }
+        float my = by0 + n * d + Math.max(0, n - 1) * gap + gap;
+        micB.r.set(dx + (dw - micS) / 2f, my, dx + (dw + micS) / 2f, my + micS);
+        visible.add(micB);
         searchB.r.setEmpty(); clearB.r.setEmpty();
         if (!open) { pH = 0; return; }
-        pW = W * safe;
-        pX = (W - pW) / 2f;
+        pX = dockR.right + 12 * u;
+        pW = vl + W * safe - pX;
         pY = H * 0.04f;
-        pH = dy - 16 * u - pY;
-        railW = 66 * u; topH = 74 * u;
+        pH = (H - 52 * u) - pY;                                           // (the dock is at the side now: the panel can be tall)
+        railW = 72 * u; topH = 74 * u;
         sbW = railW;
         // round buttons down the left side
-        float bs = Math.min(46 * u, (pH - topH - 20 * u) / Math.max(1, tabs.size()) - 8 * u);
+        float bs = Math.min(52 * u, (pH - topH - 20 * u) / Math.max(1, tabs.size()) - 8 * u);
         for (int i = 0; i < tabs.size(); i++) {
             float y = pY + topH + 6 * u + i * (bs + 8 * u);
             tabs.get(i).b.r.set(pX + (railW - bs) / 2f + 4 * u, y, pX + (railW - bs) / 2f + 4 * u + bs, y + bs);
@@ -361,16 +369,16 @@ public class NvUi implements NvContent {
 
     private void drawStatus(float u) {
         RectF r = statR;
-        float cy = r.centerY();
+        float cx = r.centerX();
         // clock
         java.util.Calendar c = java.util.Calendar.getInstance();
         String tm = String.format(java.util.Locale.US, "%02d:%02d", c.get(java.util.Calendar.HOUR_OF_DAY), c.get(java.util.Calendar.MINUTE));
         NvGlass.font(p, true);
-        raw(tm, r.left + 4 * u, cy, 21 * u, NvGlass.TEXT, Paint.Align.LEFT);
-        // battery
-        float bx = r.left + 82 * u;
+        raw(tm, cx, r.top + 10 * u, 20 * u, NvGlass.TEXT, Paint.Align.CENTER);
+        // battery (a small one with the percent under it)
+        float cy = r.top + 32 * u;
         int bt = battery;
-        RectF body = new RectF(bx, cy - 8 * u, bx + 28 * u, cy + 8 * u);
+        RectF body = new RectF(cx - 15 * u, cy - 8 * u, cx + 13 * u, cy + 8 * u);
         NvGlass.ring(cv, p, body, 0xCCFFFFFF, 1.6f * u, 4 * u);
         NvGlass.fill(cv, p, new RectF(body.right + 1 * u, cy - 3.5f * u, body.right + 3.5f * u, cy + 3.5f * u), 0xCCFFFFFF, 1 * u);
         if (bt >= 0) {
@@ -378,28 +386,43 @@ public class NvUi implements NvContent {
             NvGlass.fill(cv, p, fl, charging ? 0xFF34C759 : (bt <= 15 ? 0xFFFF5A52 : 0xFFFFFFFF), 2 * u);
         }
         NvGlass.font(p, false);
-        raw(bt >= 0 ? bt + "%" : "–", bx + 36 * u, cy, 14 * u, NvGlass.TEXT2, Paint.Align.LEFT);
+        raw(bt >= 0 ? bt + "%" : "–", cx, r.top + 50 * u, 13 * u, NvGlass.TEXT2, Paint.Align.CENTER);
         // signal bars
-        float sx = r.left + 168 * u;
+        float sx = cx - 12.4f * u, sb = r.top + 74 * u;
         for (int i = 0; i < 4; i++) {
             float bh = (5 + i * 3.4f) * u;
-            RectF br = new RectF(sx + i * 6.2f * u, cy + 8 * u - bh, sx + i * 6.2f * u + 4.2f * u, cy + 8 * u);
+            RectF br = new RectF(sx + i * 6.2f * u, sb - bh, sx + i * 6.2f * u + 4.2f * u, sb);
             NvGlass.fill(cv, p, br, i < net ? 0xFFFFFFFF : 0x40FFFFFF, 1.2f * u);
         }
-        NvGlass.font(p, false);
-        raw(net < 0 ? "ออฟไลน์" : netKind, sx + 27 * u, cy - 0.5f * u, 11.5f * u, NvGlass.TEXT2, Paint.Align.LEFT);
-        // microphone (voice commands)
+        // microphone (voice commands): its button is at the bottom of the dock
         ease(micB);
-        float mcx = micB.r.centerX(), mcy = micB.r.centerY(), mr = 15 * u * (1f + 0.1f * micB.ah);
+        float mcx = micB.r.centerX(), mcy = micB.r.centerY(), k = micB.r.width() / (30f * u), mr = 15 * u * k * (1f + 0.1f * micB.ah);
         RectF mc = new RectF(mcx - mr, mcy - mr, mcx + mr, mcy + mr);
         NvGlass.fill(cv, p, mc, micOn ? 0xFFE0506A : NvGlass.lerp(0x26FFFFFF, 0x55FFFFFF, micB.ah), mr);
         // a small microphone drawn with shapes (no emoji needed)
+        float q = k * 0.8f;
         p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(0xFFFFFFFF);
-        cv.drawRoundRect(new RectF(mcx - 3 * u, mcy - 8 * u, mcx + 3 * u, mcy + 2.5f * u), 3 * u, 3 * u, p);
-        p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.7f * u);
-        cv.drawArc(new RectF(mcx - 6 * u, mcy - 6 * u, mcx + 6 * u, mcy + 5.5f * u), 20, 140, false, p);
-        cv.drawLine(mcx, mcy + 5.5f * u, mcx, mcy + 9 * u, p);
+        cv.drawRoundRect(new RectF(mcx - 3 * u * q, mcy - 8 * u * q, mcx + 3 * u * q, mcy + 2.5f * u * q), 3 * u * q, 3 * u * q, p);
+        p.setStyle(Paint.Style.STROKE); p.setStrokeWidth(1.7f * u * q);
+        cv.drawArc(new RectF(mcx - 6 * u * q, mcy - 6 * u * q, mcx + 6 * u * q, mcy + 5.5f * u * q), 20, 140, false, p);
+        cv.drawLine(mcx, mcy + 5.5f * u * q, mcx, mcy + 9 * u * q, p);
         p.setStyle(Paint.Style.FILL);
+    }
+
+    /** the name of the dock button the pointer is on, shown beside it (to the right) */
+    private void dockTip(float u) {
+        String s = null; RectF br = null;
+        if (hover == micB) { s = micOn ? "สั่งด้วยเสียง: เปิดอยู่ (แตะเพื่อปิด)" : "สั่งด้วยเสียง: แตะเพื่อเปิด"; br = micB.r; }
+        else for (Btn b : dock) if (hover == b) { s = b.label.get(); br = b.r; break; }
+        if (s == null) return;
+        NvGlass.font(p, true);
+        String nm = Tr.t(s);
+        p.setTextSize(16 * u);
+        float w = Math.min(W * 0.5f, p.measureText(nm) + 26 * u);
+        RectF tr = new RectF(dockR.right + 8 * u, br.centerY() - 16 * u, dockR.right + 8 * u + w, br.centerY() + 16 * u);
+        NvGlass.fill(cv, p, tr, 0xF00E1426, 16 * u);
+        NvGlass.ring(cv, p, tr, 0x44FFFFFF, 1f * u, 16 * u);
+        text(s, tr.centerX(), tr.centerY(), 16 * u, NvGlass.TEXT, w - 12 * u);
     }
 
     private void draw() {
@@ -419,34 +442,32 @@ public class NvUi implements NvContent {
         float hp = 6 * u;
         RectF hb = new RectF(handle.r.left + hp, handle.r.centerY() - 4.5f * u, handle.r.right - hp, handle.r.centerY() + 4.5f * u);
         NvGlass.fill(cv, p, hb, dragging ? 0xFFFFA24D : (hover == handle ? 0xFFFFFFFF : 0xA6FFFFFF), hb.height() / 2);
-        // dock: a dark pill, status on the left, icons on the right
+        // dock: a tall dark pill at the left: status on top, big icons below, the microphone at the bottom
         int ga = Math.min(255, glass + 6);
-        NvGlass.fill(cv, p, dockR, (ga << 24) | 0x0F1628, dockR.height() / 2);
-        NvGlass.ring(cv, p, dockR, 0x30FFFFFF, 1.3f * u, dockR.height() / 2);
+        float dr = Math.min(dockR.width() / 2f, 34 * u);
+        NvGlass.fill(cv, p, dockR, (ga << 24) | 0x0F1628, dr);
+        NvGlass.ring(cv, p, dockR, 0x30FFFFFF, 1.3f * u, dr);
         drawStatus(u);
-        NvGlass.fill(cv, p, new RectF(statR.right + 5 * u, dockR.top + 14 * u, statR.right + 6.2f * u, dockR.bottom - 14 * u), 0x30FFFFFF, 1);
-        Btn tipB = null;
+        NvGlass.fill(cv, p, new RectF(dockR.left + 14 * u, statR.bottom + 3.4f * u, dockR.right - 14 * u, statR.bottom + 4.6f * u), 0x30FFFFFF, 1);
         int di = 0;
         for (Btn b : dock) {
             boolean on = b.on != null && b.on.get();
             ease(b);
-            float sc = 1f + 0.12f * b.ah - 0.10f * b.ap;
+            float sc = 1f + 0.10f * b.ah - 0.08f * b.ap;
             int[] col = tileColors(b, di + 1);
+            float rad = Math.min(18 * u, b.r.width() * 0.3f);
             cv.save();
             cv.scale(sc, sc, b.r.centerX(), b.r.centerY());
             p.setShader(new LinearGradient(0, b.r.top, 0, b.r.bottom, on ? col[0] : NvGlass.lerp(col[0], 0xFF2A3350, 0.55f), on ? col[1] : NvGlass.lerp(col[1], 0xFF1B2240, 0.55f), Shader.TileMode.CLAMP));
             p.setStyle(Paint.Style.FILL);
-            cv.drawRoundRect(b.r, 13 * u, 13 * u, p);
+            cv.drawRoundRect(b.r, rad, rad, p);
             p.setShader(null);
-            if (on || b.ah > 0.02f) NvGlass.ring(cv, p, b.r, NvGlass.lerp(on ? 0x99FFFFFF : 0x00FFFFFF, NvGlass.RING, b.ah), 2f * u, 13 * u);
-            glyph(b, b.r.centerX(), b.r.centerY(), 22 * u, 0xFFFFFFFF);
+            if (on || b.ah > 0.02f) NvGlass.ring(cv, p, b.r, NvGlass.lerp(on ? 0x99FFFFFF : 0x00FFFFFF, NvGlass.RING, b.ah), 2.2f * u, rad);
+            glyph(b, b.r.centerX(), b.r.centerY(), b.r.width() * 0.52f, 0xFFFFFFFF);
             cv.restore();
-            if (hover == b) tipB = b;
             di++;
         }
-        if (hover == micB) tooltip(micOn ? "สั่งด้วยเสียง: เปิดอยู่ (แตะเพื่อปิด)" : "สั่งด้วยเสียง: แตะเพื่อเปิด", micB.r.centerX(), dockR.top - 6 * u, u);
-        else if (tipB != null) tooltip(tipB.label.get(), tipB.r.centerX(), dockR.top - 6 * u, u);
-        if (!open) return;
+        if (!open) { dockTip(u); return; }
         // main panel: dark navy
         RectF pr = new RectF(pX, pY, pX + pW, pY + pH);
         p.setShader(new LinearGradient(0, pr.top, 0, pr.bottom, (ga << 24) | 0x16213D, (ga << 24) | 0x0D1528, Shader.TileMode.CLAMP));
@@ -564,6 +585,7 @@ public class NvUi implements NvContent {
             NvGlass.ring(cv, p, tr, 0x33FFFFFF, 1f * u, 15 * u);
             text(tabTip.label.get(), tr.centerX(), tr.centerY(), 15 * u, NvGlass.TEXT, w - 12 * u);
         }
+        dockTip(u);
         if (animating) dirty = true;
     }
 
@@ -579,7 +601,13 @@ public class NvUi implements NvContent {
         if (valid) {
             for (int i = visible.size() - 1; i >= 0; i--) {
                 Btn b = visible.get(i);
-                if (b.r.isEmpty() || !b.r.contains(x, y)) continue;
+                if (b.r.isEmpty()) continue;
+                if (!b.r.contains(x, y)) {
+                    // the dock's buttons are pointed at a little beyond their picture (half the gap above / below, and a bit to the sides): no dead strip between two of them
+                    if (!(b == micB || dock.contains(b))) continue;
+                    float hu = H / 540f;
+                    if (!(x >= b.r.left - 8 * hu && x <= b.r.right + 8 * hu && y >= b.r.top - 5 * hu && y <= b.r.bottom + 5 * hu)) continue;
+                }
                 if (isItem(b) && !cRect.contains(x, y)) continue;                 // the part of a card cut off by the list edge is not there
                 h = b; break;
             }
@@ -594,6 +622,11 @@ public class NvUi implements NvContent {
         Object tgt = h != null ? h : ((lastH != null && now - lastHT < 250) ? lastH : null);
         float u = H / 540f;
         if (edge) { pressTgt = (Btn) tgt; pressX = x; pressY = y; pressT = now; swiped = false; scrolling = false; pressScroll = scroll; }
+        if (edge && poke && pressTgt != null && now - lastAct > 300) {          // the pointing pose: act at once
+            Btn b = pressTgt; pressTgt = null; lastAct = now; pressT = 0;
+            try { if (b.act != null) b.act.run(); } catch (Throwable ignored) { }
+            dirty = true;
+        }
         if (pinch && valid && !swiped && open && pH > 0 && pressT != 0) {
             // drag left / right with the fingers closed: next / previous page (or category when there is only one page)
             float dx = x - pressX, dy = y - pressY;

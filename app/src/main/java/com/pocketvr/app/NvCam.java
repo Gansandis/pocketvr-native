@@ -237,6 +237,8 @@ public class NvCam {
     public volatile int segSkips = 0;                             // how many looks did not need a new cut because the hand had not moved
     private final java.util.concurrent.atomic.AtomicBoolean segBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
     private volatile ExecutorService segEx = null;
+    private volatile java.util.concurrent.atomic.AtomicReference<float[]> segHoldCur = null;      // the steady index-fingertip points of the picture being cut (filled by the detect thread once the steady skeleton is made): [n, x0, y0, x1, y1] in picture pixels
+    private volatile int segHoldW = 1, segHoldH = 1;
     private int[] segSrc = null;
     private void segStart(Bitmap bmp, float[] res) {
         if (!segOn) { segs = new SegOut[2]; return; }
@@ -283,6 +285,8 @@ public class NvCam {
         ExecutorService ex = segEx;
         if (ex == null) { synchronized (this) { if (segEx == null) segEx = Executors.newSingleThreadExecutor(); ex = segEx; } }
         final int W = w, H = h;
+        final java.util.concurrent.atomic.AtomicReference<float[]> hold = new java.util.concurrent.atomic.AtomicReference<>();
+        segHoldW = w; segHoldH = h; segHoldCur = hold;
         ex.execute(() -> {
             try {
                 long m0 = System.nanoTime();
@@ -297,9 +301,19 @@ public class NvCam {
                     try {
                         float[] tp = NvTipPix.tip(o.p, S, q, szs[i] * sc);
                         if (tp != null) {
-                            float fx = tp[0] - q[16], fy = tp[1] - q[17], lim = 0.5f * szs[i] * sc, fl = (float) Math.hypot(fx, fy);
+                            // where the real fingertip is, in picture pixels, compared with the STEADY tip of the same picture (the one that is drawn and pointed with): the raw
+                            // point of the hand model shakes from picture to picture, and measuring against it put that shake into the pointer every time a new cut came
+                            float px = rois[i][0] + tp[0] / sc, py = rois[i][1] + tp[1] / sc;
+                            float ox = lms[i][16], oy = lms[i][17];
+                            float[] st = hold.get();
+                            for (int wt = 0; st == null && wt < 40; wt++) { try { Thread.sleep(1); } catch (InterruptedException ie) { break; } st = hold.get(); }
+                            if (st != null) {
+                                float bd2 = 0.6f * szs[i];
+                                for (int k = 0; k < (int) st[0]; k++) { float dd = (float) Math.hypot(st[1 + k * 2] - ox, st[2 + k * 2] - oy); if (dd < bd2) { bd2 = dd; ox = st[1 + k * 2]; oy = st[2 + k * 2]; } }
+                            }
+                            float fx = px - ox, fy = py - oy, lim = 0.5f * szs[i], fl = (float) Math.hypot(fx, fy);
                             if (fl > lim) { fx *= lim / fl; fy *= lim / fl; }
-                            o.tipDx = fx / sc / W; o.tipDy = fy / sc / H; o.tipOk = true;
+                            o.tipDx = fx / W; o.tipDy = fy / H; o.tipOk = true;
                         }
                     } catch (Throwable e) { segErr = "tip:" + e; }
                     o.cl = segWorker.lut.clone();
@@ -728,6 +742,17 @@ public class NvCam {
                             if (ro) { try { done = rig.process(res, ts, arB); } catch (Throwable e) { rig.on = false; rigOn = false; segErr = "rig:" + e; } }   // never let it break the hand
                             if (done) fOk = false;                                  // the steady skeleton (once it has learned the hand) replaces the point-by-point filter
                             else smooth(res, ts);
+                        }
+                        {
+                            java.util.concurrent.atomic.AtomicReference<float[]> sh = segHoldCur;
+                            if (sh != null) {
+                                segHoldCur = null;
+                                int nn = res[0] >= 1 ? Math.min(2, (int) res[0]) : 0;
+                                float[] st = new float[1 + nn * 2];
+                                st[0] = nn;
+                                for (int k = 0; k < nn && res.length >= 1 + (k + 1) * 63; k++) { st[1 + k * 2] = res[1 + k * 63 + 24] * segHoldW; st[2 + k * 2] = res[1 + k * 63 + 25] * segHoldH; }
+                                sh.set(st);
+                            }
                         }
                         long tn = System.nanoTime() / 1000000L;
                         if (res[0] >= 1) {
