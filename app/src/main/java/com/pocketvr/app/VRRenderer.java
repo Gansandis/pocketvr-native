@@ -52,7 +52,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private float tanHc = 0.65f, tanVc = 0.37f;         // what the camera picture covers (hands, pointer)
     private float winZoom = 1f;                          // windows are drawn this much bigger in the VR split view
     private float camScale = 1f;                        // camera picture size relative to the scene (below 1 = smaller, with a dark border)
-    public volatile float vrFov = 80f;                  // VR split view: how wide each eye's view is in degrees; should match the headset lenses
+    public volatile float uiFov = 0.67f;                // v3.231: scale of the field of view the windows are drawn with over the camera picture (1 = as the camera says; measured on the phone: ~0.67)
+    public volatile float dbgHfCam = 0f, dbgHfUse = 0f; // (HUD) the camera's field of view the app reads from the phone, and the one it draws with
+    public volatile float vrFov = 80f;                 // VR split view: how wide each eye's view is in degrees; should match the headset lenses
     private static final float PANEL_D = 1.5f;
     private int progPanel, progVid, progPano, progEnv;
     // ---- 360 picture around the user (replaces the camera picture while it is on) ----
@@ -288,9 +290,18 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float hf = Math.max(0.8f, Math.min(1.9f, cam.hFov));
         tanH = (float) Math.tan(hf / 2f);
         tanV = tanH / aspect;
+        winZoom = 1f;
+        dbgHfCam = (float) Math.toDegrees(hf);
+        {   // v3.231: measured on the phone, a window moved only ~0.67 of what the room (camera picture) moved when the head turned. The camera picture and the windows share one
+            // field of view (this one), so the scale of the windows is trimmed here: a narrower view makes the windows turn faster against the screen (as the room does);
+            // they are made smaller in the world by the same amount so on the screen they keep the size they had. Only with the camera picture in a single (not split) view.
+            boolean camBg = !(stereo && vw > 1 && vh > 1) && !cinema && !panoOn && envScene == 0 && h3.mode != 3;
+            float us = Math.max(0.5f, Math.min(1.2f, uiFov));
+            if (camBg && us != 1f) { tanH *= us; tanV = tanH / aspect; winZoom = us; }
+        }
+        dbgHfUse = (float) Math.toDegrees(2.0 * Math.atan(tanH));
         tanHc = tanH; tanVc = tanV;
         float tanBase = tanH;
-        winZoom = 1f;
         if (stereo && vw > 1 && vh > 1) {
             // in the VR box every eye looks through a lens with its own field of view. If the picture is drawn with a different one,
             // the world turns faster or slower than your head (that is what makes you dizzy). So the scene is drawn with the lens' field of view,
@@ -658,8 +669,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         placeDbg = "place: in the middle, " + moved + " window(s) slide aside (" + right.size() + " right, " + left.size() + " left)";
     }
 
-    private static final long SETTLE_MAX_MS = 3500L, SETTLE_MIN_MS = 300L, SETTLE_CALM_MS = 400L;   // longest follow, shortest follow, how long the head must be still
-    private static final float SETTLE_CALM_DEG = 14f;                // (deg per second) slower than this counts as still
+    private static final long SETTLE_MAX_MS = 1500L, SETTLE_MIN_MS = 300L, SETTLE_CALM_MS = 400L;   // longest follow, shortest follow, how long the head must be still (v3.231: was 3.5 s: a window ran away from a finger that was reaching for it)
+    private static final float SETTLE_CALM_DEG = 8f;                 // (deg per second) slower than this counts as still (was 14)
+    private volatile long actMs = 0L;                                // last time a hand was pointing / poking / pinching: a window that is being used stops following the head at once
     private static final float ANIM_MS = 520f;                     // how long a window takes to slide in
 
     private void updateWin(Win w, float[] rn, float t) {
@@ -689,7 +701,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             w.sFwd[0] = fx; w.sFwd[1] = fy; w.sFwd[2] = fz; w.sLast = nowS;
             if (degPerS < SETTLE_CALM_DEG) w.sCalm += (long) (dtS * 1000f); else w.sCalm = 0L;
             boolean settled = w.sCalm >= SETTLE_CALM_MS && nowS - w.sStart >= SETTLE_MIN_MS;     // the head has been still for a moment: this is its place now
-            if (settled || nowS >= w.settleUntil || dragWin == w || w.pendYaw != 0f || w.placeReq) w.settleUntil = 0L;
+            boolean used = System.currentTimeMillis() - actMs < 300L;
+            if (settled || used || nowS >= w.settleUntil || dragWin == w || w.pendYaw != 0f || w.placeReq) w.settleUntil = 0L;
             else {
                 android.opengl.Matrix.transposeM(tA, 0, rn, 0);
                 w.rot = tA.clone();
@@ -1831,6 +1844,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         pkOn = pt.press; pkProg = pt.prog;
         if (ptActive && nowMs - ptDbgT > 250) { ptDbgT = nowMs; ptDbg = pt.dbg(); } else if (!ptActive) ptDbg = "";
         final boolean ptPose = ptActive && pt.pose;
+        if (pinching || pkOn || ptPose) actMs = nowMs;
         final boolean press = pinching || pkOn;
         if (ptClick) { rippleT = nowMs; rippleX = cnx; rippleY = cny; }
 
