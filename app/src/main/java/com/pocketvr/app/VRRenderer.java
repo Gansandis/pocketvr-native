@@ -1568,6 +1568,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private boolean pinching = false;
     private float pinchAmt = 0f, rippleX = 0f, rippleY = 0f;
     private float ratioF = 0f; private long ratioT = 0, onSince = 0, offSince = 0;     // the finger gap, eased; when a change of the pinch state started
+    // v3.233 relative pinch (like YorkMR): with the pointer on something that can be clicked, the pinch also counts when the finger gap has CLOSED a little
+    // (relShrink = the fraction it must close from where it was when the pointer arrived; 0 = off, only the fixed limits above). The fixed limits stay as they were.
+    public volatile float relShrink = 0.30f;
+    private long hovT = 0, relHold = 0, relUpT = 0, relLastT = 0; private float relBase = 0f, relMin = 0f, relBase0 = 0f; private boolean relOn = false;
+    public volatile String relDbg = "";
     private long popT = 0; private float popX = 0f, popY = 0f; private boolean popOk = false;
     private void holdPop(float nx, float ny, boolean ok) { popT = System.currentTimeMillis(); popX = nx; popY = ny; popOk = ok; }
     private long rippleT = 0;
@@ -1814,17 +1819,39 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // closing: below 0.12 at once, below 0.18 for 30 ms; opening: above 0.45 at once, above 0.31 for 50 ms
         ratioF = ratioF <= 0f || nowMs - ratioT > 300 ? ratio : ratioF + (ratio - ratioF) * 0.6f;
         ratioT = nowMs;
+        // v3.233: the pointer has been on something clickable a moment ago (set further down, each picture), and the hand is not in the pointing pose (that one has its own click)
+        final boolean relHov = relShrink > 0.01f && nowMs - hovT < 200 && dragWin == null && !(pointMode > 0 && pt.pose);
+        final float relDt = relLastT == 0 ? 0.03f : Math.max(0.001f, Math.min(0.2f, (nowMs - relLastT) / 1000f));
+        relLastT = nowMs;
+        if (!relHov && !pinching) { relBase = 0f; relHold = 0; }
         if (!pinching) {
             offSince = 0;
+            relOn = false;
             if (ratioF < 0.18f) { pinching = true; onSince = 0; }
             else if (ratioF < 0.28f) { if (onSince == 0) onSince = nowMs; else if (nowMs - onSince >= 30) { pinching = true; onSince = 0; } }
             else onSince = 0;
+            if (relHov) {
+                // the start: the widest the gap has been since the pointer arrived (it slowly forgets, so an old wide look does not stay for ever)
+                relBase = Math.min(0.9f, Math.max(ratioF, relBase - relDt * 0.06f));
+                final float drop = relBase - ratioF;
+                if (!pinching && relBase >= 0.26f && drop >= 0.07f && drop >= relBase * relShrink && nowMs - relUpT > 300) {
+                    if (relHold == 0) relHold = nowMs;
+                    else if (nowMs - relHold >= 40) { pinching = true; relOn = true; relMin = ratioF; relBase0 = relBase; relHold = 0; }
+                } else relHold = 0;
+                relDbg = String.format(java.util.Locale.US, "จีบใหม่: เริ่ม %.2f ตอนนี้ %.2f หด %.0f%%/%.0f%%", relBase, ratioF, relBase > 0.01f ? drop / relBase * 100f : 0f, relShrink * 100f);
+            } else relDbg = relShrink > 0.01f ? "จีบใหม่: รอเคอร์เซอร์ถึงปุ่ม" : "";
         } else {
             onSince = 0;
             // a window that is being carried is held until the fingers are clearly opened (it is an object in the hand: one bad look must not drop it)
             final boolean carry = dragWin != null;
-            if (ratioF > (carry ? 0.62f : 0.50f)) { pinching = false; offSince = 0; }
-            else if (ratioF > (carry ? 0.46f : 0.38f)) { if (offSince == 0) offSince = nowMs; else if (nowMs - offSince >= (carry ? 120 : 50)) { pinching = false; offSince = 0; } }
+            if (relOn && !carry) {
+                // a pinch that began as a small close: it ends when the gap has opened again about half-way back to where it started
+                relMin = Math.min(relMin, ratioF);
+                final float thr = Math.min(0.50f, relMin + Math.max(0.05f, (relBase0 - relMin) * 0.5f));
+                if (ratioF > thr) { if (offSince == 0) offSince = nowMs; else if (nowMs - offSince >= 50) { pinching = false; offSince = 0; relOn = false; relUpT = nowMs; relBase = ratioF; } }
+                else offSince = 0;
+            } else if (ratioF > (carry ? 0.62f : 0.50f)) { pinching = false; offSince = 0; relOn = false; relUpT = nowMs; relBase = ratioF; }
+            else if (ratioF > (carry ? 0.46f : 0.38f)) { if (offSince == 0) offSince = nowMs; else if (nowMs - offSince >= (carry ? 120 : 50)) { pinching = false; offSince = 0; relOn = false; relUpT = nowMs; relBase = ratioF; } }
             else offSince = 0;
         }
         if (menuGest == 0 && !prevPinch && dragWin == null && NvPoint.isFist(r, ar, 1.05f)) pinching = false;      // a tight fist is not a pinch (it only came from the thumb lying on the index finger)
@@ -1971,6 +1998,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
         }
         barHovWin = barWin; barHovIdx = barWin != null ? barReg : -1;
+        if (dragWin == null && (target != null || gripWin != null || (barWin != null && barReg >= 0 && barReg < 6))) hovT = nowMs;      // v3.233: the pointer is on something that can be clicked / grabbed
         if (barWin != null && ((pinching && !prevPinch) || ptClick) && barReg >= 0 && barReg < 6) { holdPop(cnx, cny, false); barAct(barWin, barReg); }
         gripHot = gripWin != null || (dragWin != null && resizing);
         // OK sign (thumb and index in a ring, the other three fingers stretched out) held for a moment over empty space:
