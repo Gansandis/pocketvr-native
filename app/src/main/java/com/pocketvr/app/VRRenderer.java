@@ -52,7 +52,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private float tanHc = 0.65f, tanVc = 0.37f;         // what the camera picture covers (hands, pointer)
     private float winZoom = 1f;                          // windows are drawn this much bigger in the VR split view
     private float camScale = 1f;                        // camera picture size relative to the scene (below 1 = smaller, with a dark border)
-    public volatile float uiFov = 0.67f;                // v3.231: scale of the field of view the windows are drawn with over the camera picture (1 = as the camera says; measured on the phone: ~0.67)
+    public volatile float uiFov = 0.64f;                // v3.231: scale of the field of view the windows are drawn with over the camera picture (1 = as the camera says; measured on the phone: 0.67 -> windows move ~0.8x the room, 0.55 -> ~1.3x, 0.64 -> ~0.94x)
     public volatile float dbgHfCam = 0f, dbgHfUse = 0f; // (HUD) the camera's field of view the app reads from the phone, and the one it draws with
     public volatile float vrFov = 80f;                 // VR split view: how wide each eye's view is in degrees; should match the headset lenses
     private static final float PANEL_D = 1.5f;
@@ -969,7 +969,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "attribute vec2 p; varying vec2 uv; void main(){ gl_Position=vec4(p,0.,1.); uv=vec2(p.x*0.5+0.5, 0.5-p.y*0.5); }",
             "precision mediump float; uniform sampler2D tex; varying vec2 uv; void main(){ gl_FragColor=texture2D(tex,uv); }");
         uiTex = 0;
-        for (Win w : wins) { w.tex = 0; w.texW = 0; w.texH = 0; }      // a new graphics context: every window picture must be uploaded again in full
+        for (Win w : wins) { w.tex = 0; w.texW = 0; w.texH = 0; w.btex = 0; w.barDrawnHov = -2; w.barDrawnTitle = ""; }      // a new graphics context: every window picture AND every title bar picture must be uploaded again in full (v3.232: the bar's was forgotten -> a black bar under the windows after screen lock / app switch)
         progRing = prog(
             "attribute vec2 p; varying vec2 uv; void main(){ gl_Position=vec4(p,0.,1.); uv=p*0.5+0.5; }",
             "precision mediump float; uniform sampler2D tex; uniform vec2 px; uniform float rad; uniform vec4 h0; uniform vec4 h1; uniform vec3 hs; uniform float gl; uniform float ha; varying vec2 uv;" +
