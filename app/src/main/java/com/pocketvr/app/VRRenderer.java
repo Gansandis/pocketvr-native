@@ -1501,6 +1501,30 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         return true;
     }
 
+    /** v3.234: is the pointer near the bar under some window (a wider area than the bar itself; wider still once it is already near, so it does not flicker at the edge) */
+    private boolean nearBarAt(float nx, float ny, boolean already) {
+        final float um = already ? 0.35f : 0.12f, vTop = already ? -2.4f : -1.6f, vBot = already ? 2.8f : 2.0f;
+        for (Win w : wins) {
+            if (!barOn(w)) continue;
+            android.graphics.Bitmap bm = w.c.bitmap();
+            if (bm == null) continue;
+            float dx = nx * tanHc, dy = ny * tanVc, dz = -1f;
+            float[] mInv = w.inv;
+            float ox = mInv[12], oy = mInv[13], oz = mInv[14];
+            float Dz = mInv[2] * dx + mInv[6] * dy + mInv[10] * dz;
+            float Dx = mInv[0] * dx + mInv[4] * dy + mInv[8] * dz;
+            float Dy = mInv[1] * dx + mInv[5] * dy + mInv[9] * dz;
+            if (Math.abs(Dz) < 1e-5f) continue;
+            float t = -oz / Dz;
+            if (t <= 0) continue;
+            float lx = ox + t * Dx, ly = oy + t * Dy;
+            barGeom(w, bm);
+            float u = lx / bg[0] + 0.5f, v = 0.5f - (ly - bg[2]) / bg[1];
+            if (u >= -um && u <= 1f + um && v >= vTop && v <= vBot) return true;
+        }
+        return false;
+    }
+
     /** 0..5 = a round button, 6 = the empty part (grab to move the window), -1 = outside the pill */
     private int barRegion(float x, float y) {
         float cy = BAR_H / 2f;
@@ -1573,6 +1597,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile float relShrink = 0.30f;
     private long hovT = 0, relHold = 0, relUpT = 0, relLastT = 0; private float relBase = 0f, relMin = 0f, relBase0 = 0f; private boolean relOn = false;
     public volatile String relDbg = "";
+    // v3.234: two fingers up together (index + middle, the other two folded) = scroll; and near the bar under a window the pointer sits between thumb and index
+    public volatile boolean scrollPose = true, barAnchor = true;
+    public volatile String scDbg = "";
+    private boolean scrollOn = false, scRaw = false, barNear = false; private long scSince = 0, scRawT = 0; private Win scrollWin = null;
     private long popT = 0; private float popX = 0f, popY = 0f; private boolean popOk = false;
     private void holdPop(float nx, float ny, boolean ok) { popT = System.currentTimeMillis(); popX = nx; popY = ny; popOk = ok; }
     private long rippleT = 0;
@@ -1792,7 +1820,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (lostT == 0) lostT = nowMs;
             // a short loss of the hand (detection blink) must not drop a grabbed window
             if (!(dragWin != null && nowMs - lostT < 700)) { pinching = false; prevPinch = false; endDrag(); }
-            for (Win w : wins) if (shown(w)) w.c.update(false, 0, 0, false);
+            for (Win w : wins) if (shown(w)) { w.c.update(false, 0, 0, false); w.c.scroll(false, false, 0f, 0f); }
+            scrollOn = false; scRaw = false; scSince = 0; scrollWin = null; barNear = false;
             { NvGameWorld wd = world3; if (wd != null) wd.pointer(false, 0f, 0f, 0f, nowMs); }
             return;
         }
@@ -1820,7 +1849,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         ratioF = ratioF <= 0f || nowMs - ratioT > 300 ? ratio : ratioF + (ratio - ratioF) * 0.6f;
         ratioT = nowMs;
         // v3.233: the pointer has been on something clickable a moment ago (set further down, each picture), and the hand is not in the pointing pose (that one has its own click)
-        final boolean relHov = relShrink > 0.01f && nowMs - hovT < 200 && dragWin == null && !(pointMode > 0 && pt.pose);
+        final boolean relHov = relShrink > 0.01f && nowMs - hovT < 200 && dragWin == null && !(pointMode > 0 && pt.pose) && !scRaw;
         final float relDt = relLastT == 0 ? 0.03f : Math.max(0.001f, Math.min(0.2f, (nowMs - relLastT) / 1000f));
         relLastT = nowMs;
         if (!relHov && !pinching) { relBase = 0f; relHold = 0; }
@@ -1856,8 +1885,20 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         if (menuGest == 0 && !prevPinch && dragWin == null && NvPoint.isFist(r, ar, 1.05f)) pinching = false;      // a tight fist is not a pinch (it only came from the thumb lying on the index finger)
         if (pinching) lastPinchT = nowMs;
+        {   // v3.234: two fingers up together = scroll (held for a moment; a short blink of the hand does not end it)
+            final float f8 = NvPoint.fold(r, 8, 5, ar), f12 = NvPoint.fold(r, 12, 9, ar), f16 = NvPoint.fold(r, 16, 13, ar), f20 = NvPoint.fold(r, 20, 17, ar);
+            final float gap2 = psize > 1e-4f ? (float) Math.hypot((r[1 + 12 * 3] - r[1 + 8 * 3]) * ar, r[1 + 12 * 3 + 1] - r[1 + 8 * 3 + 1]) / psize : 9f;
+            final boolean raw = scrollPose && !pinching && !prevPinch && dragWin == null && !mpOn && !gameUp() && pmFade < 0.05f
+                    && f8 > 1.4f && f12 > 1.4f && f16 < 1.2f && f20 < 1.2f && gap2 < 0.45f;
+            if (raw) { scRawT = nowMs; if (scSince == 0) scSince = nowMs; } else if (nowMs - scRawT > 200) scSince = 0;
+            final boolean was = scrollOn;
+            scrollOn = scSince != 0 && nowMs - scSince >= 150 && nowMs - scRawT <= 200;
+            scRaw = raw || scrollOn;
+            if (scrollOn && !was) { rippleT = nowMs; rippleX = cnx; rippleY = cny; }
+            scDbg = !scrollPose ? "" : String.format(java.util.Locale.US, "เลื่อน 2 นิ้ว: %s | ชี้ %.2f กลาง %.2f (ต้อง>1.4) นาง %.2f ก้อย %.2f (ต้อง<1.2) ห่างปลายนิ้ว %.2f (ต้อง<0.45)", scrollOn ? "กำลังเลื่อน" : raw ? "ตั้งท่า…" : "ไม่", f8, f12, f16, f20, gap2);
+        }
         // how closed the fingers are (0..1), eased: the pointer ring tightens as the fingers close; a ripple goes out when the pinch lands
-        float pinchTarget = pinching ? 1f : Math.max(0f, Math.min(0.85f, (0.36f - ratioF) / (0.36f - 0.17f)));
+        float pinchTarget = (pinching || scrollOn) ? 1f : Math.max(0f, Math.min(0.85f, (0.36f - ratioF) / (0.36f - 0.17f)));
         pinchAmt += (pinchTarget - pinchAmt) * 0.35f;
         if (pinching && !prevPinch) { rippleT = nowMs; rippleX = cnx; rippleY = cny; }
 
@@ -1904,7 +1945,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // 2 on the index tip worked out from the finger's JOINTS: the direction of the knuckle -> next joint (steadier than the tip, which shakes) and a smoothed finger length;
         // while the fingers close the length is kept, so the bending finger does not drag the pointer away from what was aimed at
         final boolean idxOutNow = NvPoint.fold(r, 8, 5, ar) > 1.3f;
-        final int anc = (curAnchor == 0 && ptPose && idxOutNow) ? 2 : curAnchor;
+        barNear = barAnchor && curOk && !scRaw && dragWin == null && nearBarAt(cnx, cny, barNear);       // v3.234: close to the bar under a window: the pointer sits between thumb and index (it stays put when the fingers close on a button)
+        final int anc = (barNear && !(ptPose && idxOutNow)) ? 0 : ((curAnchor == 0 && ptPose && idxOutNow) ? 2 : curAnchor);
         float hx, hy;
         if (anc == 0) { hx = (tx + ax) * 0.5f; hy = (ty + ay) * 0.5f; }
         else if (anc == 1) { hx = tx; hy = ty; }
@@ -1940,6 +1982,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (vl > 1e-6f && psize > 1e-4f) { hx = (bx + vx / vl * idxLf) / ar; hy = by + vy / vl * idxLf; }
             else { hx = tx; hy = ty; }
         }
+        if (scRaw) { hx = (tx + kx) * 0.5f; hy = (ty + ky) * 0.5f; }                      // scrolling: the pointer is between the two raised fingertips
         if (rot180) { hx = 1f - hx; hy = 1f - hy; }
         float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
         boolean hold = false;                                                  // (the pointer is never locked: it always follows the fingertip)
@@ -1998,6 +2041,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
         }
         barHovWin = barWin; barHovIdx = barWin != null ? barReg : -1;
+        if (scrollOn) { if (scrollWin == null && target != null && !target.ghost) scrollWin = target; } else scrollWin = null;
         if (dragWin == null && (target != null || gripWin != null || (barWin != null && barReg >= 0 && barReg < 6))) hovT = nowMs;      // v3.233: the pointer is on something that can be clicked / grabbed
         if (barWin != null && ((pinching && !prevPinch) || ptClick) && barReg >= 0 && barReg < 6) { holdPop(cnx, cny, false); barAct(barWin, barReg); }
         gripHot = gripWin != null || (dragWin != null && resizing);
@@ -2064,10 +2108,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (dragWin != null && !pinching && nowMs - lastPinchT > 350) endDrag();
         prevPinch = pinching;
         NvUi.poke = pkOn && !pinching;
+        final float[] so = new float[2];
+        final boolean sv = scrollOn && scrollWin != null && hitWin(scrollWin, cnx, cny, so);
         for (Win w : wins) {
             if (!shown(w)) continue;
-            if (w == target && dragWin == null && !w.ghost) w.c.update(true, o[0], o[1], press);
+            final boolean sc = scrollOn && w == scrollWin;
+            if (!sc && w == target && dragWin == null && !w.ghost) w.c.update(true, o[0], o[1], press);
             else w.c.update(false, 0, 0, false);
+            w.c.scroll(sc, sc && sv, so[0], so[1]);
         }
     }
 

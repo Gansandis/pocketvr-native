@@ -301,6 +301,24 @@ public class NvAppWin implements NvContent {
         p.setStyle(Paint.Style.FILL);
     }
 
+    private boolean scOn = false, scTouch = false, scStream = false; private float scX0 = 0f, scY0 = 0f, scLy = 0f;
+    @Override public void scroll(boolean on, boolean valid, float x, float y) {
+        if (!on || !valid) {
+            if (scOn && scTouch && scStream) touchLine('u', scX0, scLy);
+            scOn = false; scTouch = false; return;
+        }
+        if (touching || !opened) return;
+        if (!scOn) { if (y < TB || y >= TB + PH) return; scOn = true; scTouch = false; scX0 = x; scY0 = y - TB; scLy = scY0; scStream = NvShizuku.inputReady(); return; }
+        float ly = Math.max(0f, Math.min(PH, scY0 + (y - TB - scY0) * 1.5f));
+        if (!scTouch) {
+            if (Math.abs(ly - scY0) < 30f) return;
+            scTouch = true; scLy = scY0;
+            if (scStream) touchLine('d', scX0, scY0);
+        }
+        if (scStream) { touchLine('m', scX0, ly); scLy = ly; }
+        else if (Math.abs(ly - scLy) > 70f) { swipe(scX0, scLy, scX0, ly, 160); scLy = ly; }          // without the fast input channel: one short swipe for each bit of the move
+    }
+
     @Override public void update(boolean valid, float x, float y, boolean pinch) {
         long now = System.currentTimeMillis();
         boolean inPage = valid && y >= TB && y < TB + PH && x >= doffX() && x < PW - doffX();

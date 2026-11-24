@@ -154,6 +154,16 @@ public class NvSettings implements NvContent {
         if (!valid && !pinch) pressTgt = null;
     }
 
+    private boolean scOn = false; private float scY0 = 0f, scS0 = 0f;
+    @Override public void scroll(boolean on, boolean valid, float x, float y) {
+        if (!on || !valid) { scOn = false; return; }
+        if (!scOn) { scOn = true; scY0 = y; scS0 = scroll; return; }
+        if (maxScroll > 0f) {
+            float ns = Math.max(0f, Math.min(maxScroll, scS0 + (scY0 - y) * 1.5f));
+            if (Math.abs(ns - scroll) > 0.5f) { scroll = ns; layout(); dirty = true; }
+        }
+    }
+
     // ---------- drawing ----------
     private void round(RectF r, int color, float rad) {
         p.setShader(null); p.setStyle(Paint.Style.FILL); p.setColor(color);

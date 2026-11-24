@@ -226,6 +226,22 @@ public class NvBrowser implements NvContent {
         wasPinch = pinch;
     }
 
+    private boolean scOn = false, scTouch = false; private float scX0 = 0f, scY0 = 0f, scLy = 0f;
+    @Override public void scroll(boolean on, boolean valid, float x, float y) {
+        if (!on || !valid) {
+            if (scOn && scTouch) send(1, scX0, scLy);
+            scOn = false; scTouch = false; return;
+        }
+        if (touching) return;
+        if (!scOn) { if (y < TB || y >= TB + PH || x < 0 || x >= PW) return; scOn = true; scTouch = false; scX0 = x; scY0 = y - TB; scLy = scY0; return; }
+        float ly = Math.max(0f, Math.min(PH, scY0 + (y - TB - scY0) * 1.5f));
+        if (!scTouch) {                                                  // nothing is sent until the hand has really moved: no tap on a link when the hand only rests
+            if (Math.abs(ly - scY0) < 30f) return;
+            scTouch = true; send(0, scX0, scY0); scLy = scY0;
+        }
+        send(2, scX0, ly); scLy = ly;
+    }
+
     private void send(final int a, float px, float py) {
         final float fx = Math.max(0f, Math.min(1f, px / PW)), fy = Math.max(0f, Math.min(1f, py / PH));
         ui.post(() -> vb.touch(a, fx, fy));

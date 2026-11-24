@@ -594,6 +594,16 @@ public class NvUi implements NvContent {
         return 0xFF000000 | (r << 16) | (g << 8) | b;
     }
 
+    private boolean scOn = false; private float scY0 = 0f, scS0 = 0f;
+    @Override public void scroll(boolean on, boolean valid, float x, float y) {
+        if (!on || !valid) { scOn = false; return; }
+        if (!scOn) { scOn = true; scY0 = y; scS0 = scroll; return; }
+        if (maxScroll > 0f) {
+            float ns = Math.max(0f, Math.min(maxScroll, scS0 + (scY0 - y) * 1.5f));          // the list follows the hand (a little faster than it)
+            if (Math.abs(ns - scroll) > 0.5f) { scroll = ns; layout(); dirty = true; }
+        }
+    }
+
     /** cursor in picture pixels; pinch = thumb and index together. Called from the drawing thread. */
     public void update(boolean valid, float x, float y, boolean pinch) {
         if (bmp == null) return;
