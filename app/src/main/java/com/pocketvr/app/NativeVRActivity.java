@@ -229,7 +229,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
                 if (!rigSaved && cam.rig.isLearned()) saveRig();                  // the hand has just been learned: keep it
                 if (motion != null && motion.enabled) menu.markDirty();      // so the numbers on the walk-around button stay fresh
                 if (hudOn) {
-                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? (rend.menuGest == 0 ? "กำมือค้างไว้หน้ากล้อง = เปิด/ปิดเมนู\n" : rend.menuGest == 2 ? "แบมือ (พับนิ้วโป้งเข้าฝ่ามือ) ค้างไว้หน้ากล้อง = เปิด/ปิดเมนู\n" : "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n") : "") + String.format("native v3.241 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
+                    hud.setText(Tr.t((System.currentTimeMillis() - t0 < 15000 ? (rend.menuGest == 0 ? "กำมือค้างไว้หน้ากล้อง = เปิด/ปิดเมนู\n" : rend.menuGest == 2 ? "แบมือ (พับนิ้วโป้งเข้าฝ่ามือ) ค้างไว้หน้ากล้อง = เปิด/ปิดเมนู\n" : "จีบนิ้วโป้ง+นิ้วกลางค้างไว้ = เปิด/ปิดเมนู\n") : "") + String.format("native v3.242 | วาด %.0f fps | กล้อง %.0f | ตรวจ %.0f Hz | โมเดล %.0f ms | แปลง %.0f ms | เว้น %d ms | นำหน้า %.0f ms | ตามมือ %s | 🌡 %.0f°C%s | ภาพ %d%%%s",
                             f, cam.camFps, cam.detHz, hands.inferMs, cam.convMs, p, rend.predMs, cam.flowOn ? (cam.flowOk ? "✓" : "–") : "ปิด", tempC, ecoLevel > 0 ? " (ประหยัด " + (ecoLevel == 1 ? "45" : "30") + ")" : "", Math.round(rend.sceneScale * 100f), err.isEmpty() ? "" : "\n! " + err) + "\n" + memStr() + winStr() + (lastExit.isEmpty() || System.currentTimeMillis() - t0 > 90000 ? "" : "\n" + lastExit) + (rend.placeDbg.isEmpty() ? "" : "\n" + rend.placeDbg) + (rend.skel >= 2 ? "\n" + rend.segDbg : "") + (rend.ptDbg.isEmpty() ? "" : "\n" + rend.ptDbg) + (rend.relDbg.isEmpty() ? "" : "\n" + rend.relDbg) + (rend.scDbg.isEmpty() ? "" : "\n" + rend.scDbg) + (rend.mnDbg.isEmpty() ? "" : "\n" + rend.mnDbg) + (voice != null && voice.isOn() ? "\n🎙 " + voiceMsg + (heard.isEmpty() ? "" : "\nได้ยิน: " + heard) : "")));
                 } else hud.setText("");
             }
@@ -793,7 +793,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
     }
 
     // ================= saved settings (kept when the app is closed) =================
-    private static final String[] PK = {"ptMode", "ptGrip", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck4", "flow", "eco", "autoRes", "tips", "pmenu", "lang", "lock", "range", "night", "scene", "anchor2", "menuG", "uiFov", "relShrink", "scrollPose", "barAnchor", "menuG2", "edgeG", "winSizeOld", "winSize", "pinchLatch", "skelV2"};
+    private static final String[] PK = {"ptMode", "ptGrip", "predict", "detW", "floaty", "glass", "cursorSz", "skel", "hud", "sharpen", "stereo", "lens", "eyeShift", "compass", "depthM", "lagMs", "handsN", "vrFov", "reproj", "camLagMs", "mainHand", "chroma", "handsGpu", "neck4", "flow", "eco", "autoRes", "tips", "pmenu", "lang", "lock", "range", "night", "scene", "anchor2", "menuG", "uiFov", "relShrink", "scrollPose", "barAnchor", "menuG2", "edgeG", "winSizeOld", "winSize", "pinchLatch", "skelV2", "skelV3"};
     private boolean boot3d = false, rigSaved = false;
     /** the learned bone lengths and the switch of the steady skeleton are kept, so the hand is learned once */
     private void saveRig() {
@@ -834,7 +834,7 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
 
     private double[] snapPrefs() {
         return new double[]{rend.pointMode, rend.pointGrip, rend.predict ? 1 : 0, cam.detW, rend.floaty ? 1 : 0, NvUi.glass, rend.cursorSz, rend.skel, hudOn ? 1 : 0,
-                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs, rend.mainHand, rend.chroma, cam.handsGpu ? 1 : 0, rend.neck ? 1 : 0, cam.flowOn ? 1 : 0, eco, rend.autoRes ? 1 : 0, cam.tipsOn ? 1 : 0, rend.palmMenu ? 1 : 0, Tr.thai ? 1 : 0, hands.lockMine ? 1 : 0, hands.maxDistM, cam.night, rend.envScene, rend.curAnchor, rend.menuGest, rend.uiFov, rend.relShrink, rend.scrollPose ? 1 : 0, rend.barAnchor ? 1 : 0, rend.menuGest, rend.edgeGrab, 1.4f, rend.winSize, rend.pinchLatch ? 1 : 0, 1};
+                rend.sharpen, rend.stereo ? 1 : 0, rend.lens, rend.eyeShift, compass ? 1 : 0, motion.depthM, motion.lagMs, cam.handsN, rend.vrFov, rend.reproj ? 1 : 0, rend.camLagMs, rend.mainHand, rend.chroma, cam.handsGpu ? 1 : 0, rend.neck ? 1 : 0, cam.flowOn ? 1 : 0, eco, rend.autoRes ? 1 : 0, cam.tipsOn ? 1 : 0, rend.palmMenu ? 1 : 0, Tr.thai ? 1 : 0, hands.lockMine ? 1 : 0, hands.maxDistM, cam.night, rend.envScene, rend.curAnchor, rend.menuGest, rend.uiFov, rend.relShrink, rend.scrollPose ? 1 : 0, rend.barAnchor ? 1 : 0, rend.menuGest, rend.edgeGrab, 1.4f, rend.winSize, rend.pinchLatch ? 1 : 0, 1, 1};
     }
 
     private void applyPrefs(double[] v) {
@@ -878,8 +878,10 @@ public class NativeVRActivity extends Activity implements VRRenderer.Host, NvCam
             android.content.SharedPreferences sp = getSharedPreferences("pocketvr_native", MODE_PRIVATE);
             double[] v = defaults.clone();
             for (int i = 0; i < PK.length; i++) if (sp.contains(PK[i])) v[i] = sp.getFloat(PK[i], (float) v[i]);
-            if (!sp.contains("skelV2")) { int k = (int) v[7]; if (k == 2) v[7] = 5; else if (k == 3) v[7] = 6; }       // saved before v3.241: the two camera-pixel outlines become the new ones made from the model points only
+            boolean mig = false;
+            if (!sp.contains("skelV3")) { int k = (int) v[7]; if (k == 2) v[7] = 5; else if (k == 3) v[7] = 6; mig = true; }       // saved before v3.242: the two camera-pixel outlines become the new ones made from the model points only (v3.240 already wrote "skelV2" without changing the mode, so a new key is used)
             applyPrefs(v);
+            if (mig) { lastSaved = snapPrefs(); savePrefsNow(); }
         } catch (Throwable ignored) { }
         lastSaved = snapPrefs();
     }
