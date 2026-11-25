@@ -1118,6 +1118,53 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private float handAlpha = 1f, handConfNow = 1f;
     /** speed with a dead zone: noise of the model while the hand rests must not become a guessed movement */
     private static float dz(float v) { float a = Math.abs(v) - 0.08f; return a <= 0f ? 0f : (v < 0f ? -a : a); }
+    // ---- the wrist is held to the palm (v3.243): the model's wrist point and the move of the wrist that the follower guesses both wander on their own when the hand is waved;
+    //      the wrist of a real hand does not wander away from the palm: it sits at a fixed place in the frame of the knuckles. That place is learnt slowly from the model's own answers,
+    //      and the drawn wrist is put there, so it turns with the palm instead of swinging. Wherever the model's wrist clearly disagrees (hand turned edge-on, a different hand), the model's point is kept. ----
+    public volatile boolean wristPin = true;
+    private final float[] wpA = new float[2], wpB = new float[2], wpMax = new float[2];
+    private final boolean[] wpOk = new boolean[2];
+    private long wpT = 0;
+    private static float sstep(float a, float b, float x) { float t = Math.max(0f, Math.min(1f, (x - a) / (b - a))); return t * t * (3f - 2f * t); }
+    private static final int[] KN = {5, 9, 13, 17};
+
+    private void wristPinStep(float[] r, long now) {
+        int nh = r[0] >= 1 ? Math.min(2, Math.min((int) r[0], (r.length - 1) / 63)) : 0;
+        if (nh <= 0 || dispDraw.length < r.length || imgH <= 0) { wpOk[0] = wpOk[1] = false; wpT = now; return; }
+        float ar = (float) imgW / imgH;
+        long dtm = wpT == 0 ? 16 : now - wpT; wpT = now;
+        if (dtm > 300) { wpOk[0] = wpOk[1] = false; dtm = 16; }
+        float al = 1f - (float) Math.exp(-Math.min(dtm, 100) / 800f);
+        for (int h = 0; h < nh; h++) {
+            int o = 1 + h * 63;
+            // the picture's own (model) points: measure where the wrist sits in the frame of the knuckles
+            float rkx = 0f, rky = 0f, dkx = 0f, dky = 0f;
+            for (int k : KN) { rkx += r[o + k * 3]; rky += r[o + k * 3 + 1]; dkx += dispDraw[o + k * 3]; dky += dispDraw[o + k * 3 + 1]; }
+            rkx /= 4f; rky /= 4f; dkx /= 4f; dky /= 4f;
+            float rux = (r[o + 17 * 3] - r[o + 5 * 3]) * ar, ruy = r[o + 17 * 3 + 1] - r[o + 5 * 3 + 1], rwk = (float) Math.hypot(rux, ruy);
+            float dux = (dispDraw[o + 17 * 3] - dispDraw[o + 5 * 3]) * ar, duy = dispDraw[o + 17 * 3 + 1] - dispDraw[o + 5 * 3 + 1], dwk = (float) Math.hypot(dux, duy);
+            if (rwk < 1e-3f || dwk < 1e-3f) continue;
+            rux /= rwk; ruy /= rwk; dux /= dwk; duy /= dwk;
+            float rnx = -ruy, rny = rux, dnx = -duy, dny = dux;
+            float mx = (r[o] - rkx) * ar, my = r[o + 1] - rky;
+            float ma = Math.abs(mx * rnx + my * rny) / rwk, mb = (mx * rux + my * ruy) / rwk;     // behind the knuckle line / along it, in knuckle widths
+            wpMax[h] = wpOk[h] ? Math.max(dwk, wpMax[h] * (1f - dtm / 30000f)) : dwk;
+            float face = sstep(0.55f, 0.80f, dwk / wpMax[h]);                    // the palm is seen from the front: the knuckle line is as long as it ever gets
+            float cons;
+            if (!wpOk[h]) { wpA[h] = ma; wpB[h] = mb; wpOk[h] = true; cons = 1f; }
+            else {
+                cons = 1f - sstep(0.4f, 0.9f, (float) Math.hypot(ma - wpA[h], mb - wpB[h]));
+                if (face > 0.5f) { float k2 = al * (0.15f + 0.85f * cons); wpA[h] += (ma - wpA[h]) * k2; wpB[h] += (mb - wpB[h]) * k2; }
+            }
+            float wgt = face * cons;
+            if (wgt <= 0.01f) continue;
+            float dx = (dispDraw[o] - dkx) * ar, dy = dispDraw[o + 1] - dky;
+            float sg = (dx * dnx + dy * dny) >= 0f ? 1f : -1f;                      // the wrist is on the wrist side of the knuckle line
+            float wx = dkx + (sg * wpA[h] * dnx + wpB[h] * dux) * dwk / ar, wy = dky + (sg * wpA[h] * dny + wpB[h] * duy) * dwk;
+            dispDraw[o] += (wx - dispDraw[o]) * wgt; dispDraw[o + 1] += (wy - dispDraw[o + 1]) * wgt;
+        }
+    }
+
     private void predictNow(long now) {
         float[] r = cam.result;
         if (r != lastRes) {
@@ -1231,6 +1278,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 if (hnd >= 2 || !foh[hnd]) dispDraw[i] += dz(vel[i]) * dl * (skel >= 2 ? 0.95f : 0.7f);
             }
         }
+        if (wristPin) { try { wristPinStep(r, now); } catch (Throwable ignored) { } }
         if (predict && r[0] >= 1) {
             // from the moment of the newest picture that was followed (or of the model's picture) to the moment this frame is shown
             float leadF = Math.max(0, Math.min(now - cam.flowT + 18, 90)) / 1000f, leadM = Math.max(0, Math.min(now - handT + 18, 140)) / 1000f;
@@ -2631,22 +2679,39 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             }
             float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
             if (size < 1e-3f) continue;
-            float grow = Math.min(0.05f, handSpd * 0.05f);                 // a fast hand: the shape is a little wider, the points are older than the real hand
+            float grow = Math.min(0.03f, handSpd * 0.03f);                 // a fast hand: the shape is a little wider (the points are older than the real hand)
             aaBegin();
             for (int b2 = 0; b2 < BONES.length; b2 += 2) {
                 int p0 = BONES[b2], p1 = BONES[b2 + 1];
+                if (p0 == 0 && (p1 == 5 || p1 == 9 || p1 == 13 || p1 == 17)) continue;       // the palm is built below as one tapering shape, not as spokes from the wrist
+                if (p0 == 5 && p1 == 9 || p0 == 9 && p1 == 13 || p0 == 13 && p1 == 17) continue;
                 float x1 = X[p1], y1 = Y[p1];
                 if (p1 == 4 || p1 == 8 || p1 == 12 || p1 == 16 || p1 == 20) {      // the stroke reaches to the nail
                     float dx = x1 - X[p0], dy = y1 - Y[p0], l = (float) Math.hypot(dx, dy);
                     if (l > 1e-3f) { x1 += dx / l * 0.015f * size; y1 += dy / l * 0.015f * size; }
                 }
                 float wf = BONE_W[p1 < 21 ? p1 : 0];
-                aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * (wf + 0.012f + grow)));
+                if (p1 == 5 || p1 == 9 || p1 == 13 || p1 == 17) wf *= 0.75f;
+                aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * (wf * 0.93f + grow)));
             }
-            float wh = size * 0.085f;                                              // thumb root and the web to the index finger
+            // the palm: a shape that is narrow at the wrist and wide at the knuckles, made of a few cross strokes from the index side to the little finger side
+            {
+                float ux = X[17] - X[5], uy = Y[17] - Y[5], wk = (float) Math.hypot(ux, uy);
+                if (wk > 1e-3f) {
+                    ux /= wk; uy /= wk;
+                    float ex = 0.06f * size, hwW = 0.30f * wk;                 // the knuckle line sticks out a little at both ends; the wrist is about 0.6 of the knuckle width
+                    float ax = X[5] - ux * ex, ay = Y[5] - uy * ex, bx = X[17] + ux * ex, by = Y[17] + uy * ex;
+                    float wax = X[0] - ux * hwW, way = Y[0] - uy * hwW, wbx = X[0] + ux * hwW, wby = Y[0] + uy * hwW;
+                    float rh = Math.max(3f, size * (0.055f + grow));
+                    for (int q = 0; q <= 6; q++) {
+                        float t = q / 6f;
+                        aaSeg(wax + (ax - wax) * t, way + (ay - way) * t, wbx + (bx - wbx) * t, wby + (by - wby) * t, rh);
+                    }
+                }
+            }
+            float wh = size * 0.07f;                                               // thumb root and the web to the index finger
             aaSeg(X[0], Y[0], X[2], Y[2], wh); aaSeg(X[1], Y[1], X[5], Y[5], wh); aaSeg(X[2], Y[2], X[5], Y[5], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh * 0.8f);
             aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, X[5], Y[5], wh);
-            aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * 0.44f);   // the palm
             aaFlush(1f, 1f, 1f);
         }
         aaFade = savedFade;
