@@ -984,6 +984,18 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             " float e = max(line, glow);" +
             " float dk = 0.40*(1.0 - smoothstep(0.0, 0.16, abs(m-0.28)));" +
             " float fl = 0.0;" +
+            " if (gl > 1.5) {" +                                              // the soft ghost hand (as Meta advises: a light, slightly see-through fill that is brighter at the rim, a thin light outline, both melting away at the wrist)
+            "  float mw = texture2D(tex,uv).r*0.2 + (texture2D(tex,uv+vec2(7.,0.)*px).r + texture2D(tex,uv+vec2(-7.,0.)*px).r + texture2D(tex,uv+vec2(0.,7.)*px).r + texture2D(tex,uv+vec2(0.,-7.)*px).r + texture2D(tex,uv+vec2(5.,5.)*px).r + texture2D(tex,uv+vec2(-5.,5.)*px).r + texture2D(tex,uv+vec2(5.,-5.)*px).r + texture2D(tex,uv+vec2(-5.,-5.)*px).r)*0.1;" +
+            "  vec2 q2 = vec2(uv.x*hs.y, uv.y);" +
+            "  float f2 = hf(h0, q2); if (hs.z > 1.5) f2 = max(f2, hf(h1, q2));" +
+            "  float edge = 1.0 - smoothstep(0.55, 0.95, mw);" +
+            "  float ins2 = smoothstep(0.40, 0.62, m);" +
+            "  float fill = ins2*(0.10 + 0.24*edge);" +
+            "  float ln = (1.0 - smoothstep(0.04, 0.26, abs(m-0.5)))*0.85;" +
+            "  float outer = 0.22*smoothstep(0.0, 0.5, mw)*(1.0 - smoothstep(0.30, 0.50, m));" +
+            "  float a2 = max(max(fill, ln), outer)*(0.30 + 0.70*f2);" +
+            "  gl_FragColor = vec4(vec3(0.92,0.97,1.0)*a2, a2)*ha; return;" +
+            " }" +
             " if (gl > 0.5) {" +
             "  vec2 q = vec2(uv.x*hs.y, uv.y);" +
             "  float f = hf(h0, q); if (hs.z > 1.5) f = max(f, hf(h1, q));" +
@@ -997,7 +1009,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "attribute vec2 p; attribute vec4 q; varying vec4 vq; void main(){ gl_Position=vec4(p,0.,1.); vq=q; }",
             "precision mediump float; uniform vec3 col; uniform float sf; uniform float fade; varying vec4 vq;" +
             "void main(){ float t=clamp(vq.x,0.,vq.z); float d=length(vec2(vq.x-t,vq.y)); float al=clamp((1.-d)*vq.w/sf,0.,1.); gl_FragColor=vec4(col*al,al)*fade; }");
-        aaBuf = fb(6 * 6 * 60);
+        aaBuf = fb(6 * 6 * 100);
         triBuf = fb(4096);
         lutTex = 0; maskW = 0; maskFbo[0] = 0; maskTex[0] = 0; refFbo[0] = 0; refTex[0] = 0;
         progPanel = prog(
@@ -2683,35 +2695,35 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             aaBegin();
             for (int b2 = 0; b2 < BONES.length; b2 += 2) {
                 int p0 = BONES[b2], p1 = BONES[b2 + 1];
-                if (p0 == 0 && (p1 == 5 || p1 == 9 || p1 == 13 || p1 == 17)) continue;       // the palm is built below as one tapering shape, not as spokes from the wrist
-                if (p0 == 5 && p1 == 9 || p0 == 9 && p1 == 13 || p0 == 13 && p1 == 17) continue;
+                if (p0 == 0) continue;                                           // the wrist's spokes, the thumb's root: built below with the palm
+                if (p0 == 5 && p1 == 9 || p0 == 9 && p1 == 13 || p0 == 13 && p1 == 17) continue;   // the knuckle line: part of the palm
                 float x1 = X[p1], y1 = Y[p1];
                 if (p1 == 4 || p1 == 8 || p1 == 12 || p1 == 16 || p1 == 20) {      // the stroke reaches to the nail
                     float dx = x1 - X[p0], dy = y1 - Y[p0], l = (float) Math.hypot(dx, dy);
                     if (l > 1e-3f) { x1 += dx / l * 0.015f * size; y1 += dy / l * 0.015f * size; }
                 }
-                float wf = BONE_W[p1 < 21 ? p1 : 0];
-                if (p1 == 5 || p1 == 9 || p1 == 13 || p1 == 17) wf *= 0.75f;
-                aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * (wf * 0.93f + grow)));
+                aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * (BONE_W[p1 < 21 ? p1 : 0] * 0.93f + grow)));
             }
-            // the palm: a shape that is narrow at the wrist and wide at the knuckles, made of a few cross strokes from the index side to the little finger side
-            {
+            {   // the palm: narrow at the wrist, wide at the knuckles; many cross strokes that overlap (so it is solid), and two straight strokes for its sides
                 float ux = X[17] - X[5], uy = Y[17] - Y[5], wk = (float) Math.hypot(ux, uy);
                 if (wk > 1e-3f) {
                     ux /= wk; uy /= wk;
-                    float ex = 0.06f * size, hwW = 0.30f * wk;                 // the knuckle line sticks out a little at both ends; the wrist is about 0.6 of the knuckle width
+                    float ex = 0.05f * size, hwW = 0.30f * wk;
                     float ax = X[5] - ux * ex, ay = Y[5] - uy * ex, bx = X[17] + ux * ex, by = Y[17] + uy * ex;
                     float wax = X[0] - ux * hwW, way = Y[0] - uy * hwW, wbx = X[0] + ux * hwW, wby = Y[0] + uy * hwW;
-                    float rh = Math.max(3f, size * (0.055f + grow));
-                    for (int q = 0; q <= 6; q++) {
-                        float t = q / 6f;
+                    float rh = Math.max(3f, size * (0.10f + grow));
+                    for (int q = 0; q <= 16; q++) {
+                        float t = q / 16f;
                         aaSeg(wax + (ax - wax) * t, way + (ay - way) * t, wbx + (bx - wbx) * t, wby + (by - wby) * t, rh);
                     }
+                    aaSeg(wax, way, ax, ay, rh); aaSeg(wbx, wby, bx, by, rh);
+                    float wh = size * 0.09f, cx2 = (wax + ax) / 2f, cy2 = (way + ay) / 2f;       // the thumb's root and the web between thumb and index finger
+                    aaSeg(X[0], Y[0], X[2], Y[2], wh); aaSeg(X[1], Y[1], X[5], Y[5], wh * 1.4f); aaSeg(X[2], Y[2], X[5], Y[5], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh * 0.8f);
+                    aaSeg(X[0], Y[0], X[5], Y[5], wh); aaSeg(X[0], Y[0], X[1], Y[1], wh); aaSeg(X[1], Y[1], X[9], Y[9], wh);
+                    aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, X[5], Y[5], wh);
+                    aaSeg((X[1] + X[2]) / 2f, (Y[1] + Y[2]) / 2f, cx2, cy2, wh * 1.2f); aaSeg(X[2], Y[2], cx2, cy2, wh * 1.2f);
                 }
             }
-            float wh = size * 0.07f;                                               // thumb root and the web to the index finger
-            aaSeg(X[0], Y[0], X[2], Y[2], wh); aaSeg(X[1], Y[1], X[5], Y[5], wh); aaSeg(X[2], Y[2], X[5], Y[5], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh * 0.8f);
-            aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, X[5], Y[5], wh);
             aaFlush(1f, 1f, 1f);
         }
         aaFade = savedFade;
@@ -2767,7 +2779,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform4f(ul(progRing, "h0"), hu[0], hu[1], hu[2], hu[3]);
         GLES20.glUniform4f(ul(progRing, "h1"), hu[4], hu[5], hu[6], hu[7]);
         GLES20.glUniform3f(ul(progRing, "hs"), palmL * 1.15f, asp, n);
-        GLES20.glUniform1f(ul(progRing, "gl"), (skel == 2 || skel == 5) ? 1f : 0f);
+        GLES20.glUniform1f(ul(progRing, "gl"), skel == 5 ? 2f : (skel == 2 ? 1f : 0f));
         drawQuad(progRing);
         GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
         GLES20.glDisable(GLES20.GL_BLEND);
@@ -2938,7 +2950,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         final boolean hide3 = h3.mode > 0 && h3.hideCam;     // 3D mode: the camera's own outline / skeleton of the hand is not shown, the 3D hand is
         cam.noCut = hide3;                                    // ... and the heavy cutting of the hand out of the camera's pixels is not done at all
         if (skel >= 5 && !hide3) {
-            renderShapeMask(dispDraw);                              // the hand shape is drawn from the 21 model points alone: no camera pixels, so no lag from the cut-out and no mistakes when the room has the colour of the skin
+            try { renderShapeMask(dispDraw); } catch (Throwable ignored) { maskReady = false; }   // the hand shape is drawn from the 21 model points alone: no camera pixels, so no lag from the cut-out and no mistakes when the room has the colour of the skin
         } else if (skel >= 2 && skel <= 4 && !hide3) {
             renderMask(dispDraw);
             if (maskReady) {                                          // the same for every hand mode: the shape is checked against the skin colour of the camera picture, so it sticks to the real hand
