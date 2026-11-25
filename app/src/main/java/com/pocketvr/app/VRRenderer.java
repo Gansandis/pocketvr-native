@@ -36,7 +36,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private long lastScaleT = 0, lastFrameNs = 0;
     public volatile boolean predict = true;
     public volatile int envScene = 0;       // 0 = the camera picture, 1 = a made-up dusk city instead (a virtual room around you)
-    public volatile int skel = 1;           // 0 off, 1 skeleton, 2 glowing outline (like the web version)
+    public volatile int skel = 5;           // 0 off, 1 skeleton, 2 glass hand (camera cut-out), 3 glowing outline (camera cut-out), 4 real hand through, 5 glass hand from the model points only (no camera pixels), 6 glowing outline from the model points only
     public volatile float predMs = 0;
     public NvUi ui;
     private int progUi, uiTex = 0;
@@ -2608,6 +2608,50 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         return true;
     }
 
+    /** the hand shape for the outline made from the 21 model points alone (no camera pixels at all): thick bones + palm, drawn into the same texture the outline reads */
+    private void renderShapeMask(float[] r) {
+        maskReady = false;
+        int n = (int) r[0];
+        if (n <= 0 || sceneW == 0) return;
+        ensureMask();
+        maskReady = true;
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, refFbo[0]);
+        GLES20.glViewport(0, 0, maskW, maskH);
+        GLES20.glColorMask(true, true, true, true);
+        GLES20.glClearColor(0, 0, 0, 0);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        float hwS = sceneW / 2f, hhS = sceneH / 2f;
+        float savedFade = aaFade; aaFade = 1f;
+        for (int i = 0; i < n; i++) {
+            float[] X = ohX, Y = ohY;
+            for (int k = 0; k < 21; k++) {
+                float hx = r[1 + i * 63 + k * 3], hy = r[1 + i * 63 + k * 3 + 1];
+                if (rot180) { hx = 1f - hx; hy = 1f - hy; }
+                X[k] = (hx * 2f - 1f) * hwS * camScale; Y[k] = (1f - hy * 2f) * hhS * camScale;
+            }
+            float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
+            if (size < 1e-3f) continue;
+            float grow = Math.min(0.05f, handSpd * 0.05f);                 // a fast hand: the shape is a little wider, the points are older than the real hand
+            aaBegin();
+            for (int b2 = 0; b2 < BONES.length; b2 += 2) {
+                int p0 = BONES[b2], p1 = BONES[b2 + 1];
+                float x1 = X[p1], y1 = Y[p1];
+                if (p1 == 4 || p1 == 8 || p1 == 12 || p1 == 16 || p1 == 20) {      // the stroke reaches to the nail
+                    float dx = x1 - X[p0], dy = y1 - Y[p0], l = (float) Math.hypot(dx, dy);
+                    if (l > 1e-3f) { x1 += dx / l * 0.015f * size; y1 += dy / l * 0.015f * size; }
+                }
+                float wf = BONE_W[p1 < 21 ? p1 : 0];
+                aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * (wf + 0.012f + grow)));
+            }
+            float wh = size * 0.085f;                                              // thumb root and the web to the index finger
+            aaSeg(X[0], Y[0], X[2], Y[2], wh); aaSeg(X[1], Y[1], X[5], Y[5], wh); aaSeg(X[2], Y[2], X[5], Y[5], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh * 0.8f);
+            aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, X[5], Y[5], wh);
+            aaSeg(X[0] + (X[9] - X[0]) * 0.32f, Y[0] + (Y[9] - Y[0]) * 0.32f, X[0] + (X[9] - X[0]) * 0.78f, Y[0] + (Y[9] - Y[0]) * 0.78f, size * 0.44f);   // the palm
+            aaFlush(1f, 1f, 1f);
+        }
+        aaFade = savedFade;
+    }
+
     // step 2 of the outline: a thin line along the middle of the blurred mask, drawn on the scene picture
     private void drawOutline(float[] r) {
         int n = (int) r[0];
@@ -2658,7 +2702,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform4f(ul(progRing, "h0"), hu[0], hu[1], hu[2], hu[3]);
         GLES20.glUniform4f(ul(progRing, "h1"), hu[4], hu[5], hu[6], hu[7]);
         GLES20.glUniform3f(ul(progRing, "hs"), palmL * 1.15f, asp, n);
-        GLES20.glUniform1f(ul(progRing, "gl"), skel == 2 ? 1f : 0f);
+        GLES20.glUniform1f(ul(progRing, "gl"), (skel == 2 || skel == 5) ? 1f : 0f);
         drawQuad(progRing);
         GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
         GLES20.glDisable(GLES20.GL_BLEND);
@@ -2828,7 +2872,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         try { ilyUpdate(now); } catch (Throwable ignored) { ilyProg = 0f; }
         final boolean hide3 = h3.mode > 0 && h3.hideCam;     // 3D mode: the camera's own outline / skeleton of the hand is not shown, the 3D hand is
         cam.noCut = hide3;                                    // ... and the heavy cutting of the hand out of the camera's pixels is not done at all
-        if (skel >= 2 && !hide3) {
+        if (skel >= 5 && !hide3) {
+            renderShapeMask(dispDraw);                              // the hand shape is drawn from the 21 model points alone: no camera pixels, so no lag from the cut-out and no mistakes when the room has the colour of the skin
+        } else if (skel >= 2 && skel <= 4 && !hide3) {
             renderMask(dispDraw);
             if (maskReady) {                                          // the same for every hand mode: the shape is checked against the skin colour of the camera picture, so it sticks to the real hand
                 GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, refFbo[0]);
@@ -2887,7 +2933,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         if (!hide3) {
             if (skel == 4 && maskReady) drawCamera(true);
-            if (skel == 1) drawSkeleton(dispDraw); else if (skel == 2 || skel == 3) drawOutline(dispDraw);
+            if (skel == 1) drawSkeleton(dispDraw); else if (skel == 2 || skel == 3 || skel >= 5) drawOutline(dispDraw);
         }
         drawCursor();
 
