@@ -834,7 +834,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (dw.rot != null) { rebase(dw, sux, suy, suz); uprightAboutCentre(dw); }      // let go: it turns to look at where the eyes are now (same place in the room), and stays exactly like that
             dw.c.setDragging(false);
         }
-        dragWin = null; dragEdgeKind = 0;
+        dragWin = null; dragEdgeKind = 0; dragMoveOnly = false;
         resizing = false;
     }
 
@@ -1513,7 +1513,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (t <= 0) return 0;
         float lx = mInv[12] + t * (mInv[0] * dx + mInv[4] * dy + mInv[8] * dz), ly = mInv[13] + t * (mInv[1] * dx + mInv[5] * dy + mInv[9] * dz);
         float pw = w.widthM * w.scale * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
-        float hw = pw / 2f, hh = ph / 2f, band = 0.075f * pw, rc = 0.14f * Math.min(pw, ph);
+        float hw = pw / 2f, hh = ph / 2f, band = 0.10f * pw, rc = 0.14f * Math.min(pw, ph);
         float ax = Math.abs(lx), ay = Math.abs(ly);
         if (ax > hw + band || ay > hh + band) return 0;
         if (ax <= hw && ay <= hh) return 0;                      // inside the picture: that is for what the window shows
@@ -1691,10 +1691,13 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile boolean scrollPose = true, barAnchor = true;
     public volatile String scDbg = "", mnDbg = "";
     // v3.236: the rim of every window (like Quest 3): near it a line lights up; a straight edge = grab and move, a curved corner = pull to resize. Grab with a pinch or a fist.
+    // v3.239: while the fingers close on a pinch the pointer stays where it was a moment before (and only follows the hand moving, measured at the point between thumb and index), so it does not sway off the target
+    public volatile boolean pinchLatch = true;
+    private boolean latchOn = false; private float latchCx = 0f, latchCy = 0f, latchMx = 0f, latchMy = 0f, cLagX = 0f, cLagY = 0f, lastRF = 1f; private long latchOpenT = 0;
     public volatile int edgeGrab = 2;                       // 0 off, 1 pinch only, 2 pinch or fist
-    public volatile float winSize = 1.4f;                    // how big a window opens (1 = the old size)
+    public volatile float winSize = 1.2f;                    // how big a window opens (1 = the old size; v3.238: 1.4 was a little too big)
     private Win edgeWin = null, edgeShow = null; private int edgeKind = 0, edgeShowKind = 0, dragEdgeKind = 0; private float edgeAmt = 0f, edgeTgt = 0f;
-    private long edgeHovT = 0; private boolean fistGrabOn = false;
+    private long edgeHovT = 0, fistSeenT = 0; private boolean fistGrabOn = false, dragMoveOnly = false;
     private boolean scrollOn = false, scRaw = false, scLost = false, barNear = false; private long scSince = 0, scRawT = 0; private Win scrollWin = null;
     private long popT = 0; private float popX = 0f, popY = 0f; private boolean popOk = false;
     private void holdPop(float nx, float ny, boolean ok) { popT = System.currentTimeMillis(); popX = nx; popY = ny; popOk = ok; }
@@ -1916,7 +1919,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             // a short loss of the hand (detection blink) must not drop a grabbed window
             if (!(dragWin != null && nowMs - lostT < 700)) { pinching = false; prevPinch = false; endDrag(); }
             for (Win w : wins) if (shown(w)) { w.c.update(false, 0, 0, false); w.c.scroll(false, false, 0f, 0f); }
-            scrollOn = false; scRaw = false; scSince = 0; scrollWin = null; barNear = false; edgeWin = null; edgeKind = 0; edgeTgt = 0f; fistGrabOn = false;
+            scrollOn = false; scRaw = false; scSince = 0; scrollWin = null; barNear = false; edgeWin = null; edgeKind = 0; edgeTgt = 0f; fistGrabOn = false; latchOn = false;
             { NvGameWorld wd = world3; if (wd != null) wd.pointer(false, 0f, 0f, 0f, nowMs); }
             return;
         }
@@ -1980,9 +1983,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         if (menuGest == 0 && !prevPinch && dragWin == null && NvPoint.isFist(r, ar, 1.05f)) pinching = false;      // a tight fist is not a pinch (it only came from the thumb lying on the index finger)
         {   // v3.236: a fist also grabs the rim of a window (while the pointer is on it, or while a window that was taken by its rim is carried)
-            final boolean fistG = edgeGrab == 2 && !scRaw && !mpOn && NvPoint.isFist(r, ar, fistGrabOn ? 1.45f : 1.25f);
-            if (fistG && !pinching && (nowMs - edgeHovT < 250 || (dragWin != null && dragEdgeKind > 0))) { pinching = true; fistGrabOn = true; }
-            else if (!fistG) fistGrabOn = false;
+            // (easy to hold: a loosely curled hand counts, and a fist that flickers for a moment does not drop the window)
+            final boolean fistG = edgeGrab == 2 && !scRaw && !mpOn && NvPoint.isFist(r, ar, fistGrabOn ? 1.7f : 1.4f);
+            if (fistG) fistSeenT = nowMs;
+            if (!pinching && fistG && (nowMs - edgeHovT < 400 || (dragWin != null && dragEdgeKind > 0))) { pinching = true; fistGrabOn = true; }
+            else if (!pinching && dragMoveOnly && dragWin != null && nowMs - fistSeenT < 200) pinching = true;
+            else if (!fistG && !(dragMoveOnly && dragWin != null)) fistGrabOn = false;
         }
         if (pinching) lastPinchT = nowMs;
         {   // v3.234: two fingers up together = scroll (held for a moment; a short blink of the hand does not end it)
@@ -2087,13 +2093,27 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (scRaw) { hx = (tx + kx) * 0.5f; hy = (ty + ky) * 0.5f; }                      // scrolling: the pointer is between the two raised fingertips
         if (rot180) { hx = 1f - hx; hy = 1f - hy; }
         float nx = hx * 2f - 1f, ny = 1f - hy * 2f;
+        {   // v3.239: pinch latch
+            final float mhx0 = (tx + ax) * 0.5f, mhy0 = (ty + ay) * 0.5f;
+            final float mnx = (rot180 ? 1f - mhx0 : mhx0) * 2f - 1f, mny = 1f - (rot180 ? 1f - mhy0 : mhy0) * 2f;
+            final boolean eligible = pinchLatch && anc != 0 && curOk && !scRaw && !(pointMode > 0 && pt.pose);
+            final boolean closing = ratioF < 0.60f && ratioF < lastRF - 0.004f;
+            if (!latchOn) {
+                if (eligible && ratioF < 0.60f && (closing || pinching)) { latchOn = true; latchCx = cLagX; latchCy = cLagY; latchMx = mnx; latchMy = mny; latchOpenT = 0; }
+            } else if (!eligible) latchOn = false;
+            else if (!pinching && ratioF > 0.62f) { if (latchOpenT == 0) latchOpenT = nowMs; else if (nowMs - latchOpenT > 120) latchOn = false; }
+            else latchOpenT = 0;
+            lastRF = ratioF;
+            if (latchOn) { nx = latchCx + (mnx - latchMx); ny = latchCy + (mny - latchMy); }
+        }
         boolean hold = false;                                                  // (the pointer is never locked: it always follows the fingertip)
         if (!curOk) { cnx = nx; cny = ny; } else if (!hold) {
             // adaptive follow: a slow, shaky fingertip is calmed down, a quick one is followed almost exactly (sticks to the hand)
             float sp = (float) Math.hypot(nx - cnx, ny - cny);
-            float al = Math.max(0.50f, Math.min(0.95f, 0.50f + sp * 9f));      // the points are already steadied at the source, so this only needs to calm the last bit
+            float al = Math.max(0.40f, Math.min(0.95f, 0.40f + sp * 9f));      // the points are already steadied at the source, so this only needs to calm the last bit
             cnx += (nx - cnx) * al; cny += (ny - cny) * al;
         }
+        if (!curOk || !latchOn) { cLagX += (cnx - cLagX) * (curOk ? 0.25f : 1f); cLagY += (cny - cLagY) * (curOk ? 0.25f : 1f); }        // where the pointer was a little while ago (what the latch holds)
         curOk = true;
         if (dragWin != null) {
             dgT[dgI] = nowMs; dgX[dgI] = tnx; dgY[dgI] = tny; dgI = (dgI + 1) % DG_N; if (dgN < DG_N) dgN++;
@@ -2154,6 +2174,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (edgeKind >= 5) gripWin = edgeWin; else if (edgeKind >= 1) edgeMove = edgeWin;
         }
         if (edgeWin != null) edgeHovT = nowMs;
+        if (fistGrabOn && edgeWin != null && gripWin == edgeWin) { edgeMove = edgeWin; gripWin = null; }          // a fist only moves a window, it never resizes it (a corner taken with a fist is just a hold on the window)
         if (edgeWin != null) { edgeShow = edgeWin; edgeShowKind = edgeKind; edgeTgt = 1f; }
         else if (dragWin != null && dragEdgeKind > 0) { edgeShow = dragWin; edgeShowKind = dragEdgeKind; edgeTgt = 1f; }
         else edgeTgt = 0f;
@@ -2199,7 +2220,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         Win gwin = (target != null && target.c.handleRecent()) ? target : ((barWin != null && barReg == 6) ? barWin : edgeMove);
         if (gwin != null && pinching && !prevPinch) {      // grabbed the bar under a window
             if (motion != null && motion.enabled) rebase(gwin, sux, suy, suz);
-            dragWin = gwin; dragEdgeKind = gwin == edgeMove ? edgeKind : 0;
+            dragWin = gwin; dragEdgeKind = gwin == edgeMove ? edgeKind : 0; dragMoveOnly = fistGrabOn && gwin == edgeMove;
             dnx = tnx; dny = tny;
             float gy = (float) Math.toDegrees(Math.atan(dnx * tanHc)), gp = (float) Math.toDegrees(Math.atan(dny * tanVc));
             rayYaw = gy; rayPitch = gp;
@@ -2218,7 +2239,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float tg = Math.max(0.5f, Math.min(2.5f, dragWin.dragS0 * rd / rsD0));
             dragWin.scale += (tg - dragWin.scale) * 0.3f;
         }
-        if (dragWin != null && !resizing && pinching && nowMs - dragT0 > 180) {
+        if (dragWin != null && !resizing && pinching && !dragMoveOnly && nowMs - dragT0 > 180) {
             // push / pull: the hand coming closer to the camera brings the window closer, the hand going away pushes it away.
             // Small changes are ignored (soft dead zone) and it moves gently, so it does not stutter or run away.
             float lr = (float) Math.log(Math.max(1e-3f, sizeEma) / dragWin.dragSize0);
