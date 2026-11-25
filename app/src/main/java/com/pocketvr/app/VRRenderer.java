@@ -489,7 +489,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     private static final float OPEN_MAXW = 0.85f;               // a window opens at most this wide (metres at the standard distance): not too big for the view
     private static final float MAX_FRONT_YAW = 65f;              // a new window never goes further round than this: never to the side of you or behind you
-    private float openScale(Win w) { return Math.min(1f, OPEN_MAXW / Math.max(0.1f, w.widthM)); }
+    private float openScale(Win w) { return Math.min(1f, OPEN_MAXW / Math.max(0.1f, w.widthM)) * Math.max(0.5f, Math.min(2.2f, winSize)); }
 
     /**
      * A new window sits right next to the windows that are already up (not next to your body): flush against the right or left side of one of them,
@@ -545,7 +545,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         float[] rv = rotView; float wux = rv[8], wuy = rv[9], wuz = rv[10];            // the room's up, seen from the phone
         rowUx = wux; rowUy = wuy; rowUz = wuz;
         for (Win an : wins) if (an != w && an.anchor && shown(an) && an.rot != null && !an.placeReq) { float[] ua = upInView(an, rv); rowUx = ua[0]; rowUy = ua[1]; rowUz = ua[2]; break; }
-        final float gap = 0.8f;                                   // degrees between two windows
+        final float gap = 1.4f;                                   // degrees between two windows
         int cap = 4 * wins.size() + 4;
         float[][] cv = new float[cap][];
         float[] cy = new float[cap], cp = new float[cap], sY = new float[cap], sP = new float[cap];
@@ -834,7 +834,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (dw.rot != null) { rebase(dw, sux, suy, suz); uprightAboutCentre(dw); }      // let go: it turns to look at where the eyes are now (same place in the room), and stays exactly like that
             dw.c.setDragging(false);
         }
-        dragWin = null;
+        dragWin = null; dragEdgeKind = 0;
         resizing = false;
     }
 
@@ -1501,6 +1501,74 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         return true;
     }
 
+    /** v3.236: 1 left, 2 right, 3 top, 4 bottom side, 5 top-left, 6 top-right, 7 bottom-left, 8 bottom-right corner, 0 = the pointer is not on the outside rim of this window */
+    private int edgeHit(Win w, float nx, float ny) {
+        android.graphics.Bitmap bm = w.c.bitmap();
+        if (bm == null || bm.getWidth() <= 0) return 0;
+        float dx = nx * tanHc, dy = ny * tanVc, dz = -1f;
+        float[] mInv = w.inv;
+        float Dz = mInv[2] * dx + mInv[6] * dy + mInv[10] * dz;
+        if (Math.abs(Dz) < 1e-5f) return 0;
+        float t = -mInv[14] / Dz;
+        if (t <= 0) return 0;
+        float lx = mInv[12] + t * (mInv[0] * dx + mInv[4] * dy + mInv[8] * dz), ly = mInv[13] + t * (mInv[1] * dx + mInv[5] * dy + mInv[9] * dz);
+        float pw = w.widthM * w.scale * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
+        float hw = pw / 2f, hh = ph / 2f, band = 0.075f * pw, rc = 0.14f * Math.min(pw, ph);
+        float ax = Math.abs(lx), ay = Math.abs(ly);
+        if (ax > hw + band || ay > hh + band) return 0;
+        if (ax <= hw && ay <= hh) return 0;                      // inside the picture: that is for what the window shows
+        if (ax > hw - rc && ay > hh - rc) return ly > 0f ? (lx < 0f ? 5 : 6) : (lx < 0f ? 7 : 8);
+        if (ax > hw) return lx < 0f ? 1 : 2;
+        return ly > 0f ? 3 : 4;
+    }
+
+    // a point on a window (metres from its centre, x right, y up) -> the picture's pixels (centre = 0,0)
+    private boolean edgePt(Win w, float lx, float ly, float[] out) {
+        float[] in = {lx, ly, 0f, 1f}, v = new float[4];
+        android.opengl.Matrix.multiplyMV(v, 0, w.mv, 0, in, 0);
+        if (v[2] > -0.05f) return false;
+        out[0] = v[0] / (-v[2]) / tanHc * sceneW / 2f * camScale;
+        out[1] = v[1] / (-v[2]) / tanVc * sceneH / 2f * camScale;
+        return true;
+    }
+
+    /** v3.236: the lit line along the rim the pointer is near: straight along a side, curved round a corner */
+    private void drawEdgeGlow() {
+        edgeAmt += (edgeTgt - edgeAmt) * 0.35f;
+        final Win w = edgeShow;
+        if (w == null) return;
+        if (edgeAmt < 0.03f) { if (edgeTgt == 0f) edgeShow = null; return; }
+        android.graphics.Bitmap bm = w.c.bitmap();
+        if (bm == null || bm.getWidth() <= 0 || !shown(w)) return;
+        final float pw = w.widthM * w.scale * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
+        final float hw = pw / 2f, hh = ph / 2f, g = 0.02f * pw, ins = 0.05f * pw, ra = 0.05f * pw;
+        final java.util.ArrayList<float[]> pts = new java.util.ArrayList<>();
+        final int k = edgeShowKind;
+        if (k == 1 || k == 2) { float x = (k == 1 ? -1f : 1f) * (hw + g); pts.add(new float[]{x, -hh + ins}); pts.add(new float[]{x, hh - ins}); }
+        else if (k == 3 || k == 4) { float y = (k == 3 ? 1f : -1f) * (hh + g); pts.add(new float[]{-hw + ins, y}); pts.add(new float[]{hw - ins, y}); }
+        else if (k >= 5) {
+            final float sx = (k == 5 || k == 7) ? -1f : 1f, sy = (k == 5 || k == 6) ? 1f : -1f;
+            final float R = g + ra;
+            for (int i = 0; i <= 10; i++) {
+                double a = Math.PI / 2.0 * i / 10.0;                                    // a quarter of a circle round the corner, centred on the corner itself
+                pts.add(new float[]{sx * (hw + (float) Math.cos(a) * R), sy * (hh + (float) Math.sin(a) * R)});
+            }
+        }
+        if (pts.size() < 2) return;
+        final float[] a0 = new float[2], a1 = new float[2];
+        final float u = sceneH / 540f, bright = dragEdgeKind > 0 && dragWin == w ? 1f : 0.85f;
+        for (int pass = 0; pass < 2; pass++) {
+            aaFade = (pass == 0 ? 0.25f : 0.95f * bright) * edgeAmt;
+            aaBegin();
+            for (int i = 0; i + 1 < pts.size(); i++) {
+                if (!edgePt(w, pts.get(i)[0], pts.get(i)[1], a0) || !edgePt(w, pts.get(i + 1)[0], pts.get(i + 1)[1], a1)) continue;
+                aaSeg(a0[0], a0[1], a1[0], a1[1], (pass == 0 ? 7f : 2.2f) * u);
+            }
+            if (pass == 0) aaFlush(0.75f, 0.9f, 1f); else aaFlush(1f, 1f, 1f);
+        }
+        aaFade = 1f;
+    }
+
     /** v3.235: the pointer has gone off the window (a few pixels of room are allowed) */
     private boolean scrollOut(Win w) {
         android.graphics.Bitmap bm = w.c.bitmap();
@@ -1622,6 +1690,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // v3.234: two fingers up together (index + middle, the other two folded) = scroll; and near the bar under a window the pointer sits between thumb and index
     public volatile boolean scrollPose = true, barAnchor = true;
     public volatile String scDbg = "", mnDbg = "";
+    // v3.236: the rim of every window (like Quest 3): near it a line lights up; a straight edge = grab and move, a curved corner = pull to resize. Grab with a pinch or a fist.
+    public volatile int edgeGrab = 2;                       // 0 off, 1 pinch only, 2 pinch or fist
+    public volatile float winSize = 1.4f;                    // how big a window opens (1 = the old size)
+    private Win edgeWin = null, edgeShow = null; private int edgeKind = 0, edgeShowKind = 0, dragEdgeKind = 0; private float edgeAmt = 0f, edgeTgt = 0f;
+    private long edgeHovT = 0; private boolean fistGrabOn = false;
     private boolean scrollOn = false, scRaw = false, scLost = false, barNear = false; private long scSince = 0, scRawT = 0; private Win scrollWin = null;
     private long popT = 0; private float popX = 0f, popY = 0f; private boolean popOk = false;
     private void holdPop(float nx, float ny, boolean ok) { popT = System.currentTimeMillis(); popX = nx; popY = ny; popOk = ok; }
@@ -1843,7 +1916,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             // a short loss of the hand (detection blink) must not drop a grabbed window
             if (!(dragWin != null && nowMs - lostT < 700)) { pinching = false; prevPinch = false; endDrag(); }
             for (Win w : wins) if (shown(w)) { w.c.update(false, 0, 0, false); w.c.scroll(false, false, 0f, 0f); }
-            scrollOn = false; scRaw = false; scSince = 0; scrollWin = null; barNear = false;
+            scrollOn = false; scRaw = false; scSince = 0; scrollWin = null; barNear = false; edgeWin = null; edgeKind = 0; edgeTgt = 0f; fistGrabOn = false;
             { NvGameWorld wd = world3; if (wd != null) wd.pointer(false, 0f, 0f, 0f, nowMs); }
             return;
         }
@@ -1906,6 +1979,11 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             else offSince = 0;
         }
         if (menuGest == 0 && !prevPinch && dragWin == null && NvPoint.isFist(r, ar, 1.05f)) pinching = false;      // a tight fist is not a pinch (it only came from the thumb lying on the index finger)
+        {   // v3.236: a fist also grabs the rim of a window (while the pointer is on it, or while a window that was taken by its rim is carried)
+            final boolean fistG = edgeGrab == 2 && !scRaw && !mpOn && NvPoint.isFist(r, ar, fistGrabOn ? 1.45f : 1.25f);
+            if (fistG && !pinching && (nowMs - edgeHovT < 250 || (dragWin != null && dragEdgeKind > 0))) { pinching = true; fistGrabOn = true; }
+            else if (!fistG) fistGrabOn = false;
+        }
         if (pinching) lastPinchT = nowMs;
         {   // v3.234: two fingers up together = scroll (held for a moment; a short blink of the hand does not end it)
             final float f8 = NvPoint.fold(r, 8, 5, ar), f12 = NvPoint.fold(r, 12, 9, ar), f16 = NvPoint.fold(r, 16, 13, ar), f20 = NvPoint.fold(r, 20, 17, ar);
@@ -2064,6 +2142,21 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 if (w.c.covers(o[0], o[1])) { target = w; break; }
             }
         }
+        // v3.236: the rim of a window: nothing else under the pointer, so see if it is just outside a window's edge (side = move) or corner (resize)
+        Win edgeMove = null; edgeWin = null; edgeKind = 0;
+        if (edgeGrab > 0 && dragWin == null && !mpOn && target == null && gripWin == null && barWin == null && !scRaw && !gameUp()) {
+            for (int i = wins.size() - 1; i >= 0; i--) {
+                Win w = wins.get(i);
+                if (!shown(w) || w.ghost || w.game || w.noBar) continue;
+                int k = edgeHit(w, cnx, cny);
+                if (k > 0) { edgeWin = w; edgeKind = k; break; }
+            }
+            if (edgeKind >= 5) gripWin = edgeWin; else if (edgeKind >= 1) edgeMove = edgeWin;
+        }
+        if (edgeWin != null) edgeHovT = nowMs;
+        if (edgeWin != null) { edgeShow = edgeWin; edgeShowKind = edgeKind; edgeTgt = 1f; }
+        else if (dragWin != null && dragEdgeKind > 0) { edgeShow = dragWin; edgeShowKind = dragEdgeKind; edgeTgt = 1f; }
+        else edgeTgt = 0f;
         barHovWin = barWin; barHovIdx = barWin != null ? barReg : -1;
         if (scrollOn) {
             // the scroll belongs to the window the pointer was on when it began; once the pointer leaves it, the scroll is over for good (the pose has to be let go of and made again)
@@ -2095,7 +2188,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         }
         if (gripWin != null && pinching && !prevPinch) {
             if (motion != null && motion.enabled) rebase(gripWin, sux, suy, suz);
-            dragWin = gripWin; resizing = true;
+            dragWin = gripWin; resizing = true; dragEdgeKind = edgeWin == gripWin ? edgeKind : 0;
             dnx = tnx; dny = tny;
             rayYaw = (float) Math.toDegrees(Math.atan(dnx * tanHc)); rayPitch = (float) Math.toDegrees(Math.atan(dny * tanVc));
             rsD0 = Math.max(3f, (float) Math.hypot(rayYaw - gripWin.yawA, rayPitch - gripWin.pitchA));
@@ -2103,10 +2196,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             gripWin.c.setDragging(true);
             wins.remove(gripWin); wins.add(gripWin);
         }
-        Win gwin = (target != null && target.c.handleRecent()) ? target : ((barWin != null && barReg == 6) ? barWin : null);
+        Win gwin = (target != null && target.c.handleRecent()) ? target : ((barWin != null && barReg == 6) ? barWin : edgeMove);
         if (gwin != null && pinching && !prevPinch) {      // grabbed the bar under a window
             if (motion != null && motion.enabled) rebase(gwin, sux, suy, suz);
-            dragWin = gwin;
+            dragWin = gwin; dragEdgeKind = gwin == edgeMove ? edgeKind : 0;
             dnx = tnx; dny = tny;
             float gy = (float) Math.toDegrees(Math.atan(dnx * tanHc)), gp = (float) Math.toDegrees(Math.atan(dny * tanVc));
             rayYaw = gy; rayPitch = gp;
@@ -2150,6 +2243,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     private void drawCursor() {
         float u = sceneH / 540f;
+        drawEdgeGlow();
         // a small glass badge with three bars, one above the other, that light up from the top down while a gesture is held
         // (menu: thumb + middle finger; layout reset: OK sign). When all three are lit the badge pops and fades.
         drawPalmMenu();
