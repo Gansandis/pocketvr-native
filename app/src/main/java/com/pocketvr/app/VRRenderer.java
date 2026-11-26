@@ -198,6 +198,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile String ptDbg = "";
     private long ptDbgT = 0, lastPtClickT = 0;
     private float pkProg = 0;
+    // v3.249: the pointer's own animation (before / while / after a click)
+    private boolean cWasPress = false; private long cPressT = 0, cRelT = 0; private float cHov = 0f, cAppr = 0f;
     private boolean pkOn = false;
     private float handSpd = 0, lastTx = 0, lastTy = 0;
     private float[] lastRef = null;
@@ -2350,7 +2352,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float k = pa0 / 380f;
             drawHold(popX, popY, 1f, popOk, 1f + 0.55f * (1f - (1f - k) * (1f - k)), 1f - k);
         }
-        if (!curOk || !anyVisible()) return;
+        if (!curOk || !anyVisible()) { cWasPress = false; cHov = 0f; cAppr = 0f; return; }
         float x = cnx * sceneW / 2f * camScale, y = cny * sceneH / 2f * camScale;
         // small and faint so it does not cover what you are pointing at. Like on Quest: the ring tightens as the fingers close,
         // the dot grows, and a soft ripple spreads from the point where the pinch landed.
@@ -2367,13 +2369,44 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             aaSeg(rx, ry, rx, ry, ro[cs] * (0.9f + 2.6f * e) * u);
             aaFlush(1f, 1f, 1f);
         }
+        // ---- v3.249: the pointer's animation. BEFORE a click: over something that can be clicked a soft halo breathes, and as the click gets near (the finger pushes in / the fingers close)
+        //      a thin ring fills round the pointer. WHILE it is pressed: the pointer squeezes in and the dot swells. AFTER: a crisp ring bursts out, then a green ring closes back in ("done"), and the pointer springs back.
+        final long nowC = System.currentTimeMillis();
+        final boolean pvNow = pinching || pkOn;
+        if (pvNow && !cWasPress) cPressT = nowC; else if (!pvNow && cWasPress) cRelT = nowC;
+        cWasPress = pvNow;
+        cHov += (((hovT != 0 && nowC - hovT < 220) ? 1f : 0f) - cHov) * 0.25f;
+        cAppr += ((pvNow ? 0f : Math.max(pkProg, Math.min(1f, pinchAmt / 0.85f))) - cAppr) * 0.4f;
+        if (cHov > 0.03f && !pvNow) {
+            float br = 0.5f + 0.5f * (float) Math.sin(nowC / 170.0);
+            aaFade = (0.16f + 0.12f * br) * cHov;
+            aaBegin(); aaSeg(x, y, x, y, ro[cs] * (1.5f + 0.18f * br) * u); aaFlush(0.55f, 0.9f, 1f);
+        }
+        if (cAppr > 0.06f && !pvNow) {
+            aaFade = 0.22f; aaBegin(); aaArc(x, y, ro[cs] * 1.85f * u, 0f, 1f, 1.5f * u); aaFlush(1f, 1f, 1f);
+            aaFade = 0.95f; aaBegin(); aaArc(x, y, ro[cs] * 1.85f * u, 0f, Math.min(1f, cAppr), 2.1f * u); aaFlush(1f, 1f, 1f);
+        }
+        final long landAge = nowC - cPressT;
+        float dotBoost = 1f;
+        if (cPressT != 0 && landAge >= 0 && landAge < 260) {
+            float k = landAge / 260f, e = 1f - (1f - k) * (1f - k);
+            aaFade = 0.9f * (1f - k); aaBegin(); aaArc(x, y, ro[cs] * (1.1f + 2.4f * e) * u, 0f, 1f, (0.7f + 1.8f * (1f - k)) * u); aaFlush(1f, 1f, 1f);
+            if (landAge < 200) dotBoost = 1f + 0.9f * (1f - landAge / 200f);
+        }
+        final long relAge = nowC - cRelT;
+        float spring = 1f;
+        if (cRelT != 0 && relAge >= 0 && relAge < 320 && !pvNow) {
+            float k = relAge / 320f;
+            spring = 1f + 0.30f * (float) Math.sin(k * Math.PI) * (1f - k);
+            aaFade = 0.7f * (1f - k); aaBegin(); aaArc(x, y, ro[cs] * (2.4f - 1.3f * k) * u, 0f, 1f, 2.0f * u); aaFlush(0.4f, 1f, 0.6f);
+        }
         aaFade = fo[cs];
         aaBegin();
-        aaSeg(x, y, x, y, ro[cs] * (1f - 0.42f * pa) * (1f - 0.2f * pkProg) * u);
+        aaSeg(x, y, x, y, ro[cs] * (1f - 0.42f * pa) * (1f - 0.2f * pkProg) * spring * u);
         if (gripHot) aaFlush(0.13f, 0.72f, 0.81f); else aaFlush(0.55f + 0.45f * pa, 0.9f - 0.35f * pa, 1f - pa);
         aaFade = Math.min(1f, fo[cs] + 0.2f);
         aaBegin();
-        aaSeg(x, y, x, y, ri[cs] * (1f + 0.6f * pa) * u);
+        aaSeg(x, y, x, y, ri[cs] * (1f + 0.6f * pa) * dotBoost * u);
         aaFlush(1f, 1f, 1f);
         aaFade = 1f;
     }
