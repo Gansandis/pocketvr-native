@@ -1590,11 +1590,12 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (t <= 0) return 0;
         float lx = mInv[12] + t * (mInv[0] * dx + mInv[4] * dy + mInv[8] * dz), ly = mInv[13] + t * (mInv[1] * dx + mInv[5] * dy + mInv[9] * dz);
         float pw = w.widthM * w.scale * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
-        float hw = pw / 2f, hh = ph / 2f, band = 0.10f * pw, bandS = 0.20f * pw, rc = 0.11f * Math.min(pw, ph);   // v3.245: the left and right rims have a wider hit band (twice) and a shorter corner, so the side line is longer
+        float hw = pw / 2f, hh = ph / 2f, band = 0.10f * pw, bandS = 0.38f * pw, ovh = 0.16f * pw, rc = 0.11f * Math.min(pw, ph);   // v3.251: the left and right rims: a hit band almost 4 times wider than the top and bottom ones, and it runs on past the corners (the lit line does too)
         float ax = Math.abs(lx), ay = Math.abs(ly);
-        if (ax > hw + bandS || ay > hh + band) return 0;
-        if (ax > hw + band && ay > hh - rc) return 0;                  // far off to the side beyond a corner: not a side
+        if (ax > hw + bandS || ay > hh + ovh) return 0;
         if (ax <= hw && ay <= hh) return 0;                      // inside the picture: that is for what the window shows
+        if (ax > hw + 0.05f * pw) return lx < 0f ? 1 : 2;        // clearly beside the window (even level with or above a corner): a side
+        if (ay > hh + band) return 0;
         if (ax > hw - rc && ay > hh - rc) return ly > 0f ? (lx < 0f ? 5 : 6) : (lx < 0f ? 7 : 8);
         if (ax > hw) return lx < 0f ? 1 : 2;
         return ly > 0f ? 3 : 4;
@@ -1619,10 +1620,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         android.graphics.Bitmap bm = w.c.bitmap();
         if (bm == null || bm.getWidth() <= 0 || !shown(w)) return;
         final float pw = w.widthM * w.scale * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
-        final float hw = pw / 2f, hh = ph / 2f, g = 0.02f * pw, ins = 0.05f * pw, insS = 0.0f, ra = 0.05f * pw;
+        final float hw = pw / 2f, hh = ph / 2f, g = 0.02f * pw, gS = 0.035f * pw, ins = 0.05f * pw, insS = -0.14f * pw, ra = 0.05f * pw;
         final java.util.ArrayList<float[]> pts = new java.util.ArrayList<>();
         final int k = edgeShowKind;
-        if (k == 1 || k == 2) { float x = (k == 1 ? -1f : 1f) * (hw + g); pts.add(new float[]{x, -hh + insS}); pts.add(new float[]{x, hh - insS}); }
+        if (k == 1 || k == 2) { float x = (k == 1 ? -1f : 1f) * (hw + gS); pts.add(new float[]{x, -hh + insS}); pts.add(new float[]{x, hh - insS}); }
         else if (k == 3 || k == 4) { float y = (k == 3 ? 1f : -1f) * (hh + g); pts.add(new float[]{-hw + ins, y}); pts.add(new float[]{hw - ins, y}); }
         else if (k >= 5) {
             final float sx = (k == 5 || k == 7) ? -1f : 1f, sy = (k == 5 || k == 6) ? 1f : -1f;
@@ -1640,7 +1641,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             aaBegin();
             for (int i = 0; i + 1 < pts.size(); i++) {
                 if (!edgePt(w, pts.get(i)[0], pts.get(i)[1], a0) || !edgePt(w, pts.get(i + 1)[0], pts.get(i + 1)[1], a1)) continue;
-                aaSeg(a0[0], a0[1], a1[0], a1[1], (pass == 0 ? 7f : 2.2f) * u);
+                aaSeg(a0[0], a0[1], a1[0], a1[1], (pass == 0 ? (k == 1 || k == 2 ? 9f : 7f) : (k == 1 || k == 2 ? 2.8f : 2.2f)) * u);
             }
             if (pass == 0) aaFlush(0.75f, 0.9f, 1f); else aaFlush(1f, 1f, 1f);
         }
