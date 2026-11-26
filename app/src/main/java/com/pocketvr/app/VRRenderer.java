@@ -1777,6 +1777,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile float winSize = 1.2f;                    // how big a window opens (1 = the old size; v3.238: 1.4 was a little too big)
     private Win edgeWin = null, edgeShow = null; private int edgeKind = 0, edgeShowKind = 0, dragEdgeKind = 0; private float edgeAmt = 0f, edgeTgt = 0f;
     private long edgeHovT = 0, fistSeenT = 0; private boolean fistGrabOn = false, dragMoveOnly = false;
+    private boolean scPoseRecent = false;       // v3.252: the two-finger pose was seen a moment ago (also after the scroll was lost by leaving the window): no new click or grab may start from it
     private boolean scrollOn = false, scRaw = false, scLost = false, barNear = false; private long scSince = 0, scRawT = 0; private Win scrollWin = null;
     private long popT = 0; private float popX = 0f, popY = 0f; private boolean popOk = false;
     private void holdPop(float nx, float ny, boolean ok) { popT = System.currentTimeMillis(); popX = nx; popY = ny; popOk = ok; }
@@ -2040,7 +2041,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (swRate > swayRate || handSpd > swaySpd) swayT = nowMs;
             swDbg = swayGate ? String.format(java.util.Locale.US, "โบกมือ: หมุน %.1f/%.1f rad/s ปลายนิ้ว %.1f/%.1f %s", swRate, swayRate, handSpd, swaySpd, nowMs - swayT < 150 ? "→ กันคลิก" : "") : "";
         }
-        final boolean swaying = swayGate && nowMs - swayT < 150;
+        final boolean swaying = (swayGate && nowMs - swayT < 150) || scPoseRecent;
         // v3.233: the pointer has been on something clickable a moment ago (set further down, each picture), and the hand is not in the pointing pose (that one has its own click)
         final boolean relHov = relShrink > 0.01f && nowMs - hovT < 200 && dragWin == null && !(pointMode > 0 && pt.pose) && !scRaw;
         final float relDt = relLastT == 0 ? 0.03f : Math.max(0.001f, Math.min(0.2f, (nowMs - relLastT) / 1000f));
@@ -2079,7 +2080,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (menuGest == 0 && !prevPinch && dragWin == null && NvPoint.isFist(r, ar, 1.05f)) pinching = false;      // a tight fist is not a pinch (it only came from the thumb lying on the index finger)
         {   // v3.236: a fist also grabs the rim of a window (while the pointer is on it, or while a window that was taken by its rim is carried)
             // (easy to hold: a loosely curled hand counts, and a fist that flickers for a moment does not drop the window)
-            final boolean fistG = edgeGrab >= 1 && !scRaw && !mpOn && NvPoint.isFist(r, ar, fistGrabOn ? 1.7f : 1.4f);
+            final boolean fistG = edgeGrab >= 1 && !scRaw && !scPoseRecent && !mpOn && NvPoint.isFist(r, ar, fistGrabOn ? 1.7f : 1.4f);
             if (fistG) fistSeenT = nowMs;
             if (!pinching && fistG && (nowMs - edgeHovT < 400 || (dragWin != null && dragEdgeKind > 0))) { pinching = true; fistGrabOn = true; }
             else if (!pinching && dragMoveOnly && dragWin != null && nowMs - fistSeenT < 200) pinching = true;
@@ -2092,6 +2093,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             final boolean raw = scrollPose && !pinching && !prevPinch && dragWin == null && !mpOn && !gameUp() && pmFade < 0.05f
                     && f8 > 1.4f && f12 > 1.4f && f16 < 1.2f && f20 < 1.2f && gap2 < 0.45f;
             if (raw) { scRawT = nowMs; if (scSince == 0) scSince = nowMs; } else if (nowMs - scRawT > 250) { scSince = 0; scLost = false; }          // the pose must be let go of before a lost scroll can begin again (no ghost scrolling)
+            scPoseRecent = nowMs - scRawT < 300 && scRawT != 0;
             final boolean was = scrollOn;
             scrollOn = !scLost && scSince != 0 && nowMs - scSince >= 150 && nowMs - scRawT <= 200;
             scRaw = (raw && !scLost) || scrollOn;

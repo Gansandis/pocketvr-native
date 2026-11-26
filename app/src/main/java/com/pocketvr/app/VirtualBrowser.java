@@ -60,6 +60,7 @@ public class VirtualBrowser {
     private long lastFrame = 0, downTime = 0;
     private int w = 1280, h = 720;
     private boolean desktop = false;
+    public static volatile String dbg = "";
     private static final String DESKTOP_UA = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
     public VirtualBrowser(Activity a) { act = a; }
@@ -152,7 +153,33 @@ public class VirtualBrowser {
         CookieManager.getInstance().setAcceptCookie(true);
         CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true);
         applyUa(wv);
-        wv.setWebViewClient(new WebViewClient());        // links stay inside this browser
+        wv.setWebViewClient(new WebViewClient() {        // links stay inside this browser
+            // v3.252: what goes wrong is written to the screen's number list, and a page whose process was killed (little memory) is opened again instead of staying blank or broken
+            @Override public void onReceivedError(WebView v, android.webkit.WebResourceRequest rq, android.webkit.WebResourceError er) {
+                try { if (rq.isForMainFrame()) dbg = "เว็บ: ผิดพลาด " + er.getErrorCode() + " " + er.getDescription(); } catch (Throwable ignored) { }
+            }
+            @Override public void onReceivedHttpError(WebView v, android.webkit.WebResourceRequest rq, android.webkit.WebResourceResponse rs) {
+                try {
+                    String h = rq.getUrl().getHost();
+                    if (rq.isForMainFrame() || (h != null && h.contains("googlevideo"))) dbg = "เว็บ: HTTP " + rs.getStatusCode() + " " + h + " @" + new java.text.SimpleDateFormat("HH:mm:ss", java.util.Locale.US).format(new java.util.Date());
+                } catch (Throwable ignored) { }
+            }
+            @Override public boolean onRenderProcessGone(WebView v, android.webkit.RenderProcessGoneDetail d) {
+                try {
+                    dbg = "เว็บ: ตัวเรนเดอร์หยุด (" + (d.didCrash() ? "พัง" : "ระบบปิดเพราะแรมไม่พอ") + ") เปิดหน้าใหม่ให้";
+                    final String u = v.getUrl();
+                    int i = tabs.indexOf(v);
+                    if (i >= 0 && root != null) {
+                        root.removeView(v); v.destroy();
+                        WebView nv = makeWeb();
+                        tabs.set(i, nv);
+                        showTab(cur);
+                        if (u != null && !u.isEmpty()) nv.loadUrl(u);
+                    }
+                } catch (Throwable ignored) { }
+                return true;
+            }
+        });
         wv.setWebChromeClient(new WebChromeClient() {
             // the video's own "full screen" button (YouTube and others): the video fills this browser window
             @Override public void onShowCustomView(View v, CustomViewCallback c) {
