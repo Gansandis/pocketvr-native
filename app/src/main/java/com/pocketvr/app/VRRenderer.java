@@ -978,8 +978,6 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "float hf(vec4 h, vec2 q){ vec2 d=q-h.xy; float t=dot(d,h.zw); float L=hs.x; return smoothstep(-0.30*L,0.40*L,t)*(1.0-smoothstep(2.2*L,3.4*L,length(d))); }" +
             // the same for the neon line: the forearm is kept (the line runs on down the arm, and melts away only about one palm below the wrist)
             "float hf2(vec4 h, vec2 q){ vec2 d=q-h.xy; float t=dot(d,h.zw); float L=hs.x; return smoothstep(-1.15*L,-0.75*L,t)*(1.0-smoothstep(2.2*L,3.4*L,length(d))); }" +
-            // the same for the neon line: the forearm is kept (the line runs on down the arm and melts away about one palm below the wrist)
-            "float hf2(vec4 h, vec2 q){ vec2 d=q-h.xy; float t=dot(d,h.zw); float L=hs.x; return smoothstep(-1.15*L,-0.75*L,t)*(1.0-smoothstep(2.2*L,3.4*L,length(d))); }" +
             "void main(){" +
             " float m = s(0.,0.)*0.25 + (s(1.,0.)+s(-1.,0.)+s(0.,1.)+s(0.,-1.))*0.125 + (s(1.,1.)+s(-1.,1.)+s(1.,-1.)+s(-1.,-1.))*0.0625;" +
             " float w = (s(3.,0.)+s(-3.,0.)+s(0.,3.)+s(0.,-3.))*0.25;" +
