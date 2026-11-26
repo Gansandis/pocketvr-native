@@ -1573,9 +1573,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (t <= 0) return 0;
         float lx = mInv[12] + t * (mInv[0] * dx + mInv[4] * dy + mInv[8] * dz), ly = mInv[13] + t * (mInv[1] * dx + mInv[5] * dy + mInv[9] * dz);
         float pw = w.widthM * w.scale * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
-        float hw = pw / 2f, hh = ph / 2f, band = 0.10f * pw, rc = 0.14f * Math.min(pw, ph);
+        float hw = pw / 2f, hh = ph / 2f, band = 0.10f * pw, bandS = 0.20f * pw, rc = 0.11f * Math.min(pw, ph);   // v3.245: the left and right rims have a wider hit band (twice) and a shorter corner, so the side line is longer
         float ax = Math.abs(lx), ay = Math.abs(ly);
-        if (ax > hw + band || ay > hh + band) return 0;
+        if (ax > hw + bandS || ay > hh + band) return 0;
+        if (ax > hw + band && ay > hh - rc) return 0;                  // far off to the side beyond a corner: not a side
         if (ax <= hw && ay <= hh) return 0;                      // inside the picture: that is for what the window shows
         if (ax > hw - rc && ay > hh - rc) return ly > 0f ? (lx < 0f ? 5 : 6) : (lx < 0f ? 7 : 8);
         if (ax > hw) return lx < 0f ? 1 : 2;
@@ -1601,10 +1602,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         android.graphics.Bitmap bm = w.c.bitmap();
         if (bm == null || bm.getWidth() <= 0 || !shown(w)) return;
         final float pw = w.widthM * w.scale * winZoom, ph = pw * bm.getHeight() / bm.getWidth();
-        final float hw = pw / 2f, hh = ph / 2f, g = 0.02f * pw, ins = 0.05f * pw, ra = 0.05f * pw;
+        final float hw = pw / 2f, hh = ph / 2f, g = 0.02f * pw, ins = 0.05f * pw, insS = 0.0f, ra = 0.05f * pw;
         final java.util.ArrayList<float[]> pts = new java.util.ArrayList<>();
         final int k = edgeShowKind;
-        if (k == 1 || k == 2) { float x = (k == 1 ? -1f : 1f) * (hw + g); pts.add(new float[]{x, -hh + ins}); pts.add(new float[]{x, hh - ins}); }
+        if (k == 1 || k == 2) { float x = (k == 1 ? -1f : 1f) * (hw + g); pts.add(new float[]{x, -hh + insS}); pts.add(new float[]{x, hh - insS}); }
         else if (k == 3 || k == 4) { float y = (k == 3 ? 1f : -1f) * (hh + g); pts.add(new float[]{-hw + ins, y}); pts.add(new float[]{hw - ins, y}); }
         else if (k >= 5) {
             final float sx = (k == 5 || k == 7) ? -1f : 1f, sy = (k == 5 || k == 6) ? 1f : -1f;
@@ -1754,7 +1755,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // v3.239: while the fingers close on a pinch the pointer stays where it was a moment before (and only follows the hand moving, measured at the point between thumb and index), so it does not sway off the target
     public volatile boolean pinchLatch = true;
     private boolean latchOn = false; private float latchCx = 0f, latchCy = 0f, latchMx = 0f, latchMy = 0f, cLagX = 0f, cLagY = 0f, lastRF = 1f; private long latchOpenT = 0;
-    public volatile int edgeGrab = 2;                       // 0 off, 1 pinch only, 2 pinch or fist
+    public volatile int edgeGrab = 1;                       // 0 off, 1 fist only (v3.246), 2 pinch or fist
     public volatile float winSize = 1.2f;                    // how big a window opens (1 = the old size; v3.238: 1.4 was a little too big)
     private Win edgeWin = null, edgeShow = null; private int edgeKind = 0, edgeShowKind = 0, dragEdgeKind = 0; private float edgeAmt = 0f, edgeTgt = 0f;
     private long edgeHovT = 0, fistSeenT = 0; private boolean fistGrabOn = false, dragMoveOnly = false;
@@ -2044,7 +2045,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (menuGest == 0 && !prevPinch && dragWin == null && NvPoint.isFist(r, ar, 1.05f)) pinching = false;      // a tight fist is not a pinch (it only came from the thumb lying on the index finger)
         {   // v3.236: a fist also grabs the rim of a window (while the pointer is on it, or while a window that was taken by its rim is carried)
             // (easy to hold: a loosely curled hand counts, and a fist that flickers for a moment does not drop the window)
-            final boolean fistG = edgeGrab == 2 && !scRaw && !mpOn && NvPoint.isFist(r, ar, fistGrabOn ? 1.7f : 1.4f);
+            final boolean fistG = edgeGrab >= 1 && !scRaw && !mpOn && NvPoint.isFist(r, ar, fistGrabOn ? 1.7f : 1.4f);
             if (fistG) fistSeenT = nowMs;
             if (!pinching && fistG && (nowMs - edgeHovT < 400 || (dragWin != null && dragEdgeKind > 0))) { pinching = true; fistGrabOn = true; }
             else if (!pinching && dragMoveOnly && dragWin != null && nowMs - fistSeenT < 200) pinching = true;
@@ -2231,7 +2232,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 int k = edgeHit(w, cnx, cny);
                 if (k > 0) { edgeWin = w; edgeKind = k; break; }
             }
-            if (edgeKind >= 5) gripWin = edgeWin; else if (edgeKind >= 1) edgeMove = edgeWin;
+            if (edgeGrab == 2 || fistGrabOn) { if (edgeKind >= 5) gripWin = edgeWin; else if (edgeKind >= 1) edgeMove = edgeWin; }      // v3.246: in the fist-only mode a pinch on the rim does nothing; only the fist takes it (the line still lights up)
         }
         if (edgeWin != null) edgeHovT = nowMs;
         if (fistGrabOn && edgeWin != null && gripWin == edgeWin) { edgeMove = edgeWin; gripWin = null; }          // a fist only moves a window, it never resizes it (a corner taken with a fist is just a hold on the window)
