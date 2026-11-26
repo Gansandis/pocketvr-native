@@ -976,6 +976,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "float s(float x, float y){ return texture2D(tex,uv+vec2(x,y)*px*rad).r; }" +
             // how much of this spot belongs to the hand and not to the forearm: full over the palm and fingers, melting away from the wrist down the arm
             "float hf(vec4 h, vec2 q){ vec2 d=q-h.xy; float t=dot(d,h.zw); float L=hs.x; return smoothstep(-0.30*L,0.40*L,t)*(1.0-smoothstep(2.2*L,3.4*L,length(d))); }" +
+            // the same for the neon line: the forearm is kept (the line runs on down the arm, and melts away only about one palm below the wrist)
+            "float hf2(vec4 h, vec2 q){ vec2 d=q-h.xy; float t=dot(d,h.zw); float L=hs.x; return smoothstep(-1.15*L,-0.75*L,t)*(1.0-smoothstep(2.2*L,3.4*L,length(d))); }" +
+            // the same for the neon line: the forearm is kept (the line runs on down the arm and melts away about one palm below the wrist)
+            "float hf2(vec4 h, vec2 q){ vec2 d=q-h.xy; float t=dot(d,h.zw); float L=hs.x; return smoothstep(-1.15*L,-0.75*L,t)*(1.0-smoothstep(2.2*L,3.4*L,length(d))); }" +
             "void main(){" +
             " float m = s(0.,0.)*0.25 + (s(1.,0.)+s(-1.,0.)+s(0.,1.)+s(0.,-1.))*0.125 + (s(1.,1.)+s(-1.,1.)+s(1.,-1.)+s(-1.,-1.))*0.0625;" +
             " float w = (s(3.,0.)+s(-3.,0.)+s(0.,3.)+s(0.,-3.))*0.25;" +
@@ -984,6 +988,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             " float e = max(line, glow);" +
             " float dk = 0.40*(1.0 - smoothstep(0.0, 0.16, abs(m-0.28)));" +
             " float fl = 0.0;" +
+            " if (gl > 2.5) {" +                                              // v3.247: the neon hand: a thin white core, a cyan line round it and a soft cyan halo (the look of the example the user sent)
+            "  float mwn = texture2D(tex,uv).r*0.2 + (texture2D(tex,uv+vec2(7.,0.)*px).r + texture2D(tex,uv+vec2(-7.,0.)*px).r + texture2D(tex,uv+vec2(0.,7.)*px).r + texture2D(tex,uv+vec2(0.,-7.)*px).r + texture2D(tex,uv+vec2(5.,5.)*px).r + texture2D(tex,uv+vec2(-5.,5.)*px).r + texture2D(tex,uv+vec2(5.,-5.)*px).r + texture2D(tex,uv+vec2(-5.,-5.)*px).r)*0.1;" +
+            "  vec2 q3 = vec2(uv.x*hs.y, uv.y);" +
+            "  float f3 = hf2(h0, q3); if (hs.z > 1.5) f3 = max(f3, hf2(h1, q3));" +
+            "  float core = 1.0 - smoothstep(0.03, 0.16, abs(m-0.5));" +
+            "  float l2 = 1.0 - smoothstep(0.08, 0.30, abs(m-0.5));" +
+            "  float halo = 1.0 - smoothstep(0.05, 0.50, abs(mwn-0.5));" +
+            "  float a3 = max(max(halo*0.65, l2*0.92), core)*f3;" +
+            "  vec3 c3 = mix(vec3(0.30,0.92,0.95), vec3(1.0), core*0.9);" +
+            "  gl_FragColor = vec4(c3*a3, a3)*ha; return;" +
+            " }" +
             " if (gl > 1.5) {" +                                              // the soft ghost hand (as Meta advises: a light, slightly see-through fill that is brighter at the rim, a thin light outline, both melting away at the wrist)
             "  float mw = texture2D(tex,uv).r*0.2 + (texture2D(tex,uv+vec2(7.,0.)*px).r + texture2D(tex,uv+vec2(-7.,0.)*px).r + texture2D(tex,uv+vec2(0.,7.)*px).r + texture2D(tex,uv+vec2(0.,-7.)*px).r + texture2D(tex,uv+vec2(5.,5.)*px).r + texture2D(tex,uv+vec2(-5.,5.)*px).r + texture2D(tex,uv+vec2(5.,-5.)*px).r + texture2D(tex,uv+vec2(-5.,-5.)*px).r)*0.1;" +
             "  vec2 q2 = vec2(uv.x*hs.y, uv.y);" +
@@ -2703,7 +2718,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                     float dx = x1 - X[p0], dy = y1 - Y[p0], l = (float) Math.hypot(dx, dy);
                     if (l > 1e-3f) { x1 += dx / l * 0.015f * size; y1 += dy / l * 0.015f * size; }
                 }
-                aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * (BONE_W[p1 < 21 ? p1 : 0] * 0.93f + grow)));
+                aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * (BONE_W[p1 < 21 ? p1 : 0] * 0.85f + grow)));
             }
             {   // the palm: narrow at the wrist, wide at the knuckles; many cross strokes that overlap (so it is solid), and two straight strokes for its sides
                 float ux = X[17] - X[5], uy = Y[17] - Y[5], wk = (float) Math.hypot(ux, uy);
@@ -2718,6 +2733,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                         aaSeg(wax + (ax - wax) * t, way + (ay - way) * t, wbx + (bx - wbx) * t, wby + (by - wby) * t, rh);
                     }
                     aaSeg(wax, way, ax, ay, rh); aaSeg(wbx, wby, bx, by, rh);
+                    if (skel == 5) {      // the forearm: the neon line runs on down the arm
+                        float fx = X[0] - X[9], fy = Y[0] - Y[9], fl = (float) Math.hypot(fx, fy);
+                        if (fl > 1e-3f) aaSeg(X[0], Y[0], X[0] + fx / fl * 1.1f * size, Y[0] + fy / fl * 1.1f * size, hwW + rh * 0.9f);
+                    }
                     float wh = size * 0.09f, cx2 = (wax + ax) / 2f, cy2 = (way + ay) / 2f;       // the thumb's root and the web between thumb and index finger
                     aaSeg(X[0], Y[0], X[2], Y[2], wh); aaSeg(X[1], Y[1], X[5], Y[5], wh * 1.4f); aaSeg(X[2], Y[2], X[5], Y[5], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh * 0.8f);
                     aaSeg(X[0], Y[0], X[5], Y[5], wh); aaSeg(X[0], Y[0], X[1], Y[1], wh); aaSeg(X[1], Y[1], X[9], Y[9], wh);
@@ -2780,7 +2799,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform4f(ul(progRing, "h0"), hu[0], hu[1], hu[2], hu[3]);
         GLES20.glUniform4f(ul(progRing, "h1"), hu[4], hu[5], hu[6], hu[7]);
         GLES20.glUniform3f(ul(progRing, "hs"), palmL * 1.15f, asp, n);
-        GLES20.glUniform1f(ul(progRing, "gl"), skel == 5 ? 2f : (skel == 2 ? 1f : 0f));
+        GLES20.glUniform1f(ul(progRing, "gl"), skel == 5 ? 3f : skel == 6 ? 2f : (skel == 2 ? 1f : 0f));
         drawQuad(progRing);
         GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
         GLES20.glDisable(GLES20.GL_BLEND);
