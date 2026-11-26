@@ -1611,6 +1611,24 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         return true;
     }
 
+    /** v3.253: while the page scrolls by itself: a short line where "zero" is, and a thin line from there to the pointer (brighter = faster) with an arrow head that shows the direction */
+    private void drawScrollMark() {
+        final Win w = scIndWin;
+        if (w == null || !scrollOn) return;
+        final float[] a = new float[2], b = new float[2];
+        final float pw = w.widthM * w.scale * winZoom, u = sceneH / 720f;
+        if (!edgePt(w, scLx - 0.06f * pw, scRefLy, a) || !edgePt(w, scLx + 0.06f * pw, scRefLy, b)) return;
+        final float m = Math.abs(scAutoM);
+        aaFade = 0.55f; aaBegin(); aaSeg(a[0], a[1], b[0], b[1], 2.2f * u); aaFlush(1f, 1f, 1f);
+        if (m > 0.02f) {
+            final float[] c = new float[2];
+            if (edgePt(w, scLx, scRefLy, c)) {
+                aaFade = 0.35f + 0.5f * m; aaBegin(); aaSeg(c[0], c[1], cnx * sceneW / 2f * camScale, cny * sceneH / 2f * camScale, 1.6f * u); aaFlush(0.55f, 0.9f, 1f);
+            }
+        }
+        aaFade = 1f;
+    }
+
     /** v3.236: the lit line along the rim the pointer is near: straight along a side, curved round a corner */
     private void drawEdgeGlow() {
         edgeAmt += (edgeTgt - edgeAmt) * 0.35f;
@@ -1777,6 +1795,10 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile float winSize = 1.2f;                    // how big a window opens (1 = the old size; v3.238: 1.4 was a little too big)
     private Win edgeWin = null, edgeShow = null; private int edgeKind = 0, edgeShowKind = 0, dragEdgeKind = 0; private float edgeAmt = 0f, edgeTgt = 0f;
     private long edgeHovT = 0, fistSeenT = 0; private boolean fistGrabOn = false, dragMoveOnly = false;
+    // v3.253: scroll like a middle mouse button: hold the two fingers and the page scrolls by itself; how far the hand is above / below the middle line decides how fast (near = slow, far = fast)
+    public volatile int scrollAuto = 1;               // 0 follow the hand (the old way), 1 from the middle line of the window, 2 from the place where the scroll began
+    public volatile float scrollSpd = 1.6f;           // top speed in window heights per second
+    private float scRefY = -1f, scAutoM = 0f, scLx = 0f, scRefLy = 0f; private long scAutoT = 0; private Win scIndWin = null;
     private boolean scPoseRecent = false;       // v3.252: the two-finger pose was seen a moment ago (also after the scroll was lost by leaving the window): no new click or grab may start from it
     private boolean scrollOn = false, scRaw = false, scLost = false, barNear = false; private long scSince = 0, scRawT = 0; private Win scrollWin = null;
     private long popT = 0; private float popX = 0f, popY = 0f; private boolean popOk = false;
@@ -2350,16 +2372,36 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         NvUi.poke = pkOn && !pinching;
         final float[] so = new float[2];
         final boolean sv = scrollOn && scrollWin != null && hitWin(scrollWin, cnx, cny, so);
+        final boolean autoSc = scrollAuto > 0;
+        scIndWin = null; scAutoM = 0f;
+        if (!scrollOn) { scRefY = -1f; scAutoT = 0; }
+        if (sv && autoSc) {
+            android.graphics.Bitmap sbm = scrollWin.c.bitmap();
+            if (sbm != null && sbm.getHeight() > 0) {
+                final float bh = sbm.getHeight(), bw = sbm.getWidth();
+                final float ny = so[1] / bh;
+                if (scRefY < 0f) scRefY = scrollAuto == 2 ? Math.max(0.1f, Math.min(0.9f, ny)) : 0.5f;
+                final float d = ny - scRefY, dz = 0.06f;
+                final float m = Math.max(0f, Math.min(1f, (Math.abs(d) - dz) / (0.38f - dz)));      // 0 inside the calm strip, 1 at about 38% of the window's height away
+                scAutoM = d < 0f ? -m : m;
+                final float dtA = scAutoT == 0 ? 0.016f : Math.max(0.004f, Math.min(0.1f, (nowMs - scAutoT) / 1000f));
+                scAutoT = nowMs;
+                if (m > 0f) scrollWin.c.autoScroll((d < 0f ? -1f : 1f) * (float) Math.pow(m, 1.6) * scrollSpd * bh, dtA);
+                final float pwA = scrollWin.widthM * scrollWin.scale * winZoom, phA = pwA * bh / bw;
+                scLx = (so[0] / bw - 0.5f) * pwA; scRefLy = (0.5f - scRefY) * phA; scIndWin = scrollWin;
+            }
+        }
         for (Win w : wins) {
             if (!shown(w)) continue;
             final boolean sc = scrollOn && w == scrollWin;
             if (!sc && w == target && dragWin == null && !w.ghost) w.c.update(true, o[0], o[1], press);
             else w.c.update(false, 0, 0, false);
-            w.c.scroll(sc, sc && sv, so[0], so[1]);
+            w.c.scroll(sc && !autoSc, sc && sv && !autoSc, so[0], so[1]);
         }
     }
 
     private void drawCursor() {
+        drawScrollMark();
         float u = sceneH / 540f;
         drawEdgeGlow();
         // a small glass badge with three bars, one above the other, that light up from the top down while a gesture is held

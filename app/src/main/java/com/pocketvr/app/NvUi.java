@@ -595,6 +595,12 @@ public class NvUi implements NvContent {
     }
 
     private boolean scOn = false; private float scY0 = 0f, scS0 = 0f;
+    @Override public void autoScroll(float v, float dt) {
+        if (maxScroll <= 0f) return;
+        float ns = Math.max(0f, Math.min(maxScroll, scroll + v * dt));
+        if (Math.abs(ns - scroll) > 0.05f) { scroll = ns; layout(); dirty = true; }
+    }
+
     @Override public void scroll(boolean on, boolean valid, float x, float y) {
         if (!on || !valid) { scOn = false; return; }
         if (!scOn) { scOn = true; scY0 = y; scS0 = scroll; return; }

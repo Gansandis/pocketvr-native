@@ -242,6 +242,12 @@ public class NvBrowser implements NvContent {
         send(2, scX0, ly); scLy = ly;
     }
 
+    @Override public void autoScroll(float v, float dt) {
+        if (touching || !opened) return;
+        final float dy = v * dt;                       // the page's own pixels (the page is shown 1:1 in the window)
+        ui.post(() -> vb.wheel(dy));
+    }
+
     private void send(final int a, float px, float py) {
         final float fx = Math.max(0f, Math.min(1f, px / PW)), fy = Math.max(0f, Math.min(1f, py / PH));
         ui.post(() -> vb.touch(a, fx, fy));

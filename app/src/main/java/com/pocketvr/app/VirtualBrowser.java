@@ -287,6 +287,22 @@ public class VirtualBrowser {
         ev.recycle();
     }
 
+    /** v3.253: scrolls the page like the wheel of a mouse (dyPx > 0 = on down the page). UI thread. */
+    public void wheel(float dyPx) {
+        WebView web = current();
+        if (web == null || fsView != null || dyPx == 0f) return;
+        try {
+            float factor = android.view.ViewConfiguration.get(web.getContext()).getScaledVerticalScrollFactor();
+            if (factor < 1f) factor = 64f;
+            MotionEvent.PointerProperties pp = new MotionEvent.PointerProperties(); pp.id = 0; pp.toolType = MotionEvent.TOOL_TYPE_MOUSE;
+            MotionEvent.PointerCoords pc = new MotionEvent.PointerCoords(); pc.x = w / 2f; pc.y = h / 2f; pc.setAxisValue(MotionEvent.AXIS_VSCROLL, -dyPx / factor);
+            long t = SystemClock.uptimeMillis();
+            MotionEvent ev = MotionEvent.obtain(t, t, MotionEvent.ACTION_SCROLL, 1, new MotionEvent.PointerProperties[]{pp}, new MotionEvent.PointerCoords[]{pc}, 0, 0, 1f, 1f, 0, 0, InputDevice.SOURCE_MOUSE, 0);
+            web.dispatchGenericMotionEvent(ev);
+            ev.recycle();
+        } catch (Throwable ignored) { }
+    }
+
     /** Types text into whatever field the page has focused. */
     public void text(String t) {
         WebView web = current();

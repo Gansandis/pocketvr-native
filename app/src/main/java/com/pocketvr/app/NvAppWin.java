@@ -302,6 +302,18 @@ public class NvAppWin implements NvContent {
     }
 
     private boolean scOn = false, scTouch = false, scStream = false; private float scX0 = 0f, scY0 = 0f, scLy = 0f;
+    private float autoAcc = 0f; private long autoSwipeT = 0;
+    @Override public void autoScroll(float v, float dt) {
+        if (touching || !opened) return;
+        autoAcc += v * dt;
+        long now = System.currentTimeMillis();
+        if (Math.abs(autoAcc) > 60f && now - autoSwipeT > 170) {              // one short swipe for each bit of the move (the finger goes up to move the page down)
+            float a = Math.max(-PH * 0.7f, Math.min(PH * 0.7f, autoAcc)), mid = PH / 2f;
+            swipe(PW / 2f, mid + a / 2f, PW / 2f, mid - a / 2f, 140);
+            autoAcc = 0f; autoSwipeT = now;
+        }
+    }
+
     @Override public void scroll(boolean on, boolean valid, float x, float y) {
         if (!on || !valid) {
             if (scOn && scTouch && scStream) touchLine('u', scX0, scLy);

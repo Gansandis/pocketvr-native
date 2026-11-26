@@ -12,6 +12,8 @@ public interface NvContent {
     void setDragging(boolean d);
     /** v3.234 two-finger scroll: on = the two-finger pose is held over this window; valid = the pointer is worked out; x, y = the pointer in picture pixels (the hand moving up / down = the content following it, like a finger dragging) */
     default void scroll(boolean on, boolean valid, float x, float y) { }
+    /** v3.253: the page scrolls by itself: v = speed in window pixels per second (positive = on towards later content / down the page), dt = seconds since the last call */
+    default void autoScroll(float v, float dt) { }
     default boolean inGrip(float x, float y) { return false; }   // a bottom corner of the window: pulling it resizes
     default float visFrac() { return 1f; }
     default boolean occupies() { return true; }          // false: nothing of it is in the way of other windows (the menu when it is folded to its dock)       // how much of the picture's width is really drawn (centred): a window beside it sits against that, not against the empty margin
