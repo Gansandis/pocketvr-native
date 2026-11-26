@@ -198,6 +198,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     public volatile String ptDbg = "";
     private long ptDbgT = 0, lastPtClickT = 0;
     private float pkProg = 0;
+    public volatile boolean swayGate = true; public volatile float swayRate = 2.2f, swaySpd = 1.5f; public String swDbg = "";
+    private float swAng = 0f, swRate = 0f; private long swLastT = 0, swayT = 0;
     // v3.249: the pointer's own animation (before / while / after a click)
     private boolean cWasPress = false; private long cPressT = 0, cRelT = 0; private float cHov = 0f, cAppr = 0f;
     private boolean pkOn = false;
@@ -2022,6 +2024,22 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         // closing: below 0.12 at once, below 0.18 for 30 ms; opening: above 0.45 at once, above 0.31 for 50 ms
         ratioF = ratioF <= 0f || nowMs - ratioT > 300 ? ratio : ratioF + (ratio - ratioF) * 0.6f;
         ratioT = nowMs;
+        // v3.250: a hand that is being waved (the palm turning fast about the wrist, or the fingertip fast across the picture) looks to the model like fingers closing, and gave clicks nobody meant.
+        //         While it sways, no NEW click is started (a click that is already held is not touched); it must be calm for 150 ms.
+        {
+            float pax = (r[1 + 9 * 3] - r[1]) * ar, pay = r[1 + 9 * 3 + 1] - r[2];
+            float pang = (float) Math.atan2(pay, pax);
+            float dtS = Math.max(0.005f, Math.min(0.2f, (nowMs - swLastT) / 1000f));
+            float dA = pang - swAng;
+            while (dA > Math.PI) dA -= 2f * (float) Math.PI;
+            while (dA < -Math.PI) dA += 2f * (float) Math.PI;
+            if (swLastT == 0 || nowMs - swLastT > 300) dA = 0f;
+            swRate += (Math.abs(dA) / dtS - swRate) * 0.3f;
+            swAng = pang; swLastT = nowMs;
+            if (swRate > swayRate || handSpd > swaySpd) swayT = nowMs;
+            swDbg = swayGate ? String.format(java.util.Locale.US, "โบกมือ: หมุน %.1f/%.1f rad/s ปลายนิ้ว %.1f/%.1f %s", swRate, swayRate, handSpd, swaySpd, nowMs - swayT < 150 ? "→ กันคลิก" : "") : "";
+        }
+        final boolean swaying = swayGate && nowMs - swayT < 150;
         // v3.233: the pointer has been on something clickable a moment ago (set further down, each picture), and the hand is not in the pointing pose (that one has its own click)
         final boolean relHov = relShrink > 0.01f && nowMs - hovT < 200 && dragWin == null && !(pointMode > 0 && pt.pose) && !scRaw;
         final float relDt = relLastT == 0 ? 0.03f : Math.max(0.001f, Math.min(0.2f, (nowMs - relLastT) / 1000f));
@@ -2030,14 +2048,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         if (!pinching) {
             offSince = 0;
             relOn = false;
-            if (ratioF < 0.18f) { pinching = true; onSince = 0; }
-            else if (ratioF < 0.28f) { if (onSince == 0) onSince = nowMs; else if (nowMs - onSince >= 30) { pinching = true; onSince = 0; } }
+            if (ratioF < 0.18f && !swaying) { pinching = true; onSince = 0; }
+            else if (ratioF < 0.28f && !swaying) { if (onSince == 0) onSince = nowMs; else if (nowMs - onSince >= 30) { pinching = true; onSince = 0; } }
             else onSince = 0;
             if (relHov) {
                 // the start: the widest the gap has been since the pointer arrived (it slowly forgets, so an old wide look does not stay for ever)
                 relBase = Math.min(0.9f, Math.max(ratioF, relBase - relDt * 0.06f));
                 final float drop = relBase - ratioF;
-                if (!pinching && relBase >= 0.26f && drop >= 0.07f && drop >= relBase * relShrink && nowMs - relUpT > 300) {
+                if (!pinching && !swaying && relBase >= 0.26f && drop >= 0.07f && drop >= relBase * relShrink && nowMs - relUpT > 300) {
                     if (relHold == 0) relHold = nowMs;
                     else if (nowMs - relHold >= 40) { pinching = true; relOn = true; relMin = ratioF; relBase0 = relBase; relHold = 0; }
                 } else relHold = 0;
@@ -2090,7 +2108,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         final boolean ptActive = pointMode > 0 && !gameUp() && pmFade < 0.05f;      // (not while a game is up, or the palm menu is shown: poking its icons is not a click on a window)
         pt.level = Math.max(0, pointMode - 1); pt.grip = pointGrip;
         boolean ptClick = false;
-        if (ptActive) ptClick = pt.update(r, ar, nowMs, size, psize, ratio, ratioM, handSpd, pinching); else pt.reset();
+        if (ptActive) ptClick = pt.update(r, ar, nowMs, size, psize, ratio, ratioM, swaying ? 9f : handSpd, pinching); else pt.reset();
         pkOn = pt.press; pkProg = pt.prog;
         if (ptActive && nowMs - ptDbgT > 250) { ptDbgT = nowMs; ptDbg = pt.dbg(); } else if (!ptActive) ptDbg = "";
         final boolean ptPose = ptActive && pt.pose;

@@ -100,7 +100,7 @@ final class NvPoint {
         depthF = !init ? depthRaw : depthF + (depthRaw - depthF) * (1f - (float) Math.exp(-dt / 0.07f));
         long held = now - poseSince;
         boolean ready = level == 0 ? (held >= SETTLE0_MS && now - firedT > REARM0_MS && handSpd < 1.0f)      // (only a really fast swing is kept from clicking)
-                                   : (held > SETTLE_MS && now - relT > REARM_MS);
+                                   : (held > SETTLE_MS && now - relT > REARM_MS && handSpd < 2.5f);
         if (!init || !ready) { base = depthF; init = true; if (!ready) { prog = 0f; return false; } }
         if (locked) {                                                           // one click per push / pose: wait until it is over
             prog = 1f;
