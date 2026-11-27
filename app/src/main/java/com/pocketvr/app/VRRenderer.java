@@ -982,7 +982,25 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "float hf(vec4 h, vec2 q){ vec2 d=q-h.xy; float t=dot(d,h.zw); float L=hs.x; return smoothstep(-0.30*L,0.40*L,t)*(1.0-smoothstep(2.2*L,3.4*L,length(d))); }" +
             // the same for the neon line: the forearm is kept (the line runs on down the arm, and melts away only about one palm below the wrist)
             "float hf2(vec4 h, vec2 q){ vec2 d=q-h.xy; float t=dot(d,h.zw); float L=hs.x; return smoothstep(-1.15*L,-0.75*L,t)*(1.0-smoothstep(2.2*L,3.4*L,length(d))); }" +
+            "float tq(vec2 o){ return texture2D(tex,uv+o*px).r; }" +
             "void main(){" +
+            " if (gl > 3.5) {" +                                              // v3.256: the Meta Quest look: a thin light-blue line on the edge of the hand with a pale core, a thin pink-red copy of it a hair to the upper left (like the colour fringe in the Quest photos), and a faint blue glow outside; no fill; it runs on down the arm and melts away. (This branch comes first so the other styles' extra texture reads are skipped.)
+            "  float mq = s(0.,0.)*0.25 + (s(1.,0.)+s(-1.,0.)+s(0.,1.)+s(0.,-1.))*0.125 + (s(1.,1.)+s(-1.,1.)+s(1.,-1.)+s(-1.,-1.))*0.0625;" +
+            "  vec2 fo = vec2(2.,-1.);" +
+            "  float m2 = tq(fo)*0.4 + (tq(fo+vec2(3.,0.))+tq(fo-vec2(3.,0.))+tq(fo+vec2(0.,3.))+tq(fo-vec2(0.,3.)))*0.15;" +
+            "  float mg = tq(vec2(0.))*0.2 + (tq(vec2(8.,0.))+tq(vec2(-8.,0.))+tq(vec2(0.,8.))+tq(vec2(0.,-8.)))*0.2;" +
+            "  vec2 q4 = vec2(uv.x*hs.y, uv.y);" +
+            "  float f4 = hf2(h0, q4); if (hs.z > 1.5) f4 = max(f4, hf2(h1, q4));" +
+            "  float core = 1.0 - smoothstep(0.0, 0.17, abs(mq-0.5));" +
+            "  float fr = (1.0 - smoothstep(0.0, 0.17, abs(m2-0.5)))*0.8;" +
+            "  float ga = 0.18*smoothstep(0.02, 0.5, mg)*(1.0 - smoothstep(0.35, 0.5, mq));" +
+            "  vec3 cb = vec3(0.43,0.72,1.0), cw = vec3(0.90,0.95,1.0), cr = vec3(1.0,0.47,0.53);" +
+            "  vec4 c = vec4(cb*ga, ga);" +
+            "  c = vec4(cr*fr + c.rgb*(1.0-fr), fr + c.a*(1.0-fr));" +
+            "  vec3 lc = mix(cb, cw, core*core*0.7);" +
+            "  c = vec4(lc*core + c.rgb*(1.0-core), core + c.a*(1.0-core));" +
+            "  gl_FragColor = c*f4*ha; return;" +
+            " }" +
             " float m = s(0.,0.)*0.25 + (s(1.,0.)+s(-1.,0.)+s(0.,1.)+s(0.,-1.))*0.125 + (s(1.,1.)+s(-1.,1.)+s(1.,-1.)+s(-1.,-1.))*0.0625;" +
             " float w = (s(3.,0.)+s(-3.,0.)+s(0.,3.)+s(0.,-3.))*0.25;" +
             " float line = 1.0 - smoothstep(0.07, 0.34, abs(m-0.5));" +
@@ -990,17 +1008,6 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             " float e = max(line, glow);" +
             " float dk = 0.40*(1.0 - smoothstep(0.0, 0.16, abs(m-0.28)));" +
             " float fl = 0.0;" +
-            " if (gl > 3.5) {" +                                              // v3.254: the Meta Quest look: a thin pale line on the edge of the hand, a faint blue glow just outside it and a faint warm one just inside; no fill; the line runs on down the arm and melts away
-            "  float mwq = texture2D(tex,uv).r*0.2 + (texture2D(tex,uv+vec2(6.,0.)*px).r + texture2D(tex,uv+vec2(-6.,0.)*px).r + texture2D(tex,uv+vec2(0.,6.)*px).r + texture2D(tex,uv+vec2(0.,-6.)*px).r + texture2D(tex,uv+vec2(4.,4.)*px).r + texture2D(tex,uv+vec2(-4.,4.)*px).r + texture2D(tex,uv+vec2(4.,-4.)*px).r + texture2D(tex,uv+vec2(-4.,-4.)*px).r)*0.1;" +
-            "  vec2 q4 = vec2(uv.x*hs.y, uv.y);" +
-            "  float f4 = hf2(h0, q4); if (hs.z > 1.5) f4 = max(f4, hf2(h1, q4));" +
-            "  float coreq = 1.0 - smoothstep(0.02, 0.16, abs(m-0.5));" +
-            "  float outq = smoothstep(0.02, 0.45, mwq)*(1.0 - smoothstep(0.30, 0.50, m));" +
-            "  float inq = smoothstep(0.50, 0.62, m)*(1.0 - smoothstep(0.62, 0.95, mwq));" +
-            "  float aq = max(coreq*0.95, max(outq*0.40, inq*0.22))*f4;" +
-            "  vec3 cq = (vec3(0.93,0.96,1.0)*coreq*0.95 + vec3(0.40,0.60,1.0)*outq*0.40 + vec3(1.0,0.55,0.50)*inq*0.22)*f4;" +
-            "  gl_FragColor = vec4(cq, aq)*ha; return;" +
-            " }" +
             " if (gl > 2.5) {" +                                              // v3.247: the neon hand: a thin white core, a cyan line round it and a soft cyan halo (the look of the example the user sent)
             "  float mwn = texture2D(tex,uv).r*0.2 + (texture2D(tex,uv+vec2(7.,0.)*px).r + texture2D(tex,uv+vec2(-7.,0.)*px).r + texture2D(tex,uv+vec2(0.,7.)*px).r + texture2D(tex,uv+vec2(0.,-7.)*px).r + texture2D(tex,uv+vec2(5.,5.)*px).r + texture2D(tex,uv+vec2(-5.,5.)*px).r + texture2D(tex,uv+vec2(5.,-5.)*px).r + texture2D(tex,uv+vec2(-5.,-5.)*px).r)*0.1;" +
             "  vec2 q3 = vec2(uv.x*hs.y, uv.y);" +
@@ -1037,7 +1044,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "attribute vec2 p; attribute vec4 q; varying vec4 vq; void main(){ gl_Position=vec4(p,0.,1.); vq=q; }",
             "precision mediump float; uniform vec3 col; uniform float sf; uniform float fade; varying vec4 vq;" +
             "void main(){ float t=clamp(vq.x,0.,vq.z); float d=length(vec2(vq.x-t,vq.y)); float al=clamp((1.-d)*vq.w/sf,0.,1.); gl_FragColor=vec4(col*al,al)*fade; }");
-        aaBuf = fb(6 * 6 * 100);
+        aaBuf = fb(6 * 6 * 220);
         triBuf = fb(4096);
         lutTex = 0; maskW = 0; maskFbo[0] = 0; maskTex[0] = 0; refFbo[0] = 0; refTex[0] = 0;
         progPanel = prog(
@@ -2814,39 +2821,65 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             if (size < 1e-3f) continue;
             float grow = Math.min(0.03f, handSpd * 0.03f);                 // a fast hand: the shape is a little wider (the points are older than the real hand)
             aaBegin();
-            for (int b2 = 0; b2 < BONES.length; b2 += 2) {
-                int p0 = BONES[b2], p1 = BONES[b2 + 1];
-                if (p0 == 0) continue;                                           // the wrist's spokes, the thumb's root: built below with the palm
-                if (p0 == 5 && p1 == 9 || p0 == 9 && p1 == 13 || p0 == 13 && p1 == 17) continue;   // the knuckle line: part of the palm
-                float x1 = X[p1], y1 = Y[p1];
-                if (p1 == 4 || p1 == 8 || p1 == 12 || p1 == 16 || p1 == 20) {      // the stroke reaches to the nail
-                    float dx = x1 - X[p0], dy = y1 - Y[p0], l = (float) Math.hypot(dx, dy);
-                    if (l > 1e-3f) { x1 += dx / l * 0.015f * size; y1 += dy / l * 0.015f * size; }
+            // v3.256: a hand shaped like a real one (fitted to the silhouette of the user's own hand in two photos, with the real model points):
+            // fingers wider at the knuckle and narrowing to a round tip, a thick thumb, a filled thumb root with a soft web, a wider palm and wrist.
+            for (int f = 0; f < 4; f++) {
+                int a0 = 5 + f * 4;                                   // the knuckle of this finger: 5, 9, 13, 17
+                float r0 = (SHP_FI[f] * SHP_FS + grow) * size;
+                for (int k = 0; k < 3; k++) {
+                    int pa = a0 + k, pb = a0 + k + 1;
+                    float ra = r0 * (1f - 0.078f * (k / 3f)), rb = r0 * (1f - 0.078f * ((k + 1) / 3f));
+                    float bx2 = X[pb], by2 = Y[pb];
+                    if (k == 2) { float dx = bx2 - X[pa], dy = by2 - Y[pa], l = (float) Math.hypot(dx, dy); if (l > 1e-3f) { bx2 += dx / l * 0.01f * size; by2 += dy / l * 0.01f * size; } }
+                    aaTap(X[pa], Y[pa], bx2, by2, ra, rb, 4);
                 }
-                aaSeg(X[p0], Y[p0], x1, y1, Math.max(3f, size * (BONE_W[p1 < 21 ? p1 : 0] * 0.85f + grow)));
+            }
+            final float th0 = (SHP_TH[0] * SHP_THS + grow) * size, th1 = (SHP_TH[1] * SHP_THS + grow) * size, th2 = (SHP_TH[2] * SHP_THS + grow) * size, th3 = (SHP_TH[3] * SHP_THS + grow) * size;
+            aaTap(X[1], Y[1], X[2], Y[2], th0, th1, 4);
+            aaTap(X[2], Y[2], X[3], Y[3], th1, th2, 4);
+            {
+                float dx = X[4] - X[3], dy = Y[4] - Y[3], l = (float) Math.hypot(dx, dy), ex = X[4], ey = Y[4];
+                if (l > 1e-3f) { ex += dx / l * 0.01f * size; ey += dy / l * 0.01f * size; }
+                aaTap(X[3], Y[3], ex, ey, th2, th3, 4);
             }
             {   // the palm: narrow at the wrist, wide at the knuckles; many cross strokes that overlap (so it is solid), and two straight strokes for its sides
                 float ux = X[17] - X[5], uy = Y[17] - Y[5], wk = (float) Math.hypot(ux, uy);
                 if (wk > 1e-3f) {
                     ux /= wk; uy /= wk;
-                    float ex = 0.05f * size, hwW = 0.30f * wk;
+                    float ex = 0.05f * size, hwW = SHP_WRIST * wk;
                     float ax = X[5] - ux * ex, ay = Y[5] - uy * ex, bx = X[17] + ux * ex, by = Y[17] + uy * ex;
                     float wax = X[0] - ux * hwW, way = Y[0] - uy * hwW, wbx = X[0] + ux * hwW, wby = Y[0] + uy * hwW;
-                    float rh = Math.max(3f, size * (0.10f + grow));
+                    float rh = Math.max(3f, size * (SHP_PALM + grow));
                     for (int q = 0; q <= 16; q++) {
                         float t = q / 16f;
                         aaSeg(wax + (ax - wax) * t, way + (ay - way) * t, wbx + (bx - wbx) * t, wby + (by - wby) * t, rh);
                     }
                     aaSeg(wax, way, ax, ay, rh); aaSeg(wbx, wby, bx, by, rh);
-                    if (skel == 5 || skel == 7) {      // the forearm: the neon line runs on down the arm
+                    if (skel == 5 || skel == 7) {      // the forearm: the line runs on down the arm
                         float fx = X[0] - X[9], fy = Y[0] - Y[9], fl = (float) Math.hypot(fx, fy);
                         if (fl > 1e-3f) aaSeg(X[0], Y[0], X[0] + fx / fl * 1.1f * size, Y[0] + fy / fl * 1.1f * size, hwW + rh * 0.9f);
                     }
-                    float wh = size * 0.09f, cx2 = (wax + ax) / 2f, cy2 = (way + ay) / 2f;       // the thumb's root and the web between thumb and index finger
-                    aaSeg(X[0], Y[0], X[2], Y[2], wh); aaSeg(X[1], Y[1], X[5], Y[5], wh * 1.4f); aaSeg(X[2], Y[2], X[5], Y[5], wh); aaSeg(X[3], Y[3], X[5], Y[5], wh * 0.8f);
-                    aaSeg(X[0], Y[0], X[5], Y[5], wh); aaSeg(X[0], Y[0], X[1], Y[1], wh); aaSeg(X[1], Y[1], X[9], Y[9], wh);
-                    aaSeg((X[2] + X[3]) / 2f, (Y[2] + Y[3]) / 2f, X[5], Y[5], wh);
-                    aaSeg((X[1] + X[2]) / 2f, (Y[1] + Y[2]) / 2f, cx2, cy2, wh * 1.2f); aaSeg(X[2], Y[2], cx2, cy2, wh * 1.2f);
+                    // the thumb root and the web between thumb and index finger: one filled shape with a gently curved web (no straight bar across)
+                    float t2x = X[3] - X[2], t2y = Y[3] - Y[2], t2l = (float) Math.hypot(t2x, t2y);
+                    float ox = X[5] - X[9], oy = Y[5] - Y[9], ol = (float) Math.hypot(ox, oy);
+                    if (t2l > 1e-3f && ol > 1e-3f) {
+                        t2x /= t2l; t2y /= t2l; ox /= ol; oy /= ol;
+                        float nx = -t2y, ny = t2x;
+                        if (nx * (X[9] - X[0]) + ny * (Y[9] - Y[0]) < 0f) { nx = -nx; ny = -ny; }      // the side of the thumb that faces the fingers
+                        float rT = th1 + (th2 - th1) * 0.4f;
+                        float tx = X[2] + (X[3] - X[2]) * 0.4f + nx * rT, ty = Y[2] + (Y[3] - Y[2]) * 0.4f + ny * rT;
+                        float qx = X[2] + (X[3] - X[2]) * 0.1f - nx * rT, qy = Y[2] + (Y[3] - Y[2]) * 0.1f - ny * rT;
+                        float rI = (SHP_FI[0] * SHP_FS + grow) * size;
+                        float ix = X[5] + ox * rI * 0.9f, iy = Y[5] + oy * rI * 0.9f;
+                        float mx = (tx + ix) / 2f, my = (ty + iy) / 2f;
+                        float wx = X[0] - ux * hwW, wy = Y[0] - uy * hwW;
+                        float gx = (wx + qx + tx + ix + X[5]) / 5f, gy = (wy + qy + ty + iy + Y[5]) / 5f;
+                        float sx = gx - mx, sy = gy - my, sl = (float) Math.hypot(sx, sy);
+                        if (sl > 1e-3f) { sx = mx + sx / sl * SHP_WEB * size; sy = my + sy / sl * SHP_WEB * size; } else { sx = mx; sy = my; }
+                        pvx[0] = wx; pvy[0] = wy; pvx[1] = qx; pvy[1] = qy; pvx[2] = tx; pvy[2] = ty; pvx[3] = sx; pvy[3] = sy; pvx[4] = ix; pvy[4] = iy; pvx[5] = X[5]; pvy[5] = Y[5];
+                        aaPoly(6, Math.max(3f, 0.03f * size));
+                    }
+                    aaSeg(X[0], Y[0], X[2], Y[2], th1 * 0.95f);
                 }
             }
             aaFlush(1f, 1f, 1f);
@@ -2919,8 +2952,42 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     private void aaBegin() { aaBuf.position(0); aaN = 0; }
 
+    // v3.256: hand shape numbers (fractions of the hand size = wrist to middle knuckle)
+    private static final float[] SHP_FI = {0.085f, 0.085f, 0.078f, 0.068f};     // finger radius at the knuckle: index, middle, ring, little
+    private static final float SHP_FS = 1.22f;                                     // all fingers a little fuller than the first guess
+    private static final float[] SHP_TH = {0.10f, 0.105f, 0.095f, 0.08f};          // thumb radius at its 4 joints
+    private static final float SHP_THS = 1.45f;                                    // the thumb is much thicker than a finger
+    private static final float SHP_PALM = 0.14f, SHP_WRIST = 0.347f, SHP_WEB = 0.06f;
+    private final float[] pvx = new float[8], pvy = new float[8];
+
+    /** a stroke that gets narrower (or wider) from r0 to r1 along its way: n short round strokes of steadily changing width */
+    private void aaTap(float ax, float ay, float bx, float by, float r0, float r1, int n) {
+        for (int k = 0; k < n; k++) {
+            float t0 = k / (float) n, t1 = (k + 1) / (float) n, r = r0 + (r1 - r0) * (t0 + t1) * 0.5f;
+            aaSeg(ax + (bx - ax) * t0, ay + (by - ay) * t0, ax + (bx - ax) * t1, ay + (by - ay) * t1, Math.max(3f, r));
+        }
+    }
+
+    /** fills a flat shape (corners in pvx/pvy) with many overlapping strokes that run from its edge to its middle */
+    private void aaPoly(int n, float hw) {
+        float gx = 0f, gy = 0f;
+        for (int i = 0; i < n; i++) { gx += pvx[i]; gy += pvy[i]; }
+        gx /= n; gy /= n;
+        for (int k = 0; k < n; k++) {
+            int k2 = (k + 1) % n;
+            for (int j = 0; j < 6; j++) {
+                float t = j / 6f, ex = pvx[k] + (pvx[k2] - pvx[k]) * t, ey = pvy[k] + (pvy[k2] - pvy[k]) * t;
+                float dx = gx - ex, dy = gy - ey, l = (float) Math.hypot(dx, dy);
+                if (l < 1e-3f) continue;
+                float sc = Math.min(hw, l * 0.5f) / l;
+                aaSeg(ex + dx * sc, ey + dy * sc, gx, gy, hw);
+            }
+        }
+    }
+
     // one rounded stroke from (x0,y0) to (x1,y1), half width hw, all in scene pixels centred on the picture
     private void aaSeg(float x0, float y0, float x1, float y1, float hw) {
+        if ((aaN + 6) * 6 > aaBuf.capacity()) return;                  // the buffer is full: skip the stroke rather than crash
         float dx = x1 - x0, dy = y1 - y0;
         float len = (float) Math.hypot(dx, dy);
         if (len < 1e-3f) { dx = 1f; dy = 0f; len = 0f; } else { dx /= len; dy /= len; }
