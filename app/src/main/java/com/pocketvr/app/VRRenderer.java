@@ -2390,14 +2390,14 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             android.graphics.Bitmap sbm = scrollWin.c.bitmap();
             if (sbm != null && sbm.getHeight() > 0) {
                 final float bh = sbm.getHeight(), bw = sbm.getWidth();
-                final float ny = so[1] / bh;
-                if (scRefY < 0f) scRefY = scrollAuto == 2 ? Math.max(0.1f, Math.min(0.9f, ny)) : 0.5f;
-                final float d = ny - scRefY, dz = 0.06f;
-                final float m = Math.max(0f, Math.min(1f, (Math.abs(d) - dz) / (0.38f - dz)));      // 0 inside the calm strip, 1 at about 38% of the window's height away
-                scAutoM = d < 0f ? -m : m;
+                final float scNy = so[1] / bh;
+                if (scRefY < 0f) scRefY = scrollAuto == 2 ? Math.max(0.1f, Math.min(0.9f, scNy)) : 0.5f;
+                final float scD = scNy - scRefY, dz = 0.06f;
+                final float m = Math.max(0f, Math.min(1f, (Math.abs(scD) - dz) / (0.38f - dz)));      // 0 inside the calm strip, 1 at about 38% of the window's height away
+                scAutoM = scD < 0f ? -m : m;
                 final float dtA = scAutoT == 0 ? 0.016f : Math.max(0.004f, Math.min(0.1f, (nowMs - scAutoT) / 1000f));
                 scAutoT = nowMs;
-                if (m > 0f) scrollWin.c.autoScroll((d < 0f ? -1f : 1f) * (float) Math.pow(m, 1.6) * scrollSpd * bh, dtA);
+                if (m > 0f) scrollWin.c.autoScroll((scD < 0f ? -1f : 1f) * (float) Math.pow(m, 1.6) * scrollSpd * bh, dtA);
                 final float pwA = scrollWin.widthM * scrollWin.scale * winZoom, phA = pwA * bh / bw;
                 scLx = (so[0] / bw - 0.5f) * pwA; scRefLy = (0.5f - scRefY) * phA; scIndWin = scrollWin;
             }
