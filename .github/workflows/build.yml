@@ -67,6 +67,19 @@ jobs:
         with:
           gradle-version: '8.7'
 
+      # Maven Central answers 429 (too many requests) to shared CI machines. Google keeps a mirror of it: use that first for every plugin and library; the usual repositories stay as the fallback.
+      - name: Use Google's mirror of Maven Central first
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cat > ~/.gradle/init.d/mirror.gradle <<'EOF'
+          def MIRROR = 'https://maven-central.storage-download.googleapis.com/maven2/'
+          beforeSettings { settings ->
+              settings.pluginManagement.repositories { maven { url MIRROR } }
+              settings.dependencyResolutionManagement.repositories { maven { url MIRROR } }
+          }
+          EOF
+          cat ~/.gradle/init.d/mirror.gradle
+
       - name: Build debug APK
         run: |
           # Maven Central sometimes answers 429 (too many requests) to shared CI machines, so retry a few times
