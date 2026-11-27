@@ -36,7 +36,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     private long lastScaleT = 0, lastFrameNs = 0;
     public volatile boolean predict = true;
     public volatile int envScene = 0;       // 0 = the camera picture, 1 = a made-up dusk city instead (a virtual room around you)
-    public volatile int skel = 5;           // 0 off, 1 skeleton, 2 glass hand (camera cut-out), 3 glowing outline (camera cut-out), 4 real hand through, 5 glass hand from the model points only (no camera pixels), 6 glowing outline from the model points only
+    public volatile int skel = 7;           // 0 off, 1 skeleton, 2 glass hand (camera cut-out), 3 glowing outline (camera cut-out), 4 real hand through, 5 glass hand from the model points only (no camera pixels), 6 glowing outline from the model points only
     public volatile float predMs = 0;
     public NvUi ui;
     private int progUi, uiTex = 0;
@@ -990,6 +990,17 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             " float e = max(line, glow);" +
             " float dk = 0.40*(1.0 - smoothstep(0.0, 0.16, abs(m-0.28)));" +
             " float fl = 0.0;" +
+            " if (gl > 3.5) {" +                                              // v3.254: the Meta Quest look: a thin pale line on the edge of the hand, a faint blue glow just outside it and a faint warm one just inside; no fill; the line runs on down the arm and melts away
+            "  float mwq = texture2D(tex,uv).r*0.2 + (texture2D(tex,uv+vec2(6.,0.)*px).r + texture2D(tex,uv+vec2(-6.,0.)*px).r + texture2D(tex,uv+vec2(0.,6.)*px).r + texture2D(tex,uv+vec2(0.,-6.)*px).r + texture2D(tex,uv+vec2(4.,4.)*px).r + texture2D(tex,uv+vec2(-4.,4.)*px).r + texture2D(tex,uv+vec2(4.,-4.)*px).r + texture2D(tex,uv+vec2(-4.,-4.)*px).r)*0.1;" +
+            "  vec2 q4 = vec2(uv.x*hs.y, uv.y);" +
+            "  float f4 = hf2(h0, q4); if (hs.z > 1.5) f4 = max(f4, hf2(h1, q4));" +
+            "  float coreq = 1.0 - smoothstep(0.02, 0.16, abs(m-0.5));" +
+            "  float outq = smoothstep(0.02, 0.45, mwq)*(1.0 - smoothstep(0.30, 0.50, m));" +
+            "  float inq = smoothstep(0.50, 0.62, m)*(1.0 - smoothstep(0.62, 0.95, mwq));" +
+            "  float aq = max(coreq*0.95, max(outq*0.40, inq*0.22))*f4;" +
+            "  vec3 cq = (vec3(0.93,0.96,1.0)*coreq*0.95 + vec3(0.40,0.60,1.0)*outq*0.40 + vec3(1.0,0.55,0.50)*inq*0.22)*f4;" +
+            "  gl_FragColor = vec4(cq, aq)*ha; return;" +
+            " }" +
             " if (gl > 2.5) {" +                                              // v3.247: the neon hand: a thin white core, a cyan line round it and a soft cyan halo (the look of the example the user sent)
             "  float mwn = texture2D(tex,uv).r*0.2 + (texture2D(tex,uv+vec2(7.,0.)*px).r + texture2D(tex,uv+vec2(-7.,0.)*px).r + texture2D(tex,uv+vec2(0.,7.)*px).r + texture2D(tex,uv+vec2(0.,-7.)*px).r + texture2D(tex,uv+vec2(5.,5.)*px).r + texture2D(tex,uv+vec2(-5.,5.)*px).r + texture2D(tex,uv+vec2(5.,-5.)*px).r + texture2D(tex,uv+vec2(-5.,-5.)*px).r)*0.1;" +
             "  vec2 q3 = vec2(uv.x*hs.y, uv.y);" +
@@ -2827,7 +2838,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                         aaSeg(wax + (ax - wax) * t, way + (ay - way) * t, wbx + (bx - wbx) * t, wby + (by - wby) * t, rh);
                     }
                     aaSeg(wax, way, ax, ay, rh); aaSeg(wbx, wby, bx, by, rh);
-                    if (skel == 5) {      // the forearm: the neon line runs on down the arm
+                    if (skel == 5 || skel == 7) {      // the forearm: the neon line runs on down the arm
                         float fx = X[0] - X[9], fy = Y[0] - Y[9], fl = (float) Math.hypot(fx, fy);
                         if (fl > 1e-3f) aaSeg(X[0], Y[0], X[0] + fx / fl * 1.1f * size, Y[0] + fy / fl * 1.1f * size, hwW + rh * 0.9f);
                     }
@@ -2893,7 +2904,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform4f(ul(progRing, "h0"), hu[0], hu[1], hu[2], hu[3]);
         GLES20.glUniform4f(ul(progRing, "h1"), hu[4], hu[5], hu[6], hu[7]);
         GLES20.glUniform3f(ul(progRing, "hs"), palmL * 1.15f, asp, n);
-        GLES20.glUniform1f(ul(progRing, "gl"), skel == 5 ? 3f : skel == 6 ? 2f : (skel == 2 ? 1f : 0f));
+        GLES20.glUniform1f(ul(progRing, "gl"), skel == 7 ? 4f : skel == 5 ? 3f : skel == 6 ? 2f : (skel == 2 ? 1f : 0f));
         drawQuad(progRing);
         GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
         GLES20.glDisable(GLES20.GL_BLEND);
