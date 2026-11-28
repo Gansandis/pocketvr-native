@@ -976,7 +976,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         for (Win w : wins) { w.tex = 0; w.texW = 0; w.texH = 0; w.btex = 0; w.barDrawnHov = -2; w.barDrawnTitle = ""; }      // a new graphics context: every window picture AND every title bar picture must be uploaded again in full (v3.232: the bar's was forgotten -> a black bar under the windows after screen lock / app switch)
         progRing = prog(
             "attribute vec2 p; varying vec2 uv; void main(){ gl_Position=vec4(p,0.,1.); uv=p*0.5+0.5; }",
-            "precision mediump float; uniform sampler2D tex; uniform vec2 px; uniform float rad; uniform vec4 h0; uniform vec4 h1; uniform vec3 hs; uniform float gl; uniform float ha; varying vec2 uv;" +
+            "precision mediump float; uniform sampler2D tex; uniform vec2 px; uniform float rad; uniform vec4 h0; uniform vec4 h1; uniform vec3 hs; uniform float gl; uniform float ha; uniform vec2 pm; varying vec2 uv;" +
             "float s(float x, float y){ return texture2D(tex,uv+vec2(x,y)*px*rad).r; }" +
             // how much of this spot belongs to the hand and not to the forearm: full over the palm and fingers, melting away from the wrist down the arm
             "float hf(vec4 h, vec2 q){ vec2 d=q-h.xy; float t=dot(d,h.zw); float L=hs.x; return smoothstep(-0.30*L,0.40*L,t)*(1.0-smoothstep(2.2*L,3.4*L,length(d))); }" +
@@ -1019,17 +1019,36 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "  vec3 c3 = mix(vec3(0.30,0.92,0.95), vec3(1.0), core*0.9);" +
             "  gl_FragColor = vec4(c3*a3, a3)*ha; return;" +
             " }" +
-            " if (gl > 1.5) {" +                                              // the soft ghost hand (as Meta advises: a light, slightly see-through fill that is brighter at the rim, a thin light outline, both melting away at the wrist)
-            "  float mw = texture2D(tex,uv).r*0.2 + (texture2D(tex,uv+vec2(7.,0.)*px).r + texture2D(tex,uv+vec2(-7.,0.)*px).r + texture2D(tex,uv+vec2(0.,7.)*px).r + texture2D(tex,uv+vec2(0.,-7.)*px).r + texture2D(tex,uv+vec2(5.,5.)*px).r + texture2D(tex,uv+vec2(-5.,5.)*px).r + texture2D(tex,uv+vec2(5.,-5.)*px).r + texture2D(tex,uv+vec2(-5.,-5.)*px).r)*0.1;" +
+            " if (gl > 1.5) {" +                                              // v3.258: the see-through ghost hand, like a rendered hand in a dark scene: a barely lighter body, a soft glow just inside the edge that fades inwards, a thin faint edge line, a flat cut with a bright thin cap at the wrist
+            "  float mw = tq(vec2(0.))*0.16 + (tq(vec2(4.5,0.))+tq(vec2(-4.5,0.))+tq(vec2(0.,4.5))+tq(vec2(0.,-4.5)))*0.09 + (tq(vec2(9.,0.))+tq(vec2(-9.,0.))+tq(vec2(0.,9.))+tq(vec2(0.,-9.))+tq(vec2(6.4,6.4))+tq(vec2(-6.4,6.4))+tq(vec2(6.4,-6.4))+tq(vec2(-6.4,-6.4)))*0.06;" +
             "  vec2 q2 = vec2(uv.x*hs.y, uv.y);" +
-            "  float f2 = hf(h0, q2); if (hs.z > 1.5) f2 = max(f2, hf(h1, q2));" +
-            "  float edge = 1.0 - smoothstep(0.55, 0.95, mw);" +
+            // v3.261: two looks, like the two reference pictures. pm = how much each hand shows its PALM to the camera (0 = the back of the hand: a filled grey body with a soft glowing rim and a round cap at the wrist; 1 = the palm: almost clear glass with thin bright outlines on the fingers and a wrist that fades away)
+            "  vec2 dd0 = q2 - h0.xy; float t0 = dot(dd0, h0.zw), s0 = dot(dd0, vec2(-h0.w, h0.z)); float k0 = clamp(s0/(0.45*hs.x), -1.0, 1.0); t0 += 0.03*hs.x*(1.0 - k0*k0);" +
+            "  float far0 = 1.0 - smoothstep(2.2*hs.x, 3.4*hs.x, length(dd0));" +
+            "  float f2 = mix(smoothstep(-0.14*hs.x, -0.11*hs.x, t0), smoothstep(-0.40*hs.x, 0.04*hs.x, t0), pm.x)*far0;" +
+            "  float cp = (1.0 - smoothstep(0.0, 0.025*hs.x, abs(t0 + 0.115*hs.x)))*(1.0 - pm.x);" +
+            "  float Pn = pm.x;" +
+            "  if (hs.z > 1.5) {" +
+            "   vec2 dd1 = q2 - h1.xy; float t1 = dot(dd1, h1.zw), s1 = dot(dd1, vec2(-h1.w, h1.z)); float k1 = clamp(s1/(0.45*hs.x), -1.0, 1.0); t1 += 0.03*hs.x*(1.0 - k1*k1);" +
+            "   float far1 = 1.0 - smoothstep(2.2*hs.x, 3.4*hs.x, length(dd1));" +
+            "   f2 = max(f2, mix(smoothstep(-0.14*hs.x, -0.11*hs.x, t1), smoothstep(-0.40*hs.x, 0.04*hs.x, t1), pm.y)*far1);" +
+            "   cp = max(cp, (1.0 - smoothstep(0.0, 0.025*hs.x, abs(t1 + 0.115*hs.x)))*(1.0 - pm.y));" +
+            "   if (length(dd1) < length(dd0)) Pn = pm.y;" +
+            "  }" +
             "  float ins2 = smoothstep(0.40, 0.62, m);" +
-            "  float fill = ins2*(0.10 + 0.24*edge);" +
-            "  float ln = (1.0 - smoothstep(0.04, 0.26, abs(m-0.5)))*0.85;" +
-            "  float outer = 0.22*smoothstep(0.0, 0.5, mw)*(1.0 - smoothstep(0.30, 0.50, m));" +
-            "  float a2 = max(max(fill, ln), outer)*(0.30 + 0.70*f2);" +
-            "  gl_FragColor = vec4(vec3(0.92,0.97,1.0)*a2, a2)*ha; return;" +
+            "  float glowin = ins2*pow(clamp((1.0 - mw)*2.0, 0.0, 1.0), 1.5);" +    // bright at the edge, fading inwards
+            "  vec2 gd = vec2(s(1.,0.)-s(-1.,0.), s(0.,1.)-s(0.,-1.));" +      // which way the edge faces: a light from the upper right makes that side of the rim a little brighter
+            "  float lit = clamp(dot(-gd/(length(gd)+0.0001), vec2(0.5,0.6)), -1.0, 1.0)*0.5 + 0.5;" +
+            "  float rim = 0.75 + 0.25*lit;" +
+            "  float fill = ins2*mix(0.03, 0.008, Pn) + glowin*mix(0.60, 0.30, Pn)*rim;" +
+            "  float ln = (1.0 - smoothstep(0.03, mix(0.20, 0.18, Pn), abs(m-0.5)))*mix(0.35, 1.0, Pn)*rim;" +
+            "  float outer = 0.04*smoothstep(0.0, 0.5, mw)*(1.0 - smoothstep(0.30, 0.50, m));" +
+            "  vec2 gb = texture2D(tex,uv).gb; float rimv = clamp(gb.x/max(gb.y,0.001), 0.0, 1.0);" +       // the tubes: bright where a finger's or the thumb's edge crosses the hand
+            "  float innr = rimv*rimv*gb.y*mix(0.45, 0.75, Pn)*ins2;" +
+            "  float a2 = max(max(max(fill, ln), max(outer, cp*ins2*0.30)), innr)*f2;" +
+            "  float lum = mix(0.85, 0.97, Pn);" +
+            "  float aD = ins2*0.30*(1.0 - Pn)*f2;" +                            // the back of the hand is a little DARKER than what is behind it (dark glass) with a bright rim; the palm stays clear
+            "  gl_FragColor = vec4(vec3(lum, lum+0.03, lum+0.05)*a2, a2 + aD)*ha; return;" +
             " }" +
             " if (gl > 0.5) {" +
             "  vec2 q = vec2(uv.x*hs.y, uv.y);" +
@@ -1045,6 +1064,62 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             "precision mediump float; uniform vec3 col; uniform float sf; uniform float fade; varying vec4 vq;" +
             "void main(){ float t=clamp(vq.x,0.,vq.z); float d=length(vec2(vq.x-t,vq.y)); float al=clamp((1.-d)*vq.w/sf,0.,1.); gl_FragColor=vec4(col*al,al)*fade; }");
         aaBuf = fb(6 * 6 * 220);
+        chainBuf = fb(8);
+        progChain = prog(                                 // v3.259: one finger (or the thumb) as a smooth tube, seen from the front: how far each point is from the middle of the tube tells which way the skin faces, and so how bright the edge should be
+            "attribute vec2 p; uniform vec2 sc; uniform vec2 org; varying vec2 sp; void main(){ gl_Position=vec4(p,0.,1.); sp=p*sc-org; }",
+            "#ifdef GL_FRAGMENT_PRECISION_HIGH\nprecision highp float;\n#else\nprecision mediump float;\n#endif\n" +
+            "uniform vec2 a1; uniform vec2 a2; uniform vec2 a3; uniform vec4 rr; uniform float sf; varying vec2 sp;" +
+            "float sg(vec2 a, vec2 b, float ra, float rb, out float cov, out float tt){ vec2 ba=b-a; float t=clamp(dot(sp-a,ba)/max(dot(ba,ba),1e-4),0.,1.); float r=max(mix(ra,rb,t),1.); float d=length(sp-a-ba*t); cov=clamp((r-d)/sf+0.5,0.,1.); tt=t; return d/r; }" +
+            "void main(){ float c0,c1,c2,t0,t1,t2; float q0=sg(vec2(0.),a1,rr.x,rr.y,c0,t0); float q1=sg(a1,a2,rr.y,rr.z,c1,t1); float q2=sg(a2,a3,rr.z,rr.w,c2,t2);" +
+            " float rho=q0; float fd=smoothstep(0.,0.45,t0); if(q1<rho){rho=q1;fd=1.;} if(q2<rho){rho=q2;fd=1.;}" +     // the round end at the knuckle fades out, so no arc shows across the palm
+            " float cov=max(c0,max(c1,c2)); float rc=min(rho,1.); float nz=sqrt(max(0.,1.-rc*rc));" +
+            " gl_FragColor=vec4(0.,(1.-nz)*fd*cov,cov,cov); }");
+        progBody = prog(                                  // v3.262: the see-through hand (mode 6) as ONE smooth shape: every finger, the thumb, the palm and the thumb root are rounded bars whose edges melt into each other (a smooth union), so the knuckle gaps, the web and the wrist are all gentle curves, not corners
+            "attribute vec2 p; uniform vec2 sc; uniform vec2 org; varying vec2 sp; void main(){ gl_Position=vec4(p,0.,1.); sp=p*sc-org; }",
+                "#ifdef GL_FRAGMENT_PRECISION_HIGH\n" +
+                "precision highp float;\n" +
+                "#else\n" +
+                "precision mediump float;\n" +
+                "#endif\n" +
+                "uniform vec2 q[21]; uniform vec2 par; uniform float sf; varying vec2 sp;\n" +
+                "float cap(vec2 a, vec2 b, float ra, float rb){ vec2 ba=b-a; float t=clamp(dot(sp-a,ba)/max(dot(ba,ba),1e-4),0.,1.); return length(sp-a-ba*t)-mix(ra,rb,t); }\n" +
+                "float smn(float a, float b, float k){ float h=max(k-abs(a-b),0.)/k; return min(a,b)-h*h*k*0.25; }\n" +
+                "vec2 v[6];\n" +
+                "float psd(){ float d=1e9; float sg=1.; for(int i=0;i<5;i++){ vec2 a=v[i]; vec2 b=v[i+1]; vec2 e=b-a; vec2 w=sp-a; float t=clamp(dot(w,e)/max(dot(e,e),1e-6),0.,1.); vec2 pq=w-e*t; d=min(d,dot(pq,pq)); bool c1=sp.y>=a.y; bool c2=sp.y<b.y; bool c3=e.x*w.y>e.y*w.x; if((c1&&c2&&c3)||(!c1&&!c2&&!c3)) sg=-sg; } return sg*sqrt(d); }\n" +
+                "void main(){\n" +
+                " float size=par.x, gr=par.y;\n" +
+                " float kf=0.045*size, kt=0.10*size;\n" +
+                " float fi0=(0.085*1.05+gr)*size, fi1=(0.085*1.05+gr)*size, fi2=(0.078*1.05+gr)*size, fi3=(0.068*1.05+gr)*size;\n" +
+                " float tip=0.035*size;\n" +
+                " vec2 t3=q[8]-q[7]; t3=q[8]+t3/max(length(t3),1e-3)*tip;\n" +
+                " vec2 t7=q[12]-q[11]; t7=q[12]+t7/max(length(t7),1e-3)*tip;\n" +
+                " vec2 t11=q[16]-q[15]; t11=q[16]+t11/max(length(t11),1e-3)*tip;\n" +
+                " vec2 t15=q[20]-q[19]; t15=q[20]+t15/max(length(t15),1e-3)*tip;\n" +
+                " float f0=min(min(cap(q[5],q[6],fi0,fi0*0.9067),cap(q[6],q[7],fi0*0.9067,fi0*0.8133)),cap(q[7],t3,fi0*0.8133,fi0*0.72));\n" +
+                " float f1=min(min(cap(q[9],q[10],fi1,fi1*0.9067),cap(q[10],q[11],fi1*0.9067,fi1*0.8133)),cap(q[11],t7,fi1*0.8133,fi1*0.72));\n" +
+                " float f2=min(min(cap(q[13],q[14],fi2,fi2*0.9067),cap(q[14],q[15],fi2*0.9067,fi2*0.8133)),cap(q[15],t11,fi2*0.8133,fi2*0.72));\n" +
+                " float f3=min(min(cap(q[17],q[18],fi3,fi3*0.9067),cap(q[18],q[19],fi3*0.9067,fi3*0.8133)),cap(q[19],t15,fi3*0.8133,fi3*0.72));\n" +
+                " float h0=(0.10*1.1+gr)*size, h1=(0.105*1.1+gr)*size, h2=(0.095*1.1+gr)*size, h3=(0.08*1.1+gr)*size;\n" +
+                " vec2 t4=q[4]-q[3]; t4=q[4]+t4/max(length(t4),1e-3)*tip;\n" +
+                " float th=min(min(cap(q[1],q[2],h0,h1),cap(q[2],q[3],h1,h2)),cap(q[3],t4,h2,h3));\n" +
+                " vec2 V=q[17]-q[5]; float wk=length(V); V/=max(wk,1e-3);\n" +
+                " float rh=0.105*size, hw=0.10*wk;\n" +
+                " vec2 Wi=q[0]-V*hw, Wp=q[0]+V*hw, A=q[5]+V*0.02*size, B=q[17];\n" +
+                " vec2 Hm=(B+Wp)*0.5+V*0.035*size;\n" +
+                " v[0]=Wi; v[1]=A; v[2]=B; v[3]=Hm; v[4]=Wp; v[5]=Wi;\n" +
+                " float pal=psd()-rh;\n" +
+                " vec2 Q=q[2]+(q[3]-q[2])*0.3;\n" +
+                " v[0]=q[0]; v[1]=q[2]; v[2]=Q; v[3]=q[5]; v[4]=A; v[5]=q[0];\n" +
+                " float fl=psd()-0.03*size;\n" +
+                " float d=smn(pal,fl,0.05*size);\n" +
+                " d=smn(d,f0,kf); d=smn(d,f1,kf); d=smn(d,f2,kf); d=smn(d,f3,kf);\n" +
+                " float then=cap(q[0],q[2],0.11*size*0.9,h1*0.95);\n" +
+                " float wr=0.08*size;\n" +
+                " float web=min(cap(Q,q[5],wr,wr),cap(q[1],q[5],wr*0.9,wr*0.9));\n" +
+                " d=smn(d,then,kt); d=smn(d,th,kt); d=smn(d,web,kt);\n" +
+                " float cov=clamp(0.5-d/sf,0.,1.);\n" +
+                " gl_FragColor=vec4(cov);\n" +
+                "}\n");
         triBuf = fb(4096);
         lutTex = 0; maskW = 0; maskFbo[0] = 0; maskTex[0] = 0; refFbo[0] = 0; refTex[0] = 0;
         progPanel = prog(
@@ -2820,6 +2895,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
             float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
             if (size < 1e-3f) continue;
             float grow = Math.min(0.03f, handSpd * 0.03f);                 // a fast hand: the shape is a little wider (the points are older than the real hand)
+            if (skel == 6) { drawBody(i, X, Y, size, grow, hwS, hhS); continue; }
             aaBegin();
             // v3.256: a hand shaped like a real one (fitted to the silhouette of the user's own hand in two photos, with the real model points):
             // fingers wider at the knuckle and narrowing to a round tip, a thick thumb, a filled thumb root with a soft web, a wider palm and wrist.
@@ -2847,7 +2923,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                 if (wk > 1e-3f) {
                     ux /= wk; uy /= wk;
                     float ex = 0.05f * size, hwW = SHP_WRIST * wk;
-                    float ax = X[5] - ux * ex, ay = Y[5] - uy * ex, bx = X[17] + ux * ex, by = Y[17] + uy * ex;
+                    float ax = X[5] + ux * 0.02f * size, ay = Y[5] + uy * 0.02f * size, bx = X[17] + ux * ex, by = Y[17] + uy * ex;   // the thumb side of the palm stops a little inside the index finger, so no knob sticks out under it
                     float wax = X[0] - ux * hwW, way = Y[0] - uy * hwW, wbx = X[0] + ux * hwW, wby = Y[0] + uy * hwW;
                     float rh = Math.max(3f, size * (SHP_PALM + grow));
                     for (int q = 0; q <= 16; q++) {
@@ -2876,18 +2952,163 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
                         float gx = (wx + qx + tx + ix + X[5]) / 5f, gy = (wy + qy + ty + iy + Y[5]) / 5f;
                         float sx = gx - mx, sy = gy - my, sl = (float) Math.hypot(sx, sy);
                         if (sl > 1e-3f) { sx = mx + sx / sl * SHP_WEB * size; sy = my + sy / sl * SHP_WEB * size; } else { sx = mx; sy = my; }
-                        pvx[0] = wx; pvy[0] = wy; pvx[1] = qx; pvy[1] = qy; pvx[2] = tx; pvy[2] = ty; pvx[3] = sx; pvy[3] = sy; pvx[4] = ix; pvy[4] = iy; pvx[5] = X[5]; pvy[5] = Y[5];
-                        aaPoly(6, Math.max(3f, 0.03f * size));
+                        // the bottom of the web is a rounded valley: a curve that is tangent to the upper edge of the thumb and to the side of the index finger
+                        float idx = X[6] - X[5], idy = Y[6] - Y[5], il = (float) Math.hypot(idx, idy);
+                        float cx = sx, cy = sy;
+                        if (il > 1e-3f) {
+                            float d1x = -t2x, d1y = -t2y, d2x = -idx / il, d2y = -idy / il;
+                            float det = -d1x * d2y + d2x * d1y, rx = ix - tx, ry = iy - ty;
+                            if (Math.abs(det) > 0.2f) {
+                                float ca = (-rx * d2y + d2x * ry) / det, cb = (d1x * ry - d1y * rx) / det;
+                                float kx = tx + d1x * ca, ky = ty + d1y * ca;
+                                if (ca > 0f && cb > 0f && Math.hypot(kx - mx, ky - my) < 0.35f * size) { cx = kx; cy = ky; }
+                            }
+                        }
+                        pvx[0] = wx; pvy[0] = wy; pvx[1] = qx; pvy[1] = qy; pvx[2] = tx; pvy[2] = ty;
+                        for (int bi = 0; bi < 3; bi++) {
+                            float bt = 0.25f * (bi + 1), b0 = (1f - bt) * (1f - bt), b1 = 2f * (1f - bt) * bt, b2 = bt * bt;
+                            pvx[3 + bi] = b0 * tx + b1 * cx + b2 * ix; pvy[3 + bi] = b0 * ty + b1 * cy + b2 * iy;
+                        }
+                        pvx[6] = ix; pvy[6] = iy; pvx[7] = X[5]; pvy[7] = Y[5];
+                        aaPoly(8, Math.max(3f, 0.03f * size));
                     }
                     aaSeg(X[0], Y[0], X[2], Y[2], th1 * 0.95f);
                 }
             }
             aaFlush(1f, 1f, 1f);
         }
+        if (skel == 6) drawChains(r, n, hwS, hhS);
         aaFade = savedFade;
     }
 
+
+    private final float[] bodyQ = new float[42];
+    /** v3.262: draws one hand's smooth silhouette (mode 6) into the red channel of the shape picture */
+    private void drawBody(int hand, float[] X, float[] Y, float size, float grow, float hwS, float hhS) {
+        float mnx = 1e9f, mny = 1e9f, mxx = -1e9f, mxy = -1e9f;
+        for (int k = 0; k < 21; k++) {
+            mnx = Math.min(mnx, X[k]); mxx = Math.max(mxx, X[k]); mny = Math.min(mny, Y[k]); mxy = Math.max(mxy, Y[k]);
+            bodyQ[k * 2] = X[k] - X[0]; bodyQ[k * 2 + 1] = Y[k] - Y[0];
+        }
+        float pad = size * 0.40f + aaSoft + 2f;
+        mnx -= pad; mxx += pad; mny -= pad; mxy += pad;
+        GLES20.glEnable(GLES20.GL_BLEND);
+        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        GLES20.glUseProgram(progBody);
+        int ap = attr(progBody, "p", 0);
+        GLES20.glEnableVertexAttribArray(ap);
+        chainBuf.position(0);
+        chainBuf.put(mnx / hwS).put(mny / hhS).put(mxx / hwS).put(mny / hhS).put(mnx / hwS).put(mxy / hhS).put(mxx / hwS).put(mxy / hhS);
+        chainBuf.position(0);
+        GLES20.glVertexAttribPointer(ap, 2, GLES20.GL_FLOAT, false, 8, chainBuf);
+        GLES20.glUniform2f(ul(progBody, "sc"), hwS, hhS);
+        GLES20.glUniform2f(ul(progBody, "org"), X[0], Y[0]);
+        GLES20.glUniform2fv(ul(progBody, "q"), 21, bodyQ, 0);
+        GLES20.glUniform2f(ul(progBody, "par"), size, grow);
+        GLES20.glUniform1f(ul(progBody, "sf"), aaSoft);
+        GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+        GLES20.glDisableVertexAttribArray(ap);
+        GLES20.glDisable(GLES20.GL_BLEND);
+    }
+
+    // v3.259 (the see-through hand, mode 6): after the silhouette, each finger and the thumb is drawn as a tube into the green and blue channels of the same picture:
+    // blue = where a tube is, green = how steeply its skin turns away at that point (0 in the middle, 1 at its edge). The tubes are drawn far to near, so where the
+    // thumb crosses the palm (or a curled finger crosses another) the nearer one's edge shows as a thin bright line, like a rendered hand model.
+    private final float[][] chX = new float[5][4], chY = new float[5][4], chR = new float[5][4];
+    private final float[] chZ = new float[5], ohZ = new float[21];
+    private final int[] chOrd = new int[5];
+
+    private void drawChains(float[] r, int n, float hwS, float hhS) {
+        GLES20.glColorMask(false, true, true, false);
+        GLES20.glClearColor(0, 0, 0, 0);
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT);
+        GLES20.glEnable(GLES20.GL_BLEND);
+        GLES20.glBlendFunc(GLES20.GL_ONE, GLES20.GL_ONE_MINUS_SRC_ALPHA);
+        GLES20.glUseProgram(progChain);
+        int ap = attr(progChain, "p", 0);
+        GLES20.glEnableVertexAttribArray(ap);
+        GLES20.glUniform2f(ul(progChain, "sc"), hwS, hhS);
+        GLES20.glUniform1f(ul(progChain, "sf"), aaSoft);
+        for (int i = 0; i < n; i++) {
+            float[] X = ohX, Y = ohY, Z = ohZ;
+            for (int k = 0; k < 21; k++) {
+                float hx = r[1 + i * 63 + k * 3], hy = r[1 + i * 63 + k * 3 + 1];
+                if (rot180) { hx = 1f - hx; hy = 1f - hy; }
+                X[k] = (hx * 2f - 1f) * hwS * camScale; Y[k] = (1f - hy * 2f) * hhS * camScale;
+                Z[k] = r[1 + i * 63 + k * 3 + 2];
+            }
+            float size = (float) Math.hypot(X[9] - X[0], Y[9] - Y[0]);
+            if (size < 1e-3f) continue;
+            float grow = Math.min(0.03f, handSpd * 0.03f);
+            for (int c = 0; c < 5; c++) {
+                int a0 = c < 4 ? 5 + c * 4 : 1;
+                float z = 0f;
+                for (int j = 0; j < 4; j++) {
+                    int id = a0 + j;
+                    chX[c][j] = X[id]; chY[c][j] = Y[id]; z += Z[id] * 0.25f;
+                    chR[c][j] = c < 4 ? (SHP_FI[c] * 1.05f + grow) * size * (1f - 0.28f * (j / 3f)) : (SHP_TH[j] * 1.1f + grow) * size;
+                }
+                float dx = chX[c][3] - chX[c][2], dy = chY[c][3] - chY[c][2], l = (float) Math.hypot(dx, dy);
+                if (l > 1e-3f) { chX[c][3] += dx / l * 0.035f * size; chY[c][3] += dy / l * 0.035f * size; }
+                chZ[c] = z; chOrd[c] = c;
+            }
+            for (int a = 1; a < 5; a++) {                      // far (big z) first, near last
+                int v = chOrd[a], b = a - 1;
+                while (b >= 0 && chZ[chOrd[b]] < chZ[v]) { chOrd[b + 1] = chOrd[b]; b--; }
+                chOrd[b + 1] = v;
+            }
+            for (int q = 0; q < 5; q++) {
+                int c = chOrd[q];
+                float[] cx = chX[c], cy = chY[c], cr = chR[c];
+                float mnx = Math.min(Math.min(cx[0], cx[1]), Math.min(cx[2], cx[3])), mxx = Math.max(Math.max(cx[0], cx[1]), Math.max(cx[2], cx[3]));
+                float mny = Math.min(Math.min(cy[0], cy[1]), Math.min(cy[2], cy[3])), mxy = Math.max(Math.max(cy[0], cy[1]), Math.max(cy[2], cy[3]));
+                float pad = Math.max(Math.max(cr[0], cr[1]), Math.max(cr[2], cr[3])) + aaSoft + 2f;
+                mnx -= pad; mxx += pad; mny -= pad; mxy += pad;
+                chainBuf.position(0);
+                chainBuf.put(mnx / hwS).put(mny / hhS).put(mxx / hwS).put(mny / hhS).put(mnx / hwS).put(mxy / hhS).put(mxx / hwS).put(mxy / hhS);
+                chainBuf.position(0);
+                GLES20.glVertexAttribPointer(ap, 2, GLES20.GL_FLOAT, false, 8, chainBuf);
+                GLES20.glUniform2f(ul(progChain, "org"), cx[0], cy[0]);
+                GLES20.glUniform2f(ul(progChain, "a1"), cx[1] - cx[0], cy[1] - cy[0]);
+                GLES20.glUniform2f(ul(progChain, "a2"), cx[2] - cx[0], cy[2] - cy[0]);
+                GLES20.glUniform2f(ul(progChain, "a3"), cx[3] - cx[0], cy[3] - cy[0]);
+                GLES20.glUniform4f(ul(progChain, "rr"), cr[0], cr[1], cr[2], cr[3]);
+                GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4);
+            }
+        }
+        GLES20.glDisableVertexAttribArray(ap);
+        GLES20.glDisable(GLES20.GL_BLEND);
+        GLES20.glColorMask(true, true, true, true);
+    }
+
     // step 2 of the outline: a thin line along the middle of the blurred mask, drawn on the scene picture
+
+    // v3.261: does each hand show its PALM (1) or its BACK (0) to the camera? The turn from index knuckle to little-finger knuckle runs one way for a left palm / right back and the other way for a left back / right palm,
+    // so the hand's side (left/right) is needed too: with two hands in view the left one in the picture is the left hand; with one hand the model's own left/right guess is used (and held when it is unsure).
+    private final float[] pmSm = {0f, 0f}, pmTgt = {0f, 0f};
+    private void updatePalmness(float[] r, int n) {
+        float ar = (float) Math.max(1, imgW) / Math.max(1, imgH);
+        for (int i = 0; i < n && i < 2; i++) {
+            int b = 1 + i * 63;
+            float wx = r[b], wy = r[b + 1];
+            float size = (float) Math.hypot((r[b + 27] - wx) * ar, r[b + 28] - wy);
+            if (size < 1e-3f) continue;
+            float v1x = (r[b + 15] - wx) * ar, v1y = r[b + 16] - wy, v2x = (r[b + 51] - wx) * ar, v2y = r[b + 52] - wy;
+            float cr = (v1x * v2y - v1y * v2x) / (size * size);        // > 0: palm for a left hand (same sign rule as the palm menu), < 0: palm for a right hand
+            float side = 0f;                                            // +1 left hand, -1 right hand, 0 not sure
+            if (n >= 2) {
+                boolean leftInPic = rot180 ? i == 1 : i == 0;
+                side = leftInPic ? 1f : -1f;
+            } else {
+                float lf = cam.leftness(i);
+                if (lf >= 0f && pmCal < 0f) lf = 1f - lf;
+                if (lf >= 0f && Math.abs(lf - 0.5f) > 0.12f) side = lf > 0.5f ? 1f : -1f;
+            }
+            if (side != 0f && Math.abs(cr) > 0.04f) pmTgt[i] = Math.max(0f, Math.min(1f, 0.5f + side * cr * 4f));   // edge-on hands stay where they were
+            pmSm[i] += (pmTgt[i] - pmSm[i]) * 0.2f;
+        }
+    }
+
     private void drawOutline(float[] r) {
         int n = (int) r[0];
         if (n <= 0 || !maskReady) return;
@@ -2916,7 +3137,7 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, refTex[0]);
         GLES20.glUniform1i(ul(progRing, "tex"), 0);
         GLES20.glUniform2f(ul(progRing, "px"), 1f / maskW, 1f / maskH);
-        GLES20.glUniform1f(ul(progRing, "rad"), 3.0f);
+        GLES20.glUniform1f(ul(progRing, "rad"), (skel == 6 || skel == 7) ? 4.0f : 3.0f);     // the soft styles blur the shape a little more, so the line is smoother
         GLES20.glUniform1f(ul(progRing, "ha"), handAlpha);
         // for the glass look: where each wrist is and which way the hand points (in picture-height units), so the film and the line melt away down the forearm
         float asp = (float) sceneW / Math.max(1, sceneH);
@@ -2937,6 +3158,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
         GLES20.glUniform4f(ul(progRing, "h0"), hu[0], hu[1], hu[2], hu[3]);
         GLES20.glUniform4f(ul(progRing, "h1"), hu[4], hu[5], hu[6], hu[7]);
         GLES20.glUniform3f(ul(progRing, "hs"), palmL * 1.15f, asp, n);
+        updatePalmness(r, n);
+        GLES20.glUniform2f(ul(progRing, "pm"), pmSm[0], pmSm[1]);
         GLES20.glUniform1f(ul(progRing, "gl"), skel == 7 ? 4f : skel == 5 ? 3f : skel == 6 ? 2f : (skel == 2 ? 1f : 0f));
         drawQuad(progRing);
         GLES20.glDisable(GLES20.GL_SCISSOR_TEST);
@@ -2946,7 +3169,8 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
     // ---- soft-edged lines and dots: every stroke is a small quad whose edge fades over ~1.5 px, so nothing looks jagged ----
     private int progAA;
     private float aaFade = 1f;
-    private FloatBuffer aaBuf;
+    private FloatBuffer aaBuf, chainBuf;
+    private int progChain, progBody;
     private int aaN = 0;
     private float aaSoft = 1.5f;
 
@@ -2954,9 +3178,9 @@ public class VRRenderer implements GLSurfaceView.Renderer, SurfaceTexture.OnFram
 
     // v3.256: hand shape numbers (fractions of the hand size = wrist to middle knuckle)
     private static final float[] SHP_FI = {0.085f, 0.085f, 0.078f, 0.068f};     // finger radius at the knuckle: index, middle, ring, little
-    private static final float SHP_FS = 1.22f;                                     // all fingers a little fuller than the first guess
+    private static final float SHP_FS = 1.40f;                                     // all fingers a little fuller than the first guess
     private static final float[] SHP_TH = {0.10f, 0.105f, 0.095f, 0.08f};          // thumb radius at its 4 joints
-    private static final float SHP_THS = 1.45f;                                    // the thumb is much thicker than a finger
+    private static final float SHP_THS = 1.55f;                                    // the thumb is much thicker than a finger
     private static final float SHP_PALM = 0.14f, SHP_WRIST = 0.347f, SHP_WEB = 0.06f;
     private final float[] pvx = new float[8], pvy = new float[8];
 
